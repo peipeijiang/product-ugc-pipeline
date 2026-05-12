@@ -1,0 +1,3 @@
+display_name: Product UGC Pipeline
+short_description: Product UGC asset pipeline
+default_prompt: Build UGC creator-style product image and video assets from product URLs.

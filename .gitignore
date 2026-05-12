@@ -1,0 +1,29 @@
+# macOS
+.DS_Store
+
+# Python/runtime
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.env.*
+
+# Generated local outputs if someone runs the skill from inside this folder
+product-ugc-output/
+*-ugc-output/
+outputs/
+exports/
+_logs/
+*.log
+
+# Large media/artifacts
+**/*.mp4
+**/*.mov
+**/*.webm
+**/*.jpg
+**/*.jpeg
+**/*.png
+**/*.webp
+**/*.gif
+**/*.zip
