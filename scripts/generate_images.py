@@ -29,21 +29,37 @@ def should_include_size(model: str, size: str | None) -> bool:
 
 
 def first_existing_reference(product_dir: Path, variant: dict[str, Any]) -> Path | None:
-    for local_path in variant.get("selected_reference_images") or []:
+    references = existing_references(product_dir, variant, max_references=1)
+    return references[0] if references else None
+
+
+def existing_references(product_dir: Path, variant: dict[str, Any], max_references: int = 1) -> list[Path]:
+    references: list[Path] = []
+    seen: set[Path] = set()
+
+    def add_reference(local_path: str) -> None:
+        if not local_path:
+            return
         candidate = product_dir / local_path
-        if candidate.exists():
-            return candidate
+        if candidate.exists() and candidate not in seen:
+            references.append(candidate)
+            seen.add(candidate)
+
+    for local_path in variant.get("selected_reference_images") or []:
+        add_reference(local_path)
+        if len(references) >= max_references:
+            return references
     prompts = load_json(product_dir / "ugc_prompts.json", {})
     for local_path in prompts.get("selected_reference_images") or []:
-        candidate = product_dir / local_path
-        if candidate.exists():
-            return candidate
+        add_reference(local_path)
+        if len(references) >= max_references:
+            return references
     manifest = load_json(product_dir / "product_manifest.json", {})
     for image_item in manifest.get("images", []):
-        candidate = product_dir / image_item.get("local_path", "")
-        if candidate.exists():
-            return candidate
-    return None
+        add_reference(image_item.get("local_path", ""))
+        if len(references) >= max_references:
+            return references
+    return references
 
 
 def build_image_prompt(variant: dict[str, Any], product_name: str) -> str:
@@ -119,12 +135,14 @@ def generate_image_file(
     prompt: str,
 ) -> dict[str, Any]:
     variant_id = int(variant.get("variant_id", 0))
-    reference = first_existing_reference(product_dir, variant)
+    references = existing_references(product_dir, variant, max_references=max(1, args.max_reference_images))
+    reference = references[0] if references else None
     if destination.exists() and not args.force:
         return {
             "variant_id": variant_id,
             "status": "skipped_existing",
             "reference_image": str(reference.relative_to(product_dir)) if reference else None,
+            "reference_images": [str(item.relative_to(product_dir)) for item in references],
             "output_path": str(destination.relative_to(product_dir)),
             "prompt": prompt,
         }
@@ -133,6 +151,7 @@ def generate_image_file(
             "variant_id": variant_id,
             "status": "dry_run",
             "reference_image": str(reference.relative_to(product_dir)) if reference else None,
+            "reference_images": [str(item.relative_to(product_dir)) for item in references],
             "output_path": str(destination.relative_to(product_dir)),
             "prompt": prompt,
         }
@@ -144,6 +163,7 @@ def generate_image_file(
             "variant_id": variant_id,
             "status": "composed_exact_reference",
             "reference_image": str(reference.relative_to(product_dir)),
+            "reference_images": [str(reference.relative_to(product_dir))],
             "output_path": str(saved_path.relative_to(product_dir)),
             "prompt": prompt,
             "composition_policy": "No AI redraw: original product image resized onto 9:16 pad to prevent product drift.",
@@ -162,7 +182,7 @@ def generate_image_file(
                     "/images/edits",
                     api_key,
                     fields=fields,
-                    files=[("image", reference)],
+                    files=[("image", item) for item in references],
                     base_url=args.base_url,
                     timeout=args.timeout,
                 )
@@ -190,6 +210,7 @@ def generate_image_file(
         "variant_id": variant_id,
         "status": "saved" if saved_path else "response_without_saved_image",
         "reference_image": str(reference.relative_to(product_dir)) if reference else None,
+        "reference_images": [str(item.relative_to(product_dir)) for item in references],
         "output_path": str(destination.relative_to(product_dir)) if saved_path else None,
         "prompt": prompt,
         "response": summarize_image_response(response),
@@ -251,6 +272,7 @@ def main() -> None:
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--compose-only", action="store_true", help="Create deterministic 9:16 pad images from the original reference without AI redraw.")
     parser.add_argument("--keyframes", action="store_true", help="Generate start/end keyframe images named variant-XX-start.png and variant-XX-end.png.")
+    parser.add_argument("--max-reference-images", type=int, default=1, help="Maximum selected reference images to send to image edit requests.")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     selected_variants = parse_variants(args.variants)

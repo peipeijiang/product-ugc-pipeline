@@ -118,6 +118,7 @@ Before delivering outputs, inspect `materials.md`, `image_analysis.json`, and `u
 - Prefer close-up product photos as image references over lifestyle images.
 - Before calling Image 2, manually or programmatically verify the selected reference images are the correct product, not another SKU on the same page.
 - Image prompts must explicitly say the first selected full-product reference is canonical and conflicting page images should be ignored.
+- For Image 2 edits, pass multiple verified full-product references when available, with the first image as the canonical product identity lock.
 - If generated images drift from the original product, prefer `generate_images.py --compose-only` with the cleanest reference asset over asking the image model to redraw the product.
 
 ## Defaults
