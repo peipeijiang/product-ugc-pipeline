@@ -410,14 +410,6 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
         if voiceover_text
         else "Native audio: include subtle real product handling sounds only, no music."
     )
-    overlay_callouts = variant.get("on_screen_callouts") or []
-    overlay_text = ", ".join(str(item).strip() for item in overlay_callouts[:3] if str(item).strip())
-    overlay_block = (
-        f"Optional Instagram-style overlay labels are allowed: {overlay_text}. "
-        "Use them as 1-3 very short graphic feature tags only, not as subtitles, not as sentence captions, and not as a transcript of the voiceover. "
-        if overlay_text
-        else "Optional Instagram-style overlay labels are allowed only if they are very short feature tags, not subtitles or voiceover transcripts. "
-    )
     return (
         "Create an 8-second vertical UGC product-use clip using the provided reference frame or start/end keyframes. "
         "If two reference images are provided, use image 1 as the exact first frame and image 2 as the exact final frame; create only a smooth practical transition between them. "
@@ -430,8 +422,9 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
         "Avoid magic-cleaning, sudden scene changes, heavy motion blur, product morphing, or unsupported functions. "
         f"Proof moment: {proof_moment}. "
         f"{audio_block} "
-        f"{overlay_block}"
-        "Natural handheld phone camera, close practical use framing. No subtitles, no sentence captions, no lower-third transcript, no karaoke-style text."
+        "Natural handheld phone camera, close practical use framing. "
+        "Do not let VEO render text: no on-screen words, no overlay labels, no subtitles, no sentence captions, no lower-third transcript, no karaoke-style text. "
+        "Keep on_screen_callouts as post-production overlay metadata only."
     )
 
 
@@ -472,7 +465,7 @@ Each variant must include:
 - dialogue_script with natural spoken lines
 - function_intro_prompt: a separate prompt for generating concise spoken function explanation
 - voiceover_script_8s: timed 0-2s, 2-5s, 5-8s spoken script lines that introduce and explain the function
-- on_screen_callouts: 1-3 short Instagram-style feature overlay labels, not subtitles and not voiceover transcripts
+- on_screen_callouts: 1-3 short Instagram-style feature overlay labels for post-production only, not for VEO to render
 - function_demo_prompt: editor-facing prompt that explains the function, proof moment, and final benefit
 - usage_logic: explain how the product works and why the scene is correct
 - proof_moment: the exact visual action that proves the function
@@ -488,7 +481,7 @@ Critical:
 3. Every image_prompt and video_prompt must contain a product-fidelity block requiring exact preservation of the original product appearance.
 4. The selected reference image must be the best true full-product reference: full silhouette, correct SKU/style, real proportions, visible key functional zones. Do not select alternate SKU images, accessory-only images, packaging-only images, loose parts, isolated cables, or detail images as canonical.
 5. Put the concise voiceover lines into VEO video_prompt as native audio/dialogue, but keep subtitles/captions out.
-6. Short Instagram-style overlay feature labels are allowed, but do not request subtitles, sentence captions, lower-third transcripts, or karaoke-style text.
+6. Do not ask VEO to render text. Short Instagram-style overlay labels belong in on_screen_callouts for post-production, not inside the generated video frames.
 """.strip()
     payload = {
         "model": model,
