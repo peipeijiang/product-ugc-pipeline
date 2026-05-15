@@ -1,6 +1,6 @@
 ---
 name: product-ugc-pipeline
-description: Build product UGC ad-production pipelines from ecommerce product URLs. Use when Codex needs to scrape product pages, save product image/material folders, analyze image assets with a vision model, generate multiple Instagram/TikTok creator-style UGC prompts, create product-faithful reference images with LaoZhang GPT-Image-2, or create VEO 3.1 product videos through LaoZhang API.
+description: Build product UGC ad-production pipelines from ecommerce product URLs. Use when Codex needs to scrape product pages, save product image/material folders, analyze image assets with a vision model, generate multiple Instagram/TikTok creator-style UGC prompts, create product-faithful reference images with LaoZhang GPT-Image-2, or create VEO 3.1 product videos through LaoZhang or LK888/updrama APIs.
 ---
 
 # Product UGC Pipeline
@@ -18,6 +18,7 @@ Preserve the original product appearance above all else. The pad image is the vi
 5. Run `scripts/generate_ugc_prompts.py` to create 10 UGC prompt variants grounded in the product brief.
 6. Run `scripts/generate_images.py` to create image-to-image “pad images” or start/end keyframes using GPT-Image-2 and the selected product references.
 7. Run `scripts/generate_videos.py` to send generated pad images or start/end keyframes to VEO 3.1 async video generation.
+8. If LaoZhang VEO channels are unavailable, run `scripts/generate_videos_lk888.py` to send public start/end keyframe URLs to LK888/updrama VEO.
 
 Default output structure:
 
@@ -44,6 +45,7 @@ LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/build_product_brief.
 LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_ugc_prompts.py product-ugc-output --count 10
 LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_images.py product-ugc-output --variants 1-10 --model gpt-image-2-vip --size 1024x1536 --keyframes
 LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_videos.py product-ugc-output --variants 1-10 --model veo-3.1-fast-fl
+LK888_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_videos_lk888.py product-ugc-output --variants 1-10 --model veo3.1 --generation-mode fast
 ```
 
 Use `--dry-run` on generation scripts when the user wants prompts and manifests without paid API calls.
@@ -107,6 +109,23 @@ Read `references/laozhang-api-notes.md` before changing API calls. Key defaults:
 - Use `gpt-image-2-vip` for common explicit sizes; avoid unsupported 4K sizes on VIP.
 - VEO 3.1 async endpoint: `POST /videos`, poll `GET /videos/{id}`, then download via `GET /videos/{id}/content`.
 - Use VEO models with `-fl` suffix for image-to-video reference frames.
+
+## LK888 / updrama API Notes
+
+Use `scripts/generate_videos_lk888.py` only when LK888/updrama is the requested provider or LaoZhang VEO is unavailable.
+
+Key defaults:
+
+- Base URL: `https://api.lk888.ai/api`
+- API key env var: `LK888_API_KEY`
+- Capability refresh endpoints: `GET /v1/skills`, `GET /v1/skills/guide`, and `GET /v1/skills/models/{model_name}`.
+- Balance endpoint: `GET /v1/skills/balance`; query it before paid batches when practical.
+- Media creation endpoint: `POST /v1/media/generate`; poll `GET /v1/skills/task-status?task_id={task_id}` until `is_final=true`.
+- VEO 3.1 model name: `veo3.1`; common params are `generation_mode=fast`, `aspect_ratio=9:16`, `images=[start_url,end_url]`, and `enhance_prompt=false`.
+- `veo3.1-lite` uses `quality=sd|4k` instead of `generation_mode`, but may have inactive channels; verify pricing/status before relying on it.
+- Upload params require publicly reachable URLs. The API does not accept local file paths or multipart image uploads for `images`.
+- The adapter writes LK888 outputs to `videos_lk888/` so LaoZhang outputs in `videos/` remain untouched.
+- If an API behavior contradicts the capability docs, submit `POST /v1/skills/feedback` and record the returned `feedback_id`.
 
 ## Quality Gate
 
