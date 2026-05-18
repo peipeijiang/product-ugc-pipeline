@@ -98,25 +98,42 @@ def fallback_variants(manifest: dict[str, Any], references: list[str], count: in
     usage_summary = "; ".join(json.dumps(step, ensure_ascii=False) if isinstance(step, dict) else str(step) for step in usage_steps[:4])
     if not usage_summary:
         usage_summary = "demonstrate the product cautiously using only confirmed visible functions"
-    archetypes = [
-        "problem-solution kitchen hack",
-        "morning routine counter demo",
-        "small apartment organization find",
-        "mom-life practical test",
-        "ASMR close-up usage demo",
-        "giftable cute product reaction",
-        "before-and-after cleanup proof",
-        "one-handed convenience test",
-        "unboxing plus first-use review",
-        "friend recommendation conversation",
+    selling_angles = [
+        "fast setup",
+        "compact storage",
+        "one-handed convenience",
+        "mess reduction",
+        "travel portability",
+        "premium close-up proof",
+        "small-space organization",
+        "giftable everyday usefulness",
+        "morning routine speed",
+        "nightstand / end-of-day routine",
+    ]
+    scene_archetypes = [
+        "busy weekday counter",
+        "small apartment shelf or desk",
+        "travel pouch on hotel table",
+        "bedside routine",
+        "office desk reset",
+        "coffee table quick demo",
+        "bathroom vanity or utility corner",
+        "car/travel console only if supported",
+        "gift unboxing table",
+        "friend recommendation handheld shot",
     ]
     variants: list[dict[str, Any]] = []
     for index in range(1, count + 1):
-        archetype = archetypes[(index - 1) % len(archetypes)]
+        selling_angle = selling_angles[(index - 1) % len(selling_angles)]
+        scene_archetype = scene_archetypes[(index - 1) % len(scene_archetypes)]
+        scene_imagination = (
+            f"{scene_archetype} lifestyle context chosen to make the '{selling_angle}' benefit easy to understand; "
+            "do not copy the original product-photo background unless it is functionally necessary."
+        )
         variants.append(
             {
                 "variant_id": index,
-                "title": f"{product_name} — {archetype}",
+                "title": f"{product_name} — {selling_angle}",
                 "creator_persona": "Warm, practical Instagram creator filming in a bright home kitchen.",
                 "hook": f"I didn't expect this tiny {product_name} to make this task feel easier.",
                 "dialogue_script": (
@@ -124,10 +141,13 @@ def fallback_variants(manifest: dict[str, Any], references: list[str], count: in
                     f"What I like is: {selling_points}. The correct use is: {usage_summary}. Watch this part closely—this is the proof moment.'"
                 ),
                 "usage_logic": usage_summary,
+                "selling_angle": selling_angle,
+                "scene_imagination": scene_imagination,
+                "reference_scope": reference_scope_note(references),
                 "function_intro_prompt": build_function_intro_prompt(product_name, usage_summary, selling_points),
                 "voiceover_script_8s": build_voiceover_script_8s(product_name, usage_summary, f"I didn't expect this tiny {product_name} to make this task feel easier."),
                 "on_screen_callouts": [],
-                "function_demo_prompt": build_function_demo_prompt(product_name, usage_summary, "UGC hands-on function demonstration"),
+                "function_demo_prompt": build_function_demo_prompt(product_name, usage_summary, scene_imagination),
                 "proof_moment": (brief.get("proof_moments") or [usage_summary])[0],
                 "shot_plan": [
                     "0-2s: handheld hook with product close to camera",
@@ -137,9 +157,9 @@ def fallback_variants(manifest: dict[str, Any], references: list[str], count: in
                 ],
                 "selected_reference_images": references[:2],
                 "image_prompt": product_fidelity_block(product_name)
-                + f"\nCreate a vertical 9:16 UGC pad image for: {archetype}. Scene must support this product usage: {usage_summary}. Bright home kitchen, natural creator energy, product clearly visible in hand or on counter.",
+                + f"\nCreate a vertical 9:16 UGC pad image for: {scene_imagination}. Scene must support this product usage: {usage_summary}. Natural creator energy, product clearly visible, but the lifestyle scene can differ from the source product photos.",
                 "video_prompt": product_fidelity_block(product_name)
-                + f"\n15-second Instagram Reels style product demo. Demonstrate these confirmed/cautious usage steps: {usage_summary}. Include natural spoken dialogue only if safe, clear proof moment, and final sell shot. Scenario: {archetype}.",
+                + f"\n15-second Instagram Reels style product demo. Demonstrate these confirmed/cautious usage steps: {usage_summary}. Include natural spoken dialogue only if safe, clear proof moment, and final sell shot. Scenario: {scene_imagination}.",
                 "negative_prompt": "Do not alter product geometry, color, material, logo/text, handle shape, flower/gourd/cat silhouette, or invent extra parts.",
             }
         )
@@ -160,6 +180,9 @@ def normalize_variants(output: dict[str, Any], manifest: dict[str, Any], referen
         clean_variant = dict(variant)
         clean_variant["variant_id"] = index
         clean_variant["selected_reference_images"] = references[:2]
+        clean_variant.setdefault("reference_scope", reference_scope_note(references))
+        clean_variant.setdefault("scene_imagination", build_scene_imagination(clean_variant, product_brief))
+        clean_variant.setdefault("selling_angle", infer_selling_angle(clean_variant, feature_summary))
         clean_variant.setdefault("negative_prompt", fallback["variants"][index - 1]["negative_prompt"])
         clean_variant.setdefault("function_intro_prompt", build_function_intro_prompt(product_name, feature_summary, clean_variant.get("hook", "")))
         clean_variant.setdefault("voiceover_script_8s", build_voiceover_script_8s(product_name, feature_summary, clean_variant.get("hook", "")))
@@ -184,6 +207,9 @@ def normalize_variants(output: dict[str, Any], manifest: dict[str, Any], referen
     while len(normalized) < count:
         fallback_variant = dict(fallback["variants"][next_index - 1])
         fallback_variant["variant_id"] = next_index
+        fallback_variant.setdefault("reference_scope", reference_scope_note(references))
+        fallback_variant.setdefault("scene_imagination", build_scene_imagination(fallback_variant, product_brief))
+        fallback_variant.setdefault("selling_angle", infer_selling_angle(fallback_variant, feature_summary))
         fallback_variant["model_suggested_image_prompt"] = fallback_variant.get("image_prompt", "")
         fallback_variant["model_suggested_video_prompt"] = fallback_variant.get("video_prompt", "")
         fallback_variant.setdefault("function_intro_prompt", build_function_intro_prompt(product_name, feature_summary, fallback_variant.get("hook", "")))
@@ -211,6 +237,61 @@ def product_fidelity_block(product_name: str) -> str:
         "Preserve exact product shape, proportions, color, material, texture, visible mechanisms, logo/text, packaging, and distinctive silhouette. "
         "Do not redesign, recolor, simplify, distort, or replace the product. "
         "Do not add any feature that is not visible in the reference image: no new lid, cap, hinge, latch, transparent chamber, water tank, handle, button, blade, motor, brand text, embossed text, container body, or storage compartment unless that exact feature already exists in the reference."
+    )
+
+
+def reference_scope_note(references: list[str] | None = None) -> str:
+    reference_text = json.dumps(references or [], ensure_ascii=False)
+    return (
+        f"Use selected reference images {reference_text} to lock only the product identity: exact SKU/colorway, shape, proportions, material, functional surfaces, visible mechanisms, ports, and distinctive details. "
+        "Do not treat the source photo background, tabletop, props, lighting, camera angle, or composition as mandatory unless directly required to explain the product function."
+    )
+
+
+def infer_selling_angle(variant: dict[str, Any], feature_summary: str) -> str:
+    source = " ".join(
+        str(variant.get(key, ""))
+        for key in ("title", "hook", "usage_logic", "proof_moment", "dialogue_script")
+    ).lower()
+    combined = f"{source} {feature_summary.lower()}"
+    angle_map = [
+        ("travel", "travel portability"),
+        ("portable", "compact portability"),
+        ("fold", "folding / compact storage"),
+        ("storage", "storage convenience"),
+        ("one hand", "one-handed convenience"),
+        ("quick", "speed / quick setup"),
+        ("fast", "speed / quick setup"),
+        ("clean", "cleaner setup"),
+        ("mess", "mess reduction"),
+        ("cable", "fewer cables"),
+        ("organ", "organization"),
+        ("gift", "giftable everyday usefulness"),
+        ("premium", "premium product feel"),
+        ("close-up", "premium product detail"),
+    ]
+    for marker, angle in angle_map:
+        if marker in combined:
+            return angle
+    return "clear buyer benefit tied to the confirmed product function"
+
+
+def build_scene_imagination(variant: dict[str, Any], product_brief: dict[str, Any] | None = None) -> str:
+    brief = product_brief or {}
+    existing = str(variant.get("scene_imagination") or "").strip()
+    if existing:
+        return existing
+    scene_context = _plain_brief_list(variant.get("shot_plan") or brief.get("recommended_ugc_scenes"), 3)
+    usage_context = _plain_brief_list(variant.get("usage_logic") or brief.get("confirmed_use_cases") or brief.get("step_by_step_usage"), 3)
+    angle = infer_selling_angle(variant, usage_context)
+    if scene_context:
+        return (
+            f"Use a realistic lifestyle setting inspired by buyer use, not a copy of the product-page photo: {scene_context}. "
+            f"Scene should make the '{angle}' selling angle and this usage clear: {usage_context}."
+        )
+    return (
+        f"Invent a realistic lifestyle scene where a buyer would naturally use this product, guided by the '{angle}' selling angle and confirmed usage: {usage_context}. "
+        "Do not copy the original product-photo background unless it is necessary for understanding the function."
     )
 
 
@@ -294,6 +375,8 @@ def strict_pad_image_prompt(product_name: str, variant: dict[str, Any], product_
     brief = product_brief or {}
     scene = variant.get("title") or variant.get("hook") or "UGC product demo setup"
     references = variant.get("selected_reference_images") or _brief_paths(brief, ["canonical_reference_images", "reference_image_strategy"])
+    reference_scope = variant.get("reference_scope") or reference_scope_note(references)
+    scene_imagination = build_scene_imagination(variant, brief)
     usage_context = _brief_list(
         variant.get("usage_logic") or brief.get("step_by_step_usage") or brief.get("confirmed_or_inferred_use_steps"),
         3,
@@ -303,9 +386,12 @@ def strict_pad_image_prompt(product_name: str, variant: dict[str, Any], product_
         + "\nCreate a vertical 9:16 first-frame pad image for a UGC video. "
         "This is a product-accurate setup shot, not a usage/action shot. Treat the reference product as a locked physical prop, not a design suggestion. "
         f"Use these selected reference images as the product identity source: {json.dumps(references, ensure_ascii=False)}. "
+        f"Reference scope: {reference_scope} "
         "The first selected full-product reference is the canonical source of truth. If page images conflict, ignore alternate SKUs, accessories, loose parts, packaging-only photos, and detail-only photos. "
         "Keep the full product visually identical to the reference image, with unobstructed silhouette and visible surface details. "
-        "You may add a simple clean home background and nearby contextual props, but the product must not touch, scrub, squeeze, cut, open, press, wash, or interact with any object in this pad image. "
+        f"Scene imagination: {scene_imagination} "
+        "You may add realistic lifestyle background and nearby contextual props that support the buyer use case, but do not copy source-photo props by default and do not let props obscure or redesign the product. "
+        "The product must not touch, scrub, squeeze, cut, open, press, wash, or interact with any object in this pad image unless that action is the selected supported function for this exact variant. "
         "Do not place the product inside a hand if that hides or deforms the shape. Do not crop the product. "
         "No invented text or branding on the product. No extra plastic shell, chamber, lid, latch, reservoir, or mechanical housing. "
         f"Scene concept: {scene}. Usage context for the later video only, not for this image: {usage_context}."
@@ -346,6 +432,8 @@ def usage_keyframe_prompt(
 ) -> str:
     brief = product_brief or {}
     references = variant.get("selected_reference_images") or _brief_paths(brief, ["canonical_reference_images", "reference_image_strategy"])
+    reference_scope = variant.get("reference_scope") or reference_scope_note(references)
+    scene_imagination = build_scene_imagination(variant, brief)
     usage_context = _plain_brief_list(
         brief.get("step_by_step_usage") or brief.get("confirmed_or_inferred_use_steps") or variant.get("usage_logic"),
         2,
@@ -369,9 +457,12 @@ def usage_keyframe_prompt(
         + "\nCreate a vertical 9:16 product-use keyframe for an 8-second UGC video. "
         f"{moment} "
         f"Use these selected reference images as the product identity source: {json.dumps(references, ensure_ascii=False)}. "
+        f"Reference scope: {reference_scope} "
         "The first selected full-product reference is canonical. Do not borrow shape, color, mechanism, or accessories from alternate SKUs on the same product page. "
         "The referenced product must remain the exact same physical object, with unobstructed recognizable silhouette and surface details. "
         f"Use this product-appropriate scene rather than a generic kitchen unless the product is truly a kitchen product: {scene_hint}. "
+        f"Scene imagination: {scene_imagination} "
+        "The lifestyle environment may differ from the original product photo; preserve the product, not the source-photo background. "
         "Adult hands only if needed, natural phone-shot lighting, no text overlay, no captions, no extra branding. "
         "Avoid extreme close-ups, heavy occlusion, dramatic stains, magic effects, or any invented product mechanism. "
         f"Supported use context: {usage_context}. Proof idea: {proof_moment}."
@@ -386,6 +477,8 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
     )
     proof_moment = _plain_brief_list(variant.get("proof_moment") or brief.get("proof_moments"), 2)
     scene_context = _plain_brief_list(brief.get("recommended_ugc_scenes") or variant.get("shot_plan"), 2)
+    scene_imagination = build_scene_imagination(variant, brief)
+    reference_scope = variant.get("reference_scope") or reference_scope_note(variant.get("selected_reference_images"))
     if not usage_context:
         usage_context = "perform one simple supported use action shown or described in the product materials"
     if not proof_moment:
@@ -416,6 +509,8 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
         "The hook is visual: start with the everyday problem, need, or convenience moment already visible; then show one simple satisfying use action; end on a clear proof/sell shot. "
         f"Action arc: adult hands interact with the exact visible product and perform one supported use action: {usage_context}. "
         f"Scene context: {scene_context}. "
+        f"Scene imagination: {scene_imagination}. "
+        f"Reference scope: {reference_scope} "
         "Keep the same visible product identity throughout: silhouette, proportions, color, texture, and distinctive details must stay consistent while it moves. "
         "Hands may enter and use the product, but avoid covering the product for more than a brief moment. "
         "Do not invent new product parts, labels, text, packaging, containers, chambers, hinges, buttons, motors, reservoirs, or mechanisms. "
@@ -471,6 +566,9 @@ Each variant must include:
 - proof_moment: the exact visual action that proves the function
 - shot_plan with 0-15 second timing
 - selected_reference_images using local paths from the preferred list
+- reference_scope: explain which visual details from source images lock product identity, and explicitly state that source-photo background/props/composition are not mandatory unless functionally necessary
+- selling_angle: one focused buyer benefit for this variant
+- scene_imagination: a realistic lifestyle scene derived from the product function and selling angle, not merely copied from source product photos
 - image_prompt in English for GPT-Image-2 image-to-image
 - video_prompt in English for VEO 3.1 image-to-video
 - negative_prompt
@@ -482,6 +580,9 @@ Critical:
 4. The selected reference image must be the best true full-product reference: full silhouette, correct SKU/style, real proportions, visible key functional zones. Do not select alternate SKU images, accessory-only images, packaging-only images, loose parts, isolated cables, or detail images as canonical.
 5. Put the concise voiceover lines into VEO video_prompt as native audio/dialogue, but keep subtitles/captions out.
 6. Do not ask VEO to render text. Short Instagram-style overlay labels belong in on_screen_callouts for post-production, not inside the generated video frames.
+7. Product reference images lock the product itself, not the entire source photo. Preserve product identity and usage mechanics, but freely imagine realistic buyer scenes, backgrounds, camera angles, and contextual props that clarify the function.
+8. Each variant should focus on one small function or selling point. Vary function, scene, action, and proof moment across the batch; do not produce ten versions of the same tabletop placement.
+9. Start/end keyframes should be meaningfully different enough for an 8-second action arc while preserving the same exact product.
 """.strip()
     payload = {
         "model": model,
@@ -515,7 +616,8 @@ def process_product(product_dir: Path, api_key: str, args: argparse.Namespace) -
     output["source_manifest"] = "product_manifest.json"
     output["source_image_analysis"] = "image_analysis.json"
     output["source_product_brief"] = "product_brief.json" if product_brief else None
-    write_json(product_dir / "ugc_prompts.json", output)
+    output_path = product_dir / ("ugc_prompts.dry_run.json" if args.dry_run else "ugc_prompts.json")
+    write_json(output_path, output)
 
 
 def main() -> None:

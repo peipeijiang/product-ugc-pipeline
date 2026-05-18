@@ -9,6 +9,8 @@ description: Build product UGC ad-production pipelines from ecommerce product UR
 
 Preserve the original product appearance above all else. The pad image is the visual identity lock for VEO, but default videos should still show practical product use. Describe supported actions and scene flow, not a competing redesign of the product.
 
+Product references lock the product, not the whole source photo. Use source images to preserve product identity, function surfaces, proportions, material, color, mechanisms, and supported use. Do not unnecessarily copy the original product-photo background, table, lighting, props, or composition unless those elements are essential to the product function.
+
 ## Workflow
 
 1. Put product URLs in a text file, one URL per line.
@@ -67,6 +69,15 @@ For each product folder:
 
 Generate prompts in English for image/video models, but keep metadata fields readable in either Chinese or English depending on user preference.
 
+Before generating image/video prompts, separate cognition into four layers:
+
+1. Product identity: exact appearance, silhouette, materials, functional surfaces, visible mechanisms, ports, accessories, and SKU/colorway that must never drift.
+2. Product function: confirmed use cases, step-by-step operation, proof moments, misuse risks, and what must be visible for a buyer to understand how it works.
+3. Selling angle: the small buyer benefit each variant highlights, such as speed, portability, storage, one-handed use, fewer cables, compactness, precision, giftability, or cleaning convenience.
+4. Scene imagination: realistic lifestyle contexts inferred from the function and selling angle, not limited to the original product-page photos.
+
+Every batch should deliberately vary the variants by function, scenario, action, and proof moment. Avoid making all prompts the same “place product on counter/table, show result” pattern.
+
 Every UGC variant must include:
 
 - Hook in the first 2 seconds.
@@ -77,12 +88,15 @@ Every UGC variant must include:
 - A final sell shot with product in hand or on counter.
 - Product-fidelity block: “Use the provided product reference as the canonical source. Do not redesign, recolor, simplify, enlarge logos, change flower/gourd/cat silhouette, or invent extra parts.”
 - Negative constraints: no fake claims, no impossible effects, no unrelated accessories, no distorted product geometry.
+- `reference_scope`: a short note that says which parts of source images are product identity locks and which parts are free to reinterpret as lifestyle scene design.
+- `scene_imagination`: a realistic scene derived from product function and buyer use case; it may differ from the product photos when functionally appropriate.
 
 Actual VEO `video_prompt` should be a conservative usage demo:
 
 - Treat the generated pad image / first frame as the visual identity lock.
 - Show one simple real-world use action supported by `product_brief.json`.
 - Prefer start/end keyframes for 8-second usage videos: start = hook/problem setup, end = believable proof/sell shot.
+- Start/end keyframes should be meaningfully different enough to imply an 8-second action arc, while keeping the exact same product identity. Avoid nearly identical start/end frames unless the goal is a stable b-roll shot.
 - When two keyframes exist, VEO receives both as `input_reference`; image 1 is the first frame and image 2 is the final frame.
 - Allow adult hands and kitchen/sink/tabletop context when needed for a useful demo.
 - Describe the action flow, proof moment, and camera style, but avoid re-describing product geometry as if VEO should redesign it.
@@ -97,6 +111,8 @@ Every UGC variant must be grounded in `product_brief.json`:
 - Use `reference_image_strategy` plus `image_analysis.json` to choose full-product reference images for Image 2.
 - Prefer explicit `canonical_reference_images` / `full_product_reference_images` in `product_brief.json` when present, and exclude `alternate_sku_reference_images`, `rejected_reference_images`, `non_canonical_reference_images`, and `avoid_reference_images`.
 - The canonical reference must show the true product full silhouette, correct SKU/style, real proportions, and key functional zones. Do not use accessory-only, packaging-only, loose parts, alternate colorway/SKU, or detail-only photos as the identity reference.
+- Do not let the reference image over-constrain the lifestyle scene. Once the correct product identity and usage mechanics are locked, expand the scene to realistic buyer contexts that make the function easier to understand.
+- For each variant, map one small function or selling point to one scene and one proof moment. If several functions exist, split them across variants rather than cramming them into the same clip.
 - If usage is uncertain, write a conservative tabletop/hand demo rather than inventing a dramatic function.
 
 ## LaoZhang API Notes
@@ -135,6 +151,9 @@ Before delivering outputs, inspect `materials.md`, `image_analysis.json`, and `u
 - Reject VEO prompts that redesign the product, invent mechanisms, or introduce unsupported actions.
 - Reject prompts that use a weak reference image when a cleaner product image exists.
 - Prefer close-up product photos as image references over lifestyle images.
+- Reject batches where the variants only differ cosmetically but repeat the same scene, camera angle, action, and proof moment.
+- Reject keyframes that copy the original source-photo environment without a functional reason; scene design should come from buyer context and selling angle.
+- Reject start/end keyframes that are too similar to produce a meaningful 8-second product-use video, unless the variant is explicitly stable b-roll.
 - Before calling Image 2, manually or programmatically verify the selected reference images are the correct product, not another SKU on the same page.
 - Image prompts must explicitly say the first selected full-product reference is canonical and conflicting page images should be ignored.
 - For Image 2 edits, pass multiple verified full-product references when available, with the first image as the canonical product identity lock.
