@@ -3,14 +3,167 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 from typing import Any
 
 from common import load_json, request_json, require_api_key, selected_product_dirs, write_json
 
 
-UGC_SYSTEM_PROMPT = """You are a senior UGC creative director for Instagram Reels and TikTok Shop.
+UGC_SYSTEM_PROMPT = """You are a senior UGC creative director for short-form social video and TikTok Shop.
 Create product-faithful creator ad prompts. Return JSON only."""
+
+
+def discover_history_files(product_dir: Path, history_glob: str) -> list[Path]:
+    return [path for path in sorted(product_dir.glob(history_glob)) if path.is_file()]
+
+
+def _variant_text(variant: dict[str, Any]) -> str:
+    parts = [
+        variant.get("title", ""),
+        variant.get("hook", ""),
+        variant.get("selling_angle", ""),
+        variant.get("scene_imagination", ""),
+        variant.get("usage_logic", ""),
+        variant.get("proof_moment", ""),
+        variant.get("dialogue_script", ""),
+        variant.get("video_prompt", ""),
+    ]
+    flattened: list[str] = []
+    for part in parts:
+        if isinstance(part, list):
+            flattened.extend(str(item) for item in part)
+        else:
+            flattened.append(str(part))
+    return " ".join(item for item in flattened if item).lower()
+
+
+def _match_tag(text: str, rules: list[tuple[str, list[str]]], fallback: str) -> str:
+    for tag, markers in rules:
+        if any(marker in text for marker in markers):
+            return tag
+    return fallback
+
+
+def infer_scene_tag(variant: dict[str, Any]) -> str:
+    text = _variant_text(variant)
+    return _match_tag(
+        text,
+        [
+            ("kitchen", ["kitchen", "counter", "pasta", "salad", "bowl", "food prep"]),
+            ("outdoor", ["patio", "garden", "yard", "outdoor", "porch", "tree"]),
+            ("car", ["car", "dashboard", "console", "vehicle"]),
+            ("desk", ["desk", "office", "laptop", "workspace"]),
+            ("bedroom", ["bedroom", "bed", "sleep", "pillow", "nightstand"]),
+            ("party", ["party", "birthday", "balloon", "celebration"]),
+            ("pet-grooming", ["pet", "paw", "groom", "nail", "dog", "cat"]),
+            ("home-electric", ["outlet", "appliance", "living room", "electricity", "wall socket"]),
+            ("travel", ["travel", "hotel", "portable", "vacation"]),
+        ],
+        "general-home",
+    )
+
+
+def infer_action_tag(variant: dict[str, Any]) -> str:
+    text = _variant_text(variant)
+    return _match_tag(
+        text,
+        [
+            ("setup", ["set up", "setup", "plug in", "mount", "hang", "insert", "load", "attach"]),
+            ("demo-use", ["grate", "slice", "spin", "inflate", "trim", "grind", "sleep", "cool", "file"]),
+            ("refill", ["refill", "tablet", "bait", "charge", "charging"]),
+            ("swap", ["swap", "change drum", "interchangeable", "replace blade"]),
+            ("cleanup", ["clean", "brush", "rinse", "wash"]),
+            ("proof-shot", ["proof", "result", "final shot", "finish"]),
+        ],
+        "usage-demo",
+    )
+
+
+def infer_angle_tag(variant: dict[str, Any]) -> str:
+    text = _variant_text(variant)
+    return _match_tag(
+        text,
+        [
+            ("speed", ["fast", "quick", "speed", "seconds"]),
+            ("stability", ["stable", "stability", "locks", "suction"]),
+            ("safety", ["safe", "safely", "guard", "led", "visibility"]),
+            ("comfort", ["comfort", "aligned", "support", "relaxed"]),
+            ("portability", ["portable", "travel", "compact"]),
+            ("cleanliness", ["clean", "mess", "tidy", "deodorizer", "fresh"]),
+            ("capacity", ["large bowl", "5.3 qt", "dual nozzle", "100-speed"]),
+        ],
+        "core-function",
+    )
+
+
+def infer_style_tag(variant: dict[str, Any]) -> str:
+    text = _variant_text(variant)
+    return _match_tag(
+        text,
+        [
+            ("asmr", ["asmr", "silent", "sound-only"]),
+            ("creator-talk", ["creator", "voiceover", "dialogue", "host"]),
+            ("proof-first", ["proof moment", "finish shot", "result shot"]),
+            ("setup-demo", ["setup", "install", "mount", "plug in"]),
+            ("lifestyle-demo", ["lifestyle", "routine", "bedroom", "office", "party"]),
+        ],
+        "function-demo",
+    )
+
+
+def infer_pace_tag(variant: dict[str, Any]) -> str:
+    text = _variant_text(variant)
+    return _match_tag(
+        text,
+        [
+            ("fast", ["fast", "quick", "speed", "rapid"]),
+            ("slow", ["asmr", "gentle", "calm", "soft", "slow"]),
+        ],
+        "medium",
+    )
+
+
+def summarize_variant_history(variant: dict[str, Any], source_file: str) -> dict[str, Any]:
+    return {
+        "source_file": source_file,
+        "variant_id": variant.get("variant_id"),
+        "title": variant.get("title", ""),
+        "selling_angle": variant.get("selling_angle", ""),
+        "scene_imagination": variant.get("scene_imagination", ""),
+        "usage_logic": variant.get("usage_logic", ""),
+        "proof_moment": variant.get("proof_moment", ""),
+        "scene_tag": infer_scene_tag(variant),
+        "action_tag": infer_action_tag(variant),
+        "angle_tag": infer_angle_tag(variant),
+        "style_tag": infer_style_tag(variant),
+        "pace_tag": infer_pace_tag(variant),
+    }
+
+
+def collect_existing_variant_history(product_dir: Path, history_glob: str) -> tuple[list[dict[str, Any]], list[str]]:
+    history: list[dict[str, Any]] = []
+    files = discover_history_files(product_dir, history_glob)
+    for path in files:
+        data = load_json(path, {})
+        for variant in data.get("variants", []) if isinstance(data, dict) else []:
+            if isinstance(variant, dict):
+                history.append(summarize_variant_history(variant, path.name))
+    return history, [path.name for path in files]
+
+
+def history_summary_for_prompt(history: list[dict[str, Any]], limit: int = 24) -> str:
+    if not history:
+        return "No historical prompt variants found for this product."
+    lines: list[str] = []
+    for item in history[:limit]:
+        lines.append(
+            f"- file={item['source_file']} variant={item.get('variant_id')} "
+            f"scene={item.get('scene_tag')} action={item.get('action_tag')} angle={item.get('angle_tag')} "
+            f"style={item.get('style_tag')} pace={item.get('pace_tag')} "
+            f"title={item.get('title')} selling_angle={item.get('selling_angle')} proof={item.get('proof_moment')}"
+        )
+    return "\n".join(lines)
 
 
 def _brief_paths(product_brief: dict[str, Any], keys: list[str]) -> list[str]:
@@ -90,111 +243,36 @@ def best_reference_images(image_analysis: dict[str, Any], product_brief: dict[st
     return selected
 
 
-def fallback_variants(manifest: dict[str, Any], references: list[str], count: int, product_brief: dict[str, Any] | None = None) -> dict[str, Any]:
-    product_name = manifest["product_name"]
-    selling_points = "; ".join(manifest.get("selling_points") or [manifest.get("description") or "useful daily-life product"])
-    brief = product_brief or {}
-    usage_steps = brief.get("step_by_step_usage") or brief.get("confirmed_or_inferred_use_steps") or manifest.get("usage_signals") or []
-    usage_summary = "; ".join(json.dumps(step, ensure_ascii=False) if isinstance(step, dict) else str(step) for step in usage_steps[:4])
-    if not usage_summary:
-        usage_summary = "demonstrate the product cautiously using only confirmed visible functions"
-    selling_angles = [
-        "fast setup",
-        "compact storage",
-        "one-handed convenience",
-        "mess reduction",
-        "travel portability",
-        "premium close-up proof",
-        "small-space organization",
-        "giftable everyday usefulness",
-        "morning routine speed",
-        "nightstand / end-of-day routine",
-    ]
-    scene_archetypes = [
-        "busy weekday counter",
-        "small apartment shelf or desk",
-        "travel pouch on hotel table",
-        "bedside routine",
-        "office desk reset",
-        "coffee table quick demo",
-        "bathroom vanity or utility corner",
-        "car/travel console only if supported",
-        "gift unboxing table",
-        "friend recommendation handheld shot",
-    ]
-    variants: list[dict[str, Any]] = []
-    for index in range(1, count + 1):
-        selling_angle = selling_angles[(index - 1) % len(selling_angles)]
-        scene_archetype = scene_archetypes[(index - 1) % len(scene_archetypes)]
-        scene_imagination = (
-            f"{scene_archetype} lifestyle context chosen to make the '{selling_angle}' benefit easy to understand; "
-            "do not copy the original product-photo background unless it is functionally necessary."
-        )
-        variants.append(
-            {
-                "variant_id": index,
-                "title": f"{product_name} — {selling_angle}",
-                "creator_persona": "Warm, practical Instagram creator filming in a bright home kitchen.",
-                "hook": f"I didn't expect this tiny {product_name} to make this task feel easier.",
-                "dialogue_script": (
-                    f"Creator: 'Okay, quick kitchen test. This is the {product_name}. "
-                    f"What I like is: {selling_points}. The correct use is: {usage_summary}. Watch this part closely—this is the proof moment.'"
-                ),
-                "usage_logic": usage_summary,
-                "selling_angle": selling_angle,
-                "scene_imagination": scene_imagination,
-                "reference_scope": reference_scope_note(references),
-                "function_intro_prompt": build_function_intro_prompt(product_name, usage_summary, selling_points),
-                "voiceover_script_8s": build_voiceover_script_8s(product_name, usage_summary, f"I didn't expect this tiny {product_name} to make this task feel easier."),
-                "on_screen_callouts": [],
-                "function_demo_prompt": build_function_demo_prompt(product_name, usage_summary, scene_imagination),
-                "proof_moment": (brief.get("proof_moments") or [usage_summary])[0],
-                "shot_plan": [
-                    "0-2s: handheld hook with product close to camera",
-                    "2-6s: show the real daily problem this product is designed for",
-                    "6-11s: close-up proof moment demonstrating the confirmed usage steps",
-                    "11-15s: final sell shot with product held beside the result",
-                ],
-                "selected_reference_images": references[:2],
-                "image_prompt": product_fidelity_block(product_name)
-                + f"\nCreate a vertical 9:16 UGC pad image for: {scene_imagination}. Scene must support this product usage: {usage_summary}. Natural creator energy, product clearly visible, but the lifestyle scene can differ from the source product photos.",
-                "video_prompt": product_fidelity_block(product_name)
-                + f"\n15-second Instagram Reels style product demo. Demonstrate these confirmed/cautious usage steps: {usage_summary}. Include natural spoken dialogue only if safe, clear proof moment, and final sell shot. Scenario: {scene_imagination}.",
-                "negative_prompt": "Do not alter product geometry, color, material, logo/text, handle shape, flower/gourd/cat silhouette, or invent extra parts.",
-            }
-        )
-    return {"product_name": product_name, "variants": variants}
-
-
 def normalize_variants(output: dict[str, Any], manifest: dict[str, Any], references: list[str], count: int, product_brief: dict[str, Any] | None = None) -> dict[str, Any]:
     product_name = manifest["product_name"]
-    fallback = fallback_variants(manifest, references, count, product_brief)
     feature_summary = product_function_summary(manifest, product_brief)
     variants = output.get("variants")
     if not isinstance(variants, list):
-        variants = []
+        raise RuntimeError(f"Model output missing variants array for {product_name}")
+    if len(variants) < count:
+        raise RuntimeError(f"Model returned only {len(variants)} variants for {product_name}; expected {count}")
     normalized: list[dict[str, Any]] = []
     for index, variant in enumerate(variants[:count], start=1):
         if not isinstance(variant, dict):
-            continue
+            raise RuntimeError(f"Variant {index} for {product_name} was not a JSON object")
         clean_variant = dict(variant)
         clean_variant["variant_id"] = index
         clean_variant["selected_reference_images"] = references[:2]
         clean_variant.setdefault("reference_scope", reference_scope_note(references))
         clean_variant.setdefault("scene_imagination", build_scene_imagination(clean_variant, product_brief))
         clean_variant.setdefault("selling_angle", infer_selling_angle(clean_variant, feature_summary))
-        clean_variant.setdefault("negative_prompt", fallback["variants"][index - 1]["negative_prompt"])
+        clean_variant.setdefault("negative_prompt", "Do not alter product geometry, color, material, logo/text, silhouette, or invent extra parts.")
         clean_variant.setdefault("function_intro_prompt", build_function_intro_prompt(product_name, feature_summary, clean_variant.get("hook", "")))
         clean_variant.setdefault("voiceover_script_8s", build_voiceover_script_8s(product_name, feature_summary, clean_variant.get("hook", "")))
         clean_variant["on_screen_callouts"] = []
         clean_variant.setdefault("function_demo_prompt", build_function_demo_prompt(product_name, feature_summary, clean_variant.get("title", "")))
         fidelity = product_fidelity_block(product_name)
-        image_prompt = str(clean_variant.get("image_prompt") or fallback["variants"][index - 1]["image_prompt"])
-        video_prompt = str(clean_variant.get("video_prompt") or fallback["variants"][index - 1]["video_prompt"])
+        image_prompt = str(clean_variant.get("image_prompt") or "")
+        video_prompt = str(clean_variant.get("video_prompt") or "")
         if "CANONICAL PRODUCT" not in image_prompt:
-            image_prompt = fidelity + "\n" + image_prompt
+            image_prompt = fidelity + ("\n" + image_prompt if image_prompt else "")
         if "CANONICAL PRODUCT" not in video_prompt:
-            video_prompt = fidelity + "\n" + video_prompt
+            video_prompt = fidelity + ("\n" + video_prompt if video_prompt else "")
         clean_variant["model_suggested_image_prompt"] = image_prompt
         clean_variant["model_suggested_video_prompt"] = video_prompt
         clean_variant["start_frame_prompt"] = usage_keyframe_prompt(product_name, clean_variant, product_brief, "start")
@@ -203,26 +281,6 @@ def normalize_variants(output: dict[str, Any], manifest: dict[str, Any], referen
         clean_variant["video_prompt"] = usage_demo_video_prompt(clean_variant, product_brief)
         clean_variant["video_prompt_strategy"] = "usage_demo_conservative_first_frame_identity"
         normalized.append(clean_variant)
-    next_index = len(normalized) + 1
-    while len(normalized) < count:
-        fallback_variant = dict(fallback["variants"][next_index - 1])
-        fallback_variant["variant_id"] = next_index
-        fallback_variant.setdefault("reference_scope", reference_scope_note(references))
-        fallback_variant.setdefault("scene_imagination", build_scene_imagination(fallback_variant, product_brief))
-        fallback_variant.setdefault("selling_angle", infer_selling_angle(fallback_variant, feature_summary))
-        fallback_variant["model_suggested_image_prompt"] = fallback_variant.get("image_prompt", "")
-        fallback_variant["model_suggested_video_prompt"] = fallback_variant.get("video_prompt", "")
-        fallback_variant.setdefault("function_intro_prompt", build_function_intro_prompt(product_name, feature_summary, fallback_variant.get("hook", "")))
-        fallback_variant.setdefault("voiceover_script_8s", build_voiceover_script_8s(product_name, feature_summary, fallback_variant.get("hook", "")))
-        fallback_variant["on_screen_callouts"] = []
-        fallback_variant.setdefault("function_demo_prompt", build_function_demo_prompt(product_name, feature_summary, fallback_variant.get("title", "")))
-        fallback_variant["start_frame_prompt"] = usage_keyframe_prompt(product_name, fallback_variant, product_brief, "start")
-        fallback_variant["end_frame_prompt"] = usage_keyframe_prompt(product_name, fallback_variant, product_brief, "end")
-        fallback_variant["image_prompt"] = strict_pad_image_prompt(product_name, fallback_variant, product_brief)
-        fallback_variant["video_prompt"] = usage_demo_video_prompt(fallback_variant, product_brief)
-        fallback_variant["video_prompt_strategy"] = "usage_demo_conservative_first_frame_identity"
-        normalized.append(fallback_variant)
-        next_index += 1
     output["product_name"] = output.get("product_name") or product_name
     output["variants"] = normalized
     output["variant_count_requested"] = count
@@ -518,7 +576,7 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
         f"Proof moment: {proof_moment}. "
         f"{audio_block} "
         "Natural handheld phone camera, close practical use framing. "
-        "Do not let VEO render text: no on-screen words, no overlay labels, no subtitles, no sentence captions, no lower-third transcript, no karaoke-style text. "
+        "Do not let VEO render text: no on-screen words, no overlay labels, no subtitles, no sentence captions, no lower-third transcript, no karaoke-style text, no Instagram or INS icons, no TikTok icons, no app UI, no watermarks. "
         "Keep on_screen_callouts as post-production overlay metadata only."
     )
 
@@ -529,13 +587,14 @@ def generate_with_model(
     image_analysis: dict[str, Any],
     product_brief: dict[str, Any],
     references: list[str],
+    existing_history: list[dict[str, Any]],
     count: int,
     model: str,
     base_url: str,
     timeout: int,
 ) -> dict[str, Any]:
     prompt = f"""
-Create {count} distinct UGC prompt variants for Instagram Reels/TikTok Shop product ads.
+Create {count} distinct UGC prompt variants for short-form social / TikTok Shop product ads.
 
 Product manifest:
 {json.dumps(manifest, ensure_ascii=False)[:8000]}
@@ -549,6 +608,9 @@ Product usage cognition brief:
 Preferred local reference images:
 {json.dumps(references, ensure_ascii=False)}
 
+Existing historical variants to avoid overlapping with:
+{history_summary_for_prompt(existing_history)}
+
 Return JSON with:
 - product_name
 - variants: array of {count} objects
@@ -560,7 +622,7 @@ Each variant must include:
 - dialogue_script with natural spoken lines
 - function_intro_prompt: a separate prompt for generating concise spoken function explanation
 - voiceover_script_8s: timed 0-2s, 2-5s, 5-8s spoken script lines that introduce and explain the function
-- on_screen_callouts: 1-3 short Instagram-style feature overlay labels for post-production only, not for VEO to render
+- on_screen_callouts: 1-3 short plain-text social-style feature overlay labels for post-production only, not for VEO to render, and never app icons/logos
 - function_demo_prompt: editor-facing prompt that explains the function, proof moment, and final benefit
 - usage_logic: explain how the product works and why the scene is correct
 - proof_moment: the exact visual action that proves the function
@@ -579,10 +641,12 @@ Critical:
 3. Every image_prompt and video_prompt must contain a product-fidelity block requiring exact preservation of the original product appearance.
 4. The selected reference image must be the best true full-product reference: full silhouette, correct SKU/style, real proportions, visible key functional zones. Do not select alternate SKU images, accessory-only images, packaging-only images, loose parts, isolated cables, or detail images as canonical.
 5. Put the concise voiceover lines into VEO video_prompt as native audio/dialogue, but keep subtitles/captions out.
-6. Do not ask VEO to render text. Short Instagram-style overlay labels belong in on_screen_callouts for post-production, not inside the generated video frames.
+6. Do not ask VEO to render text. Short plain-text social-style overlay labels belong in on_screen_callouts for post-production, not inside the generated video frames. Never ask for Instagram / INS / TikTok icons, app UI, or watermarks.
 7. Product reference images lock the product itself, not the entire source photo. Preserve product identity and usage mechanics, but freely imagine realistic buyer scenes, backgrounds, camera angles, and contextual props that clarify the function.
 8. Each variant should focus on one small function or selling point. Vary function, scene, action, and proof moment across the batch; do not produce ten versions of the same tabletop placement.
 9. Start/end keyframes should be meaningfully different enough for an 8-second action arc while preserving the same exact product.
+10. Compare against the historical variants listed above. New variants must avoid obvious overlap and differ from past variants in at least 2 of these dimensions: scene, action, selling angle, proof moment, pace, or style.
+11. When function overlap is unavoidable, diversify with a different camera idea, different buyer context, different rhythm, and different proof framing instead of repeating the same demo.
 """.strip()
     payload = {
         "model": model,
@@ -606,17 +670,33 @@ def process_product(product_dir: Path, api_key: str, args: argparse.Namespace) -
         print(f"[skip] missing manifest: {product_dir}")
         return
     references = best_reference_images(image_analysis, product_brief, limit=4)
-    print(f"[prompts] {product_dir.name} refs={references}")
-    if args.dry_run:
-        output = fallback_variants(manifest, references, args.count, product_brief)
-    else:
-        output = generate_with_model(api_key, manifest, image_analysis, product_brief, references, args.count, args.model, args.base_url, args.timeout)
+    existing_history, history_files = collect_existing_variant_history(product_dir, args.history_glob) if not args.ignore_history else ([], [])
+    print(f"[prompts] {product_dir.name} refs={references} history={len(existing_history)}")
+    output = generate_with_model(
+        api_key,
+        manifest,
+        image_analysis,
+        product_brief,
+        references,
+        existing_history,
+        args.count,
+        args.model,
+        args.base_url,
+        args.timeout,
+    )
     output = normalize_variants(output, manifest, references, args.count, product_brief)
     output["selected_reference_images"] = references
     output["source_manifest"] = "product_manifest.json"
     output["source_image_analysis"] = "image_analysis.json"
     output["source_product_brief"] = "product_brief.json" if product_brief else None
-    output_path = product_dir / ("ugc_prompts.dry_run.json" if args.dry_run else "ugc_prompts.json")
+    output["existing_variant_history_count"] = len(existing_history)
+    output["existing_variant_history_files"] = history_files
+    output["diversity_guard"] = {
+        "history_enabled": not args.ignore_history,
+        "history_glob": args.history_glob,
+        "required_difference_dimensions": ["scene", "action", "selling_angle", "proof_moment", "pace", "style"],
+    }
+    output_path = product_dir / args.output_file
     write_json(output_path, output)
 
 
@@ -624,13 +704,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Generate 10 product-faithful UGC prompt variants per product.")
     parser.add_argument("output_dir", type=Path)
     parser.add_argument("--count", type=int, default=10)
+    parser.add_argument("--output-file", default="ugc_prompts.json")
+    parser.add_argument("--history-glob", default="ugc_prompts*.json")
+    parser.add_argument("--ignore-history", action="store_true")
     parser.add_argument("--model", default="gpt-5.2")
     parser.add_argument("--base-url", default="https://api.laozhang.ai/v1")
     parser.add_argument("--timeout", type=int, default=420)
     parser.add_argument("--products", default="", help="Comma-separated product selectors, e.g. 01 or 01-flower")
-    parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
-    api_key = "dry-run" if args.dry_run else require_api_key()
+    api_key = require_api_key()
     for product_dir in selected_product_dirs(args.output_dir, args.products):
         process_product(product_dir, api_key, args)
 

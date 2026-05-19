@@ -22,6 +22,13 @@ def parse_variants(value: str) -> set[int]:
     return selected
 
 
+def resolve_prompts_path(product_dir: Path, prompts_file: str) -> Path:
+    candidate = Path(prompts_file)
+    if candidate.is_absolute():
+        return candidate
+    return product_dir / prompts_file
+
+
 def should_include_size(model: str, size: str | None) -> bool:
     if not size:
         return False
@@ -65,7 +72,7 @@ def existing_references(product_dir: Path, variant: dict[str, Any], max_referenc
 def build_image_prompt(variant: dict[str, Any], product_name: str) -> str:
     return (
         variant.get("image_prompt")
-        or f"Create a vertical Instagram UGC product pad image for {product_name}. Preserve the referenced product exactly."
+        or f"Create a vertical short-form social UGC product pad image for {product_name}. Preserve the referenced product exactly. No Instagram or INS icons, no TikTok icons, no app UI, no watermarks."
     )
 
 
@@ -75,7 +82,7 @@ def build_keyframe_prompt(variant: dict[str, Any], product_name: str, frame_role
     return (
         variant.get(prompt_key)
         or variant.get("image_prompt")
-        or f"Create a vertical Instagram UGC {fallback_role} keyframe for {product_name}. Preserve the referenced product exactly."
+        or f"Create a vertical short-form social UGC {fallback_role} keyframe for {product_name}. Preserve the referenced product exactly. No Instagram or INS icons, no TikTok icons, no app UI, no watermarks."
     )
 
 
@@ -141,15 +148,6 @@ def generate_image_file(
         return {
             "variant_id": variant_id,
             "status": "skipped_existing",
-            "reference_image": str(reference.relative_to(product_dir)) if reference else None,
-            "reference_images": [str(item.relative_to(product_dir)) for item in references],
-            "output_path": str(destination.relative_to(product_dir)),
-            "prompt": prompt,
-        }
-    if args.dry_run:
-        return {
-            "variant_id": variant_id,
-            "status": "dry_run",
             "reference_image": str(reference.relative_to(product_dir)) if reference else None,
             "reference_images": [str(item.relative_to(product_dir)) for item in references],
             "output_path": str(destination.relative_to(product_dir)),
@@ -244,9 +242,10 @@ def generate_one_image(
 
 
 def process_product(product_dir: Path, api_key: str, selected_variants: set[int], args: argparse.Namespace) -> None:
-    prompts = load_json(product_dir / "ugc_prompts.json")
+    prompts_path = resolve_prompts_path(product_dir, args.prompts_file)
+    prompts = load_json(prompts_path)
     if not prompts:
-        print(f"[skip] missing ugc_prompts.json: {product_dir}")
+        print(f"[skip] missing prompts file: {prompts_path}")
         return
     results: list[dict[str, Any]] = []
     for variant in prompts.get("variants", []):
@@ -262,6 +261,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Generate GPT-Image-2 product-faithful pad images from UGC prompts.")
     parser.add_argument("output_dir", type=Path)
     parser.add_argument("--variants", default="1-10")
+    parser.add_argument("--prompts-file", default="ugc_prompts.json")
     parser.add_argument("--model", default="gpt-image-2-vip")
     parser.add_argument("--size", default="1024x1536")
     parser.add_argument("--quality", default="")
@@ -273,10 +273,9 @@ def main() -> None:
     parser.add_argument("--compose-only", action="store_true", help="Create deterministic 9:16 pad images from the original reference without AI redraw.")
     parser.add_argument("--keyframes", action="store_true", help="Generate start/end keyframe images named variant-XX-start.png and variant-XX-end.png.")
     parser.add_argument("--max-reference-images", type=int, default=1, help="Maximum selected reference images to send to image edit requests.")
-    parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     selected_variants = parse_variants(args.variants)
-    api_key = "local-compose" if args.dry_run or args.compose_only else require_api_key()
+    api_key = "local-compose" if args.compose_only else require_api_key()
     for product_dir in selected_product_dirs(args.output_dir, args.products):
         process_product(product_dir, api_key, selected_variants, args)
 

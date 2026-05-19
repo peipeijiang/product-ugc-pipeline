@@ -194,15 +194,6 @@ def process_variant(
             "output_path": str(output_path.relative_to(product_dir)),
             "prompt": prompt,
         }
-    if args.dry_run:
-        return {
-            "variant_id": variant_id,
-            "status": "dry_run",
-            "model": args.model,
-            "reference_images": [str(reference_image.relative_to(product_dir)) for reference_image in reference_images],
-            "output_path": str(output_path.relative_to(product_dir)),
-            "prompt": prompt,
-        }
     print(f"[video] {product_dir.name} variant {variant_id:02d}", flush=True)
     create_response = create_video_task_with_retry(
         api_key,
@@ -292,12 +283,12 @@ def process_product(product_dir: Path, api_key: str, selected_variants: set[int]
         if variant_id not in selected_variants:
             continue
         result = process_variant(product_dir, variant, api_key, args)
-        if args.force and result.get("status") != "dry_run":
+        if args.force:
             results = [item for item in results if int(item.get("variant_id", 0)) != variant_id]
             results.append(result)
             result_keys = {(int(item.get("variant_id", 0)), item.get("status", "")) for item in results if isinstance(item, dict)}
         elif (variant_id, result.get("status", "")) not in result_keys:
-            results = [item for item in results if int(item.get("variant_id", 0)) != variant_id or item.get("status") == "dry_run"]
+            results = [item for item in results if int(item.get("variant_id", 0)) != variant_id]
             results.append(result)
             result_keys.add((variant_id, result.get("status", "")))
         write_json(results_path, {"results": results})
@@ -316,10 +307,9 @@ def main() -> None:
     parser.add_argument("--download-retries", type=int, default=6)
     parser.add_argument("--safe-no-audio-retry", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--force", action="store_true")
-    parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     selected_variants = parse_variants(args.variants)
-    api_key = "dry-run" if args.dry_run else require_api_key()
+    api_key = require_api_key()
     for product_dir in selected_product_dirs(args.output_dir, args.products):
         process_product(product_dir, api_key, selected_variants, args)
 

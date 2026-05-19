@@ -103,7 +103,7 @@ def update_materials_md(product_dir: Path, manifest: dict[str, Any], analyses: l
     write_text(product_dir / "materials.md", "\n".join(lines).rstrip() + "\n")
 
 
-def analyze_product_dir(product_dir: Path, api_key: str, model: str, base_url: str, dry_run: bool, limit_images: int) -> None:
+def analyze_product_dir(product_dir: Path, api_key: str, model: str, base_url: str, limit_images: int) -> None:
     manifest = load_json(product_dir / "product_manifest.json")
     if not manifest:
         print(f"[skip] missing manifest: {product_dir}")
@@ -138,25 +138,8 @@ def analyze_product_dir(product_dir: Path, api_key: str, model: str, base_url: s
             )
             continue
         print(f"[analyze] {product_dir.name}/{local_path}", flush=True)
-        if dry_run:
-            parsed = {
-                "visual_summary": "DRY RUN: image not sent to model.",
-                "is_product_related": True,
-                "product_identity_details": "Pending vision analysis.",
-                "full_product_visibility": "full_product",
-                "reference_role": "canonical_full_product",
-                "use_mechanics_visible": [],
-                "inferred_use_mechanics": "Pending vision analysis.",
-                "scene_context": "Pending vision analysis.",
-                "core_function_shown": "Pending vision analysis.",
-                "ugc_usefulness_score": 5,
-                "best_use": "weak_reference",
-                "prompt_risks": "Pending vision analysis.",
-                "preservation_warnings": "Use the original product image as canonical reference.",
-            }
-        else:
-            response = analyze_image(api_key, image_path, manifest["product_name"], model, base_url)
-            parsed = extract_json_content(response)
+        response = analyze_image(api_key, image_path, manifest["product_name"], model, base_url)
+        parsed = extract_json_content(response)
         analyses.append(
             {
                 "local_path": local_path,
@@ -191,11 +174,10 @@ def main() -> None:
     parser.add_argument("--base-url", default="https://api.laozhang.ai/v1")
     parser.add_argument("--products", default="", help="Comma-separated product selectors, e.g. 01 or 01-flower")
     parser.add_argument("--limit-images", type=int, default=6, help="Only analyze the first N filtered product images per selected product. Use 0 for all.")
-    parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
-    api_key = "dry-run" if args.dry_run else require_api_key()
+    api_key = require_api_key()
     for product_dir in selected_product_dirs(args.output_dir, args.products):
-        analyze_product_dir(product_dir, api_key, args.model, args.base_url, args.dry_run, args.limit_images)
+        analyze_product_dir(product_dir, api_key, args.model, args.base_url, args.limit_images)
 
 
 if __name__ == "__main__":

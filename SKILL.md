@@ -1,6 +1,6 @@
 ---
 name: product-ugc-pipeline
-description: Build product UGC ad-production pipelines from ecommerce product URLs. Use when Codex needs to scrape product pages, save product image/material folders, analyze image assets with a vision model, generate multiple Instagram/TikTok creator-style UGC prompts, create product-faithful reference images with LaoZhang GPT-Image-2, or create VEO 3.1 product videos through LaoZhang or LK888/updrama APIs.
+description: Build product UGC ad-production pipelines from ecommerce product URLs. Use when Codex needs to scrape product pages, save product image/material folders, analyze image assets with a vision model, generate multiple short-form social / TikTok-style UGC prompts, create product-faithful reference images with LaoZhang GPT-Image-2, or create VEO 3.1 product videos through LaoZhang or LK888/updrama APIs.
 ---
 
 # Product UGC Pipeline
@@ -50,7 +50,7 @@ LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_videos.py p
 LK888_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_videos_lk888.py product-ugc-output --variants 1-10 --model veo3.1 --generation-mode fast
 ```
 
-Use `--dry-run` on generation scripts when the user wants prompts and manifests without paid API calls.
+This skill does not use a local dry-run fallback for prompt/image/video generation. Generation steps should run through the real model/API path so outputs stay consistent with production behavior.
 
 ## Product Folder Requirements
 
@@ -83,7 +83,7 @@ Every UGC variant must include:
 - Hook in the first 2 seconds.
 - Creator persona and shot style, e.g. kitchen counter demo, unboxing, problem-solution, ASMR cleaning, mom-life hack, apartment mini-kitchen.
 - Natural dialogue that explains the product, not a silent product montage.
-- VEO prompts may include native English voiceover/dialogue when the user wants spoken product explanation. Short Instagram-style feature overlay labels should be stored as post-production metadata; do not ask VEO to render overlay text because model-rendered text can garble.
+- VEO prompts may include native English voiceover/dialogue when the user wants spoken product explanation. Short social-style feature overlay labels should be stored as post-production metadata; do not ask VEO to render overlay text because model-rendered text can garble.
 - A proof moment showing the core function clearly.
 - A final sell shot with product in hand or on counter.
 - Product-fidelity block: “Use the provided product reference as the canonical source. Do not redesign, recolor, simplify, enlarge logos, change flower/gourd/cat silhouette, or invent extra parts.”
@@ -103,6 +103,7 @@ Actual VEO `video_prompt` should be a conservative usage demo:
 - Do not ask VEO to add new product parts, mechanisms, labels, containers, chambers, hinges, buttons, reservoirs, or unsupported accessories.
 - Keep detailed UGC dialogue, product explanation, and usage logic in `dialogue_script`, `function_intro_prompt`, `voiceover_script_8s`, `usage_logic`, `shot_plan`, and `model_suggested_video_prompt` for later editing/voiceover; do not feed those directly to VEO by default.
 - `on_screen_callouts` may contain short feature tags such as “MagSafe Snap” or “Foldable Stand”, but these are for post-production overlays; put spoken explanation directly into VEO native-audio prompt, not as captions.
+- Never ask image or video models to render Instagram / INS / TikTok logos, app icons, story frames, platform UI chrome, like/comment/share bars, or watermarks. Overlay design, when used, must be plain text only.
 
 Every UGC variant must be grounded in `product_brief.json`:
 
@@ -149,6 +150,7 @@ Before delivering outputs, inspect `materials.md`, `image_analysis.json`, and `u
 
 - Reject image prompts that do not preserve the exact product form.
 - Reject VEO prompts that redesign the product, invent mechanisms, or introduce unsupported actions.
+- Reject prompts that imply Instagram / INS / TikTok icons, logos, app UI, story stickers, or watermark overlays.
 - Reject prompts that use a weak reference image when a cleaner product image exists.
 - Prefer close-up product photos as image references over lifestyle images.
 - Reject batches where the variants only differ cosmetically but repeat the same scene, camera angle, action, and proof moment.

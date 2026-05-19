@@ -22,6 +22,6 @@ Create a commit whenever the skill behavior changes meaningfully, for example:
 ## Recommended Flow
 
 1. Edit the skill files.
-2. Run a small dry-run or one-product prompt test when possible.
+2. Run a small one-product real-model prompt test when possible.
 3. Inspect `git diff`.
 4. Commit the skill change before paid image/video generation.

@@ -24,46 +24,6 @@ def extract_json_content(response: dict[str, Any]) -> dict[str, Any]:
         return {"error": "content was not valid JSON", "raw_content": content}
 
 
-def build_fallback_brief(manifest: dict[str, Any], image_analysis: dict[str, Any]) -> dict[str, Any]:
-    product_name = manifest.get("product_name", "Product")
-    usage_signals = manifest.get("usage_signals") or []
-    mechanics: list[str] = []
-    scenes: list[str] = []
-    risks: list[str] = []
-    identity_details: list[str] = []
-    for item in image_analysis.get("product_related_images") or image_analysis.get("images", []):
-        analysis = item.get("analysis") or {}
-        if analysis.get("product_identity_details"):
-            identity_details.append(str(analysis.get("product_identity_details")))
-        visible = analysis.get("use_mechanics_visible")
-        if isinstance(visible, list):
-            mechanics.extend(str(value) for value in visible if value)
-        elif visible:
-            mechanics.append(str(visible))
-        if analysis.get("inferred_use_mechanics"):
-            mechanics.append(str(analysis.get("inferred_use_mechanics")))
-        if analysis.get("scene_context"):
-            scenes.append(str(analysis.get("scene_context")))
-        if analysis.get("prompt_risks"):
-            risks.append(str(analysis.get("prompt_risks")))
-    return {
-        "product_name": product_name,
-        "confidence": "fallback",
-        "confirmed_identity": identity_details[:6],
-        "confirmed_selling_points": manifest.get("selling_points", [])[:8],
-        "confirmed_or_inferred_use_steps": (usage_signals + mechanics)[:10],
-        "recommended_ugc_scenes": scenes[:8] or ["Clean home tabletop product demonstration"],
-        "proof_moments": usage_signals[:4] or mechanics[:4],
-        "misuse_risks_to_avoid": risks[:8],
-        "reference_image_strategy": "Prefer full-product images marked canonical_full_product or hero_reference; use detail images only as secondary references.",
-        "video_prompt_rules": [
-            "Show the real product mechanism step by step.",
-            "Do not imply unsupported functions.",
-            "Keep the product geometry, material, color, and scale consistent with reference images.",
-        ],
-    }
-
-
 def build_with_model(
     api_key: str,
     manifest: dict[str, Any],
@@ -152,14 +112,9 @@ def process_product(product_dir: Path, api_key: str, args: argparse.Namespace) -
         print(f"[skip] missing manifest or image analysis: {product_dir}", flush=True)
         return
     print(f"[brief] {product_dir.name}", flush=True)
-    if args.dry_run:
-        brief = build_fallback_brief(manifest, image_analysis)
-    else:
-        brief = build_with_model(api_key, manifest, image_analysis, args.model, args.base_url, args.timeout)
-        if brief.get("error"):
-            fallback = build_fallback_brief(manifest, image_analysis)
-            fallback["model_error"] = brief
-            brief = fallback
+    brief = build_with_model(api_key, manifest, image_analysis, args.model, args.base_url, args.timeout)
+    if brief.get("error"):
+        raise RuntimeError(f"Model brief generation failed for {product_dir.name}: {brief}")
     brief["source_manifest"] = "product_manifest.json"
     brief["source_image_analysis"] = "image_analysis.json"
     write_json(product_dir / "product_brief.json", brief)
@@ -173,9 +128,8 @@ def main() -> None:
     parser.add_argument("--base-url", default="https://api.laozhang.ai/v1")
     parser.add_argument("--timeout", type=int, default=420)
     parser.add_argument("--products", default="", help="Comma-separated product selectors, e.g. 01 or 01-flower")
-    parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
-    api_key = "dry-run" if args.dry_run else require_api_key()
+    api_key = require_api_key()
     for product_dir in selected_product_dirs(args.output_dir, args.products):
         process_product(product_dir, api_key, args)
 

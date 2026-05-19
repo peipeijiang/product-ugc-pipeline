@@ -91,6 +91,11 @@ def parse_srcset(srcset: str, page_url: str) -> list[str]:
 
 def canonical_image_key(image_url: str) -> str:
     parsed = urllib.parse.urlparse(image_url)
+    if parsed.path == "/_next/image":
+        query = urllib.parse.parse_qs(parsed.query)
+        nested_url = (query.get("url") or [""])[0]
+        if nested_url:
+            return canonical_image_key(nested_url)
     path = re.sub(r"_(?:\d+x|\d+)\.(png|jpe?g|webp)$", r".\1", parsed.path, flags=re.IGNORECASE)
     return f"{parsed.netloc}{path}".lower()
 
@@ -128,6 +133,20 @@ def collect_image_urls(
         if not raw_url or raw_url.startswith("data:"):
             return
         image_url = absolute_url(raw_url, page_url)
+        if "ysst-mall.oss-us-east-1.aliyuncs.com" in image_url and "/_next/image" not in image_url:
+            image_url = f"{urllib.parse.urljoin(page_url, '/_next/image')}?url={urllib.parse.quote(image_url, safe='')}&w=3840&q=75"
+        parsed_url = urllib.parse.urlparse(image_url)
+        lower_path = parsed_url.path.lower()
+        lower_url = image_url.lower()
+        lower_alt = (alt or "").lower()
+        if re.search(r"(?:^|[/_-])(logo|favicon|icon|sprite|avatar|payment|brand)(?:[/_.-]|$)", lower_path):
+            return
+        if "logo" in lower_alt or "favicon" in lower_alt:
+            return
+        if parsed_url.netloc == urllib.parse.urlparse(page_url).netloc and any(
+            marker in lower_url for marker in ("/logo", "logo.", "favicon", "icon")
+        ):
+            return
         if not re.search(r"\.(?:png|jpe?g|webp)(?:[?#].*)?$", urllib.parse.urlparse(image_url).path, re.IGNORECASE):
             if "cdn" not in image_url and "image" not in image_url:
                 return
@@ -153,7 +172,17 @@ def collect_image_urls(
         add_image(match.group(0).replace("\\/", "/"), "script-url")
     for match in re.finditer(r"(?:https?:)?//[^\"'\s]+\.(?:png|jpe?g|webp)(?:\?[^\"'\s]*)?", html_text):
         add_image(match.group(0), "html-url")
-    return list(collected.values())
+    def product_image_priority(image_info: dict[str, str]) -> tuple[int, str]:
+        image_url = image_info["url"].lower()
+        if "alicdn.com/img/ibank" in image_url or "cbu01.alicdn.com" in image_url:
+            return (0, image_url)
+        if "ysst-mall.oss" in image_url:
+            return (2, image_url)
+        if image_info["source"] in {"json_ld_product_image", "og:image", "og:image:secure_url"}:
+            return (1, image_url)
+        return (1, image_url)
+
+    return sorted(collected.values(), key=product_image_priority)
 
 
 def description_sections(description: str) -> dict[str, str]:
@@ -258,7 +287,13 @@ def selling_points_from_description(description: str) -> list[str]:
 
 
 def extension_for_url(image_url: str) -> str:
-    suffix = Path(urllib.parse.urlparse(image_url).path).suffix.lower()
+    parsed_url = urllib.parse.urlparse(image_url)
+    if parsed_url.path == "/_next/image":
+        query = urllib.parse.parse_qs(parsed_url.query)
+        nested_url = (query.get("url") or [""])[0]
+        if nested_url:
+            return extension_for_url(nested_url)
+    suffix = Path(parsed_url.path).suffix.lower()
     if suffix in {".jpg", ".jpeg", ".png", ".webp"}:
         return suffix
     return ".jpg"
