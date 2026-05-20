@@ -14,7 +14,9 @@ from common import load_json, request_json, require_api_key, selected_product_di
 UGC_SYSTEM_PROMPT = """You are a senior UGC creative director for short-form social video and TikTok Shop.
 Create product-faithful creator ad prompts. Return JSON only."""
 
-VOICEOVER_SEGMENTS = [("0-2s", 8), ("2-5s", 10), ("5-8s", 10)]
+VOICEOVER_SEGMENTS = [("0-2s", 6), ("2-5s", 9), ("5-8s", 7)]
+VOICEOVER_TARGET_WORDS = (16, 20)
+VOICEOVER_HARD_MAX_WORDS = 22
 SHOT_TIME_SLOTS = {
     3: ["0.0-2.0s", "2.0-5.0s", "5.0-8.0s"],
     4: ["0.0-1.5s", "1.5-3.2s", "3.2-5.8s", "5.8-8.0s"],
@@ -178,8 +180,8 @@ def normalize_voiceover_script_8s(raw_voiceover: Any, hook: str = "", fallback: 
             line = _trim_to_words(fallback_lines[index], max_words)
         normalized.append({"time": time_slot, "line": line})
     total_words = sum(len(item["line"].split()) for item in normalized)
-    if total_words > 28:
-        overflow = total_words - 28
+    if total_words > VOICEOVER_HARD_MAX_WORDS:
+        overflow = total_words - VOICEOVER_HARD_MAX_WORDS
         for item in reversed(normalized):
             words = item["line"].split()
             removable = max(0, len(words) - 4)
@@ -827,7 +829,7 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
     timed_voiceover = " ".join(f"[{item['time']}] {item['line']}" for item in normalized_voiceover if item.get("line"))
     audio_block = (
         "Native audio: include a clear young American female ecommerce-host voiceover, energetic but natural, slightly bright and sales-friendly. "
-        "The spoken script must finish naturally within 8 seconds at normal creator pace, roughly 12 to 18 English words total. "
+        "The spoken script must finish naturally within 8 seconds at normal creator pace, ideally 16 to 20 English words total and never more than 22 words. "
         f"Speak these exact timed lines in order: {timed_voiceover}. "
         f"Combined exact script: \"{voiceover_text[:220]}\" "
         "Do not add intro words, filler, repeated lines, extra CTA, or any unscripted speech. Keep the voiceover synchronized to the visual function demo. Add only subtle real product handling sounds; no music, no singing."

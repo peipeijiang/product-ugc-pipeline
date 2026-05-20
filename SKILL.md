@@ -106,7 +106,7 @@ Every UGC variant must include:
 - Natural dialogue that explains the product, not a silent product montage.
 - VEO prompts may include native English voiceover/dialogue when the user wants spoken product explanation. Short social-style plain-text overlay labels are allowed when the user wants overlay, but they must be feature tags only, not subtitles, transcripts, platform UI, icons, logos, or watermarks.
 - For 8-second VEO clips, the spoken copy must be written to finish naturally inside 8 seconds at normal creator pace, not merely shortened arbitrarily.
-- Keep 8-second native voiceover conservative: usually 12–18 English words total. Do not repeat the same spoken line across multiple storyboard beats, and explicitly forbid extra filler/CTA beyond the scripted lines.
+- Keep 8-second native voiceover at normal spoken pace: target 16–20 English words total, hard maximum 22 words, and no more than 3 short lines. Do not repeat the same spoken line across multiple storyboard beats, and explicitly forbid extra filler/CTA beyond the scripted lines.
 - A proof moment showing the core function clearly.
 - A final sell shot with product in hand or on counter.
 - Product-fidelity block: “Use the provided product reference as the canonical source. Do not redesign, recolor, simplify, enlarge logos, change flower/gourd/cat silhouette, or invent extra parts.”
