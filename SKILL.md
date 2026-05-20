@@ -104,7 +104,7 @@ Every UGC variant must include:
 - Hook in the first 2 seconds.
 - Creator persona and shot style, e.g. kitchen counter demo, unboxing, problem-solution, ASMR cleaning, mom-life hack, apartment mini-kitchen.
 - Natural dialogue that explains the product, not a silent product montage.
-- VEO prompts may include native English voiceover/dialogue when the user wants spoken product explanation. Short social-style plain-text overlay labels are allowed when the user wants overlay, but they must be feature tags only, not subtitles, transcripts, platform UI, icons, logos, or watermarks.
+- VEO prompts may include native English voiceover/dialogue when the user wants spoken product explanation. Short social-style overlay labels may include one relevant emoji when useful, but they must be feature tags only, not subtitles, transcripts, platform UI, icons, logos, or watermarks.
 - For 8-second VEO clips, the spoken copy must be written to finish naturally inside 8 seconds at normal creator pace, not merely shortened arbitrarily.
 - Keep 8-second native voiceover at normal spoken pace: target 16–20 English words total, hard maximum 22 words, and no more than 3 short lines. Do not repeat the same spoken line across multiple storyboard beats, and explicitly forbid extra filler/CTA beyond the scripted lines.
 - A proof moment showing the core function clearly.
@@ -130,8 +130,8 @@ Actual VEO `video_prompt` should be a conservative usage demo:
 - Use a single `storyboard_8s` as the source of truth for each variant. Each beat should include `time`, `visual`, `spoken`, and `overlay`; `video_prompt` should include the full storyboard, `start_frame_prompt` should depict the first beat, and `end_frame_prompt` should depict the final beat.
 - In `storyboard_8s`, assign each spoken line to only one beat. Other beats should have no new spoken words rather than repeating the previous line, otherwise VEO may over-speak and cut off the ending.
 - Do not let start/end keyframes be generic “before/after” images. They must correspond to the first and final storyboard beats, with a visible action-state change while preserving the same product identity, subject, room, wardrobe, lighting, and continuity.
-- `on_screen_callouts` may contain short feature tags such as “MagSafe Snap” or “Foldable Stand”. These may be passed into the VEO prompt as tiny tasteful UGC overlay labels when requested, but never as subtitles, sentence captions, transcript text, platform UI, icons, logos, or watermarks.
-- Never ask image or video models to render Instagram / INS / TikTok logos, app icons, story frames, platform UI chrome, like/comment/share bars, or watermarks. Overlay design, when used, must be plain text only.
+- `on_screen_callouts` may contain short feature tags such as “⚡ Fast Setup”, “💧 Water Resistant”, or “Foldable Stand”. These may be passed into the VEO prompt as tiny tasteful UGC overlay labels when requested, but never as subtitles, sentence captions, transcript text, platform UI, platform icons/logos, or watermarks. Emoji should be simple, generic, and product-relevant; do not use Instagram/TikTok-style icons.
+- Never ask image or video models to render Instagram / INS / TikTok logos, app icons, story frames, platform UI chrome, like/comment/share bars, or watermarks. Overlay design, when used, should be tiny feature-tag text and may include one simple generic emoji.
 
 Every UGC variant must be grounded in `product_brief.json`:
 

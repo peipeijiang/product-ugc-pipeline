@@ -262,14 +262,14 @@ def append_mid_native_audio_instruction(prompt: str, voice_lines: Any, callouts:
     if callouts:
         joined = ", ".join(f"\"{item}\"" for item in callouts[:2])
         overlay_block = (
-            f" Allow only {len(callouts[:2])} tiny tasteful plain-text social-style overlay words: {joined}. "
-            "Keep them very small, decorative, and brief. Never render Instagram or INS icons, TikTok icons, app UI chrome, watermarks, full-sentence captions, subtitles, labels, lower thirds, or transcripts."
+            f" Allow only {len(callouts[:2])} tiny tasteful social-style feature-tag overlays, optionally with one simple product-relevant emoji: {joined}. "
+            "Keep them very small, decorative, and brief. Never render Instagram or INS icons, TikTok icons, app UI chrome, watermarks, full-sentence captions, subtitles, lower thirds, or transcripts."
         )
     audio_block = (
         "\n\nNATIVE AUDIO: Generate natural native audio inside the video: a bright, young American female ecommerce creator voice, friendly, clear, slightly energetic, not robotic, not corporate. "
         f"Spoken voiceover, complete within 8 seconds: \"{safe_line}\" "
         "Add subtle upbeat modern product-ad background music under the voice at low volume, no lyrics, plus light real handling sounds. "
-        "No subtitles, no captions, no Instagram or INS icons, no TikTok icons, no app UI, no watermarks, and no readable on-screen text beyond any explicitly allowed tiny decorative overlay words."
+        "No subtitles, no captions, no Instagram or INS icons, no TikTok icons, no app UI, no watermarks, and no readable on-screen text beyond any explicitly allowed tiny decorative feature-tag overlays."
     )
     return prompt + overlay_block + audio_block
 

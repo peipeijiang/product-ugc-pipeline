@@ -608,7 +608,7 @@ def normalize_on_screen_callouts(raw_callouts: Any, feature_summary: str) -> lis
         candidates = [part.strip() for part in re_split_features(raw_callouts)]
     else:
         candidates = build_on_screen_callouts(feature_summary)
-    banned = ("instagram", "ins", "tiktok", "logo", "icon", "subtitle", "caption", "watermark", "@")
+    banned = ("instagram", "ins", "tiktok", "logo", "subtitle", "caption", "watermark", "@")
     clean: list[str] = []
     for candidate in candidates:
         label = re.sub(r"\s+", " ", candidate).strip(" .,-")
@@ -618,10 +618,10 @@ def normalize_on_screen_callouts(raw_callouts: Any, feature_summary: str) -> lis
         if any(marker in lowered for marker in banned):
             continue
         if label not in clean:
-            clean.append(label[:34])
+            clean.append(label[:38])
         if len(clean) >= 3:
             break
-    return clean or ["Quick demo", "Easy control", "Daily wear"]
+    return clean or ["✨ Quick demo", "👌 Easy control", "💧 Daily wear"]
 
 
 def build_function_demo_prompt(product_name: str, feature_summary: str, scene: str = "") -> str:
@@ -838,8 +838,8 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
     )
     callouts = normalize_on_screen_callouts(variant.get("on_screen_callouts"), _plain_brief_list(variant.get("selling_angle") or usage_context, 3))
     overlay_block = (
-        f"Allow only tiny tasteful plain-text UGC overlay feature tags, not subtitles: {', '.join(callouts[:3])}. "
-        "Keep overlay labels short, sparse, decorative, and separate from the spoken script; no sentence captions or transcript text. "
+        f"Allow only tiny tasteful UGC overlay feature tags, optionally with one simple product-relevant emoji, not subtitles: {', '.join(callouts[:3])}. "
+        "Keep overlay labels short, sparse, decorative, and separate from the spoken script; no sentence captions, transcript text, platform icons/logos, or watermarks. "
         if callouts
         else ""
     )
@@ -920,7 +920,7 @@ Each variant must include:
 - dialogue_script with natural spoken lines
 - function_intro_prompt: a separate prompt for generating concise spoken function explanation
 - voiceover_script_8s: timed 0-2s, 2-5s, 5-8s spoken script lines that introduce and explain the function
-- on_screen_callouts: 1-3 short plain-text social-style feature overlay labels that VEO may render as tiny sparse UGC feature tags; never subtitles, sentence captions, app icons, platform logos, UI chrome, or watermarks
+- on_screen_callouts: 1-3 short social-style feature overlay labels that may include one simple product-relevant emoji; VEO may render them as tiny sparse UGC feature tags; never subtitles, sentence captions, app icons, platform logos, UI chrome, or watermarks
 - function_demo_prompt: editor-facing prompt that explains the function, proof moment, and final benefit
 - usage_logic: explain how the product works and why the scene is correct
 - proof_moment: the exact visual action that proves the function
@@ -941,7 +941,7 @@ Critical:
 4. The selected reference image must be the best true full-product reference: full silhouette, correct SKU/style, real proportions, visible key functional zones. Do not select alternate SKU images, accessory-only images, packaging-only images, loose parts, isolated cables, or detail images as canonical.
 5. Put concise native-audio voiceover lines into VEO video_prompt, and ensure the full spoken copy can naturally finish inside 8 seconds at normal creator pace.
 6. Keep every shot_plan, voiceover_script_8s, image-to-video prompt, and action arc designed for exactly 8 seconds. Do not write 9-12s, 10-12s, 12s, or 15s plans.
-7. Allow only tiny sparse plain-text UGC feature-tag overlays from on_screen_callouts. Do not ask for subtitles, transcript captions, lower-thirds, karaoke text, Instagram / INS / TikTok icons, app UI, or watermarks.
+7. Allow only tiny sparse UGC feature-tag overlays from on_screen_callouts; one simple product-relevant emoji is allowed per label. Do not ask for subtitles, transcript captions, lower-thirds, karaoke text, Instagram / INS / TikTok icons, app UI, or watermarks.
 8. Build the video from a single storyboard: video_prompt must include every beat's time, visual content, spoken line, and overlay label; start_frame_prompt must depict the first beat; end_frame_prompt must depict the final beat.
 9. Product reference images lock the product itself, not the entire source photo. Preserve product identity and usage mechanics, but freely imagine realistic buyer scenes, backgrounds, camera angles, and contextual props that clarify the function.
 10. Each variant should focus on one small function or selling point. Vary function, scene, action, and proof moment across the batch; do not produce ten versions of the same tabletop placement.
