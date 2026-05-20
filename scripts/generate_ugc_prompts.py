@@ -337,7 +337,7 @@ def normalize_variants(output: dict[str, Any], manifest: dict[str, Any], referen
             hook=str(clean_variant.get("hook") or ""),
             fallback=build_voiceover_script_8s(product_name, feature_summary, clean_variant.get("hook", ""))[1]["line"],
         )
-        clean_variant["on_screen_callouts"] = []
+        clean_variant["on_screen_callouts"] = normalize_on_screen_callouts(clean_variant.get("on_screen_callouts"), feature_summary)
         clean_variant.setdefault("function_demo_prompt", build_function_demo_prompt(product_name, feature_summary, clean_variant.get("title", "")))
         fidelity = product_fidelity_block(product_name)
         image_prompt = str(clean_variant.get("image_prompt") or "")
@@ -489,6 +489,29 @@ def build_on_screen_callouts(feature_summary: str) -> list[str]:
     words = [part.strip(" .") for part in re_split_features(feature_summary) if part.strip(" .")]
     callouts = words[:3] if words else ["Function demo", "Proof moment", "Product close-up"]
     return [callout[:34] for callout in callouts]
+
+
+def normalize_on_screen_callouts(raw_callouts: Any, feature_summary: str) -> list[str]:
+    if isinstance(raw_callouts, list):
+        candidates = [str(item).strip() for item in raw_callouts]
+    elif isinstance(raw_callouts, str) and raw_callouts.strip():
+        candidates = [part.strip() for part in re_split_features(raw_callouts)]
+    else:
+        candidates = build_on_screen_callouts(feature_summary)
+    banned = ("instagram", "ins", "tiktok", "logo", "icon", "subtitle", "caption", "watermark", "@")
+    clean: list[str] = []
+    for candidate in candidates:
+        label = re.sub(r"\s+", " ", candidate).strip(" .,-")
+        if not label:
+            continue
+        lowered = label.lower()
+        if any(marker in lowered for marker in banned):
+            continue
+        if label not in clean:
+            clean.append(label[:34])
+        if len(clean) >= 3:
+            break
+    return clean or ["Quick demo", "Easy control", "Daily wear"]
 
 
 def build_function_demo_prompt(product_name: str, feature_summary: str, scene: str = "") -> str:
@@ -657,7 +680,7 @@ def usage_keyframe_prompt(
         f"Scene imagination: {scene_imagination} "
         "The lifestyle environment may differ from the original product photo; preserve the product, not the source-photo background. "
         f"{continuity} "
-        "Adult hands only if needed, natural phone-shot lighting, no text overlay, no captions, no extra branding. "
+        "Adult hands only if needed, natural phone-shot lighting, no subtitles, no transcript captions, no platform UI, no icons, no extra branding. "
         f"{phone_geometry} "
         "Avoid extreme close-ups, heavy occlusion, dramatic stains, magic effects, or any invented product mechanism. "
         f"Supported use context: {usage_context}. Proof idea: {proof_moment}."
@@ -697,6 +720,13 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
         if voiceover_text
         else "Native audio: include subtle real product handling sounds only, no music."
     )
+    callouts = normalize_on_screen_callouts(variant.get("on_screen_callouts"), _plain_brief_list(variant.get("selling_angle") or usage_context, 3))
+    overlay_block = (
+        f"Allow only tiny tasteful plain-text UGC overlay feature tags, not subtitles: {', '.join(callouts[:3])}. "
+        "Keep overlay labels short, sparse, decorative, and separate from the spoken script; no sentence captions or transcript text. "
+        if callouts
+        else ""
+    )
     phone_geometry = phone_geometry_constraints_for_prompt(
         " ".join(
             str(variant.get(key) or "")
@@ -725,10 +755,10 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
         "Avoid magic-cleaning, sudden scene changes, heavy motion blur, product morphing, or unsupported functions. "
         f"Proof moment: {proof_moment}. "
         f"{phone_geometry} "
+        f"{overlay_block}"
         f"{audio_block} "
         "Natural handheld phone camera, close practical use framing. "
-        "Do not let VEO render text: no on-screen words, no overlay labels, no subtitles, no sentence captions, no lower-third transcript, no karaoke-style text, no Instagram or INS icons, no TikTok icons, no app UI, no watermarks. "
-        "Keep on_screen_callouts as post-production overlay metadata only."
+        "No subtitles, no sentence captions, no lower-third transcript, no karaoke-style text, no Instagram or INS icons, no TikTok icons, no app UI, no watermarks, and no readable on-screen text beyond the explicitly allowed tiny feature-tag overlays."
     )
 
 
@@ -774,11 +804,11 @@ Each variant must include:
 - dialogue_script with natural spoken lines
 - function_intro_prompt: a separate prompt for generating concise spoken function explanation
 - voiceover_script_8s: timed 0-2s, 2-5s, 5-8s spoken script lines that introduce and explain the function
-- on_screen_callouts: 1-3 short plain-text social-style feature overlay labels for post-production only, not for VEO to render, and never app icons/logos
+- on_screen_callouts: 1-3 short plain-text social-style feature overlay labels that VEO may render as tiny sparse UGC feature tags; never subtitles, sentence captions, app icons, platform logos, UI chrome, or watermarks
 - function_demo_prompt: editor-facing prompt that explains the function, proof moment, and final benefit
 - usage_logic: explain how the product works and why the scene is correct
 - proof_moment: the exact visual action that proves the function
-- shot_plan with 0-15 second timing
+- shot_plan with exact 0-8 second timing
 - selected_reference_images using local paths from the preferred list
 - reference_scope: explain which visual details from source images lock product identity, and explicitly state that source-photo background/props/composition are not mandatory unless functionally necessary
 - selling_angle: one focused buyer benefit for this variant
@@ -793,14 +823,15 @@ Critical:
 3. Every image_prompt and video_prompt must contain a product-fidelity block requiring exact preservation of the original product appearance.
 4. The selected reference image must be the best true full-product reference: full silhouette, correct SKU/style, real proportions, visible key functional zones. Do not select alternate SKU images, accessory-only images, packaging-only images, loose parts, isolated cables, or detail images as canonical.
 5. Put concise native-audio voiceover lines into VEO video_prompt, and ensure the full spoken copy can naturally finish inside 8 seconds at normal creator pace.
-6. Do not ask VEO to render text. Short plain-text social-style overlay labels belong in on_screen_callouts for post-production, not inside the generated video frames. Never ask for Instagram / INS / TikTok icons, app UI, or watermarks.
-7. Product reference images lock the product itself, not the entire source photo. Preserve product identity and usage mechanics, but freely imagine realistic buyer scenes, backgrounds, camera angles, and contextual props that clarify the function.
-8. Each variant should focus on one small function or selling point. Vary function, scene, action, and proof moment across the batch; do not produce ten versions of the same tabletop placement.
-9. Start/end keyframes should be meaningfully different enough for an 8-second action arc while preserving the same exact product.
-10. Read the historical variants listed above as actual prior creative work for this product. Do not paraphrase them. Avoid reusing the same scene setup, same use action, same proof moment, same buyer context, or same selling angle unless you materially transform at least 3 of those dimensions.
-11. When function overlap is unavoidable, deliberately choose a different buyer situation, a different visual hook, a different camera idea, and a different proof framing instead of repeating the same demo in new words.
-12. Before writing the variants, allocate one primary_function_focus per variant from confirmed_use_cases, step_by_step_usage, and proof_moments. Do not assign the same primary function to multiple fresh variants unless the product has only one confirmed function. For multifunction wearables such as smart rings, do not default every variant to photo-taking/remote shutter; split confirmed functions across health/app checks, charging, status display, touch control, activity tracking, waterproof daily wear, or fit/detail as supported by the brief.
-13. If a phone appears, make its orientation physically possible. For selfie/timer/remote-shutter demos, the phone screen faces the creator and the lens points toward the creator; the viewer sees phone back/side, mirror, or over-shoulder composition. For app-screen proof, use over-shoulder/tabletop/second-device geometry. For wireless charging, the phone lies flat screen-up on the charger unless the real product is a stand.
+6. Keep every shot_plan, voiceover_script_8s, image-to-video prompt, and action arc designed for exactly 8 seconds. Do not write 9-12s, 10-12s, 12s, or 15s plans.
+7. Allow only tiny sparse plain-text UGC feature-tag overlays from on_screen_callouts. Do not ask for subtitles, transcript captions, lower-thirds, karaoke text, Instagram / INS / TikTok icons, app UI, or watermarks.
+8. Product reference images lock the product itself, not the entire source photo. Preserve product identity and usage mechanics, but freely imagine realistic buyer scenes, backgrounds, camera angles, and contextual props that clarify the function.
+9. Each variant should focus on one small function or selling point. Vary function, scene, action, and proof moment across the batch; do not produce ten versions of the same tabletop placement.
+10. Start/end keyframes should be meaningfully different enough for an 8-second action arc while preserving the same exact product.
+11. Read the historical variants listed above as actual prior creative work for this product. Do not paraphrase them. Avoid reusing the same scene setup, same use action, same proof moment, same buyer context, or same selling angle unless you materially transform at least 3 of those dimensions.
+12. When function overlap is unavoidable, deliberately choose a different buyer situation, a different visual hook, a different camera idea, and a different proof framing instead of repeating the same demo in new words.
+13. Before writing the variants, allocate one primary_function_focus per variant from confirmed_use_cases, step_by_step_usage, and proof_moments. Do not assign the same primary function to multiple fresh variants unless the product has only one confirmed function. For multifunction wearables such as smart rings, do not default every variant to photo-taking/remote shutter; split confirmed functions across health/app checks, charging, status display, touch control, activity tracking, waterproof daily wear, or fit/detail as supported by the brief.
+14. If a phone appears, make its orientation physically possible. For selfie/timer/remote-shutter demos, the phone screen faces the creator and the lens points toward the creator; the viewer sees phone back/side, mirror, or over-shoulder composition. For app-screen proof, use over-shoulder/tabletop/second-device geometry. For wireless charging, the phone lies flat screen-up on the charger unless the real product is a stand.
 """.strip()
     payload = {
         "model": model,

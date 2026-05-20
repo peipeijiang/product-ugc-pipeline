@@ -104,7 +104,7 @@ Every UGC variant must include:
 - Hook in the first 2 seconds.
 - Creator persona and shot style, e.g. kitchen counter demo, unboxing, problem-solution, ASMR cleaning, mom-life hack, apartment mini-kitchen.
 - Natural dialogue that explains the product, not a silent product montage.
-- VEO prompts may include native English voiceover/dialogue when the user wants spoken product explanation. Short social-style feature overlay labels should be stored as post-production metadata; do not ask VEO to render overlay text because model-rendered text can garble.
+- VEO prompts may include native English voiceover/dialogue when the user wants spoken product explanation. Short social-style plain-text overlay labels are allowed when the user wants overlay, but they must be feature tags only, not subtitles, transcripts, platform UI, icons, logos, or watermarks.
 - For 8-second VEO clips, the spoken copy must be written to finish naturally inside 8 seconds at normal creator pace, not merely shortened arbitrarily.
 - A proof moment showing the core function clearly.
 - A final sell shot with product in hand or on counter.
@@ -126,7 +126,7 @@ Actual VEO `video_prompt` should be a conservative usage demo:
 - Describe the action flow, proof moment, and camera style, but avoid re-describing product geometry as if VEO should redesign it.
 - Do not ask VEO to add new product parts, mechanisms, labels, containers, chambers, hinges, buttons, reservoirs, or unsupported accessories.
 - Keep detailed UGC dialogue, product explanation, and usage logic in `dialogue_script`, `function_intro_prompt`, `voiceover_script_8s`, `usage_logic`, `shot_plan`, and `model_suggested_video_prompt` for later editing/voiceover; do not feed those directly to VEO by default.
-- `on_screen_callouts` may contain short feature tags such as “MagSafe Snap” or “Foldable Stand”, but these are for post-production overlays; put spoken explanation directly into VEO native-audio prompt, not as captions.
+- `on_screen_callouts` may contain short feature tags such as “MagSafe Snap” or “Foldable Stand”. These may be passed into the VEO prompt as tiny tasteful UGC overlay labels when requested, but never as subtitles, sentence captions, transcript text, platform UI, icons, logos, or watermarks.
 - Never ask image or video models to render Instagram / INS / TikTok logos, app icons, story frames, platform UI chrome, like/comment/share bars, or watermarks. Overlay design, when used, must be plain text only.
 
 Every UGC variant must be grounded in `product_brief.json`:
