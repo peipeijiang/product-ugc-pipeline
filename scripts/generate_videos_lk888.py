@@ -46,6 +46,28 @@ def generated_keyframe_paths(product_dir: Path, variant_id: int) -> list[Path]:
     return []
 
 
+def existing_video_dir(product_dir: Path) -> Path:
+    candidates = [product_dir / "videos"]
+    for path in sorted(product_dir.glob("videos*")):
+        if path.is_dir() and path.name.startswith("videos"):
+            candidates.append(path)
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return product_dir / "videos"
+
+
+def existing_variant_max(video_dir: Path) -> int:
+    max_variant = 0
+    for path in video_dir.glob("variant-*.mp4"):
+        try:
+            variant_id = int(path.stem.split("-", 1)[1])
+        except Exception:
+            continue
+        max_variant = max(max_variant, variant_id)
+    return max_variant
+
+
 def upload_litterbox(path: Path, lifetime: str = "1h") -> str:
     command = [
         "curl",
@@ -372,8 +394,7 @@ def poll_task(api_key: str, task_id: str, base_url: str, poll_seconds: int) -> d
 
 def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, args: argparse.Namespace) -> dict[str, Any]:
     variant_id = int(variant.get("variant_id", 0))
-    output_subdir = args.output_subdir or ("videos_seedance" if args.model.startswith("doubao-seedance") else "videos_lk888")
-    output_dir = product_dir / output_subdir
+    output_dir = existing_video_dir(product_dir)
     output_path = output_dir / f"variant-{variant_id:02d}.mp4"
     if output_path.exists() and not args.force:
         return {"variant_id": variant_id, "status": "skipped_existing", "output_path": str(output_path.relative_to(product_dir))}
@@ -447,26 +468,30 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
 
 def process_product(product_dir: Path, api_key: str, selected_variants: set[int], args: argparse.Namespace) -> None:
     prompts = load_json(resolve_prompts_path(product_dir, args.prompts_file))
-    output_subdir = args.output_subdir or ("videos_seedance" if args.model.startswith("doubao-seedance") else "videos_lk888")
-    results_path = product_dir / output_subdir / "video_generation_results.json"
+    output_dir = existing_video_dir(product_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    results_path = output_dir / "video_generation_results.json"
     existing = load_json(results_path, {"results": []})
     results = list(existing.get("results", []))
+    start_variant_id = existing_variant_max(output_dir) + 1
     for variant in prompts.get("variants", []):
         variant_id = int(variant.get("variant_id", 0))
         if variant_id not in selected_variants:
             continue
+        current_variant = dict(variant)
+        current_variant["variant_id"] = start_variant_id + (variant_id - 1)
         try:
-            result = process_variant(product_dir, variant, api_key, args)
+            result = process_variant(product_dir, current_variant, api_key, args)
         except Exception as error:
             if not args.continue_on_error:
                 raise
             result = {
-                "variant_id": variant_id,
+                "variant_id": current_variant["variant_id"],
                 "status": "failed",
                 "error": str(error),
-                "output_path": str((product_dir / output_subdir / f"variant-{variant_id:02d}.mp4").relative_to(product_dir)),
+                "output_path": str((output_dir / f"variant-{current_variant['variant_id']:02d}.mp4").relative_to(product_dir)),
             }
-        results = [item for item in results if int(item.get("variant_id", 0)) != variant_id]
+        results = [item for item in results if int(item.get("variant_id", 0)) != current_variant["variant_id"]]
         results.append(result)
         write_json(results_path, {"results": results})
 

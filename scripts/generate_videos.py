@@ -53,6 +53,29 @@ def generated_keyframe_paths(product_dir: Path, variant_id: int) -> list[Path]:
     return []
 
 
+def existing_video_dir(product_dir: Path) -> Path:
+    candidates = [product_dir / "videos"]
+    for path in sorted(product_dir.glob("videos*")):
+        if path.is_dir() and path.name.startswith("videos"):
+            candidates.append(path)
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return product_dir / "videos"
+
+
+def existing_variant_max(video_dir: Path) -> int:
+    max_variant = 0
+    for path in video_dir.glob("variant-*.mp4"):
+        stem = path.stem
+        try:
+            variant_id = int(stem.split("-", 1)[1])
+        except Exception:
+            continue
+        max_variant = max(max_variant, variant_id)
+    return max_variant
+
+
 def fallback_reference_path(product_dir: Path, variant: dict[str, Any]) -> Path | None:
     for local_path in variant.get("selected_reference_images") or []:
         candidate = product_dir / local_path
@@ -177,6 +200,7 @@ def process_variant(
     variant: dict[str, Any],
     api_key: str,
     args: argparse.Namespace,
+    video_dir: Path,
 ) -> dict[str, Any]:
     variant_id = int(variant.get("variant_id", 0))
     reference_images = generated_keyframe_paths(product_dir, variant_id)
@@ -184,7 +208,7 @@ def process_variant(
         reference_image = generated_image_path(product_dir, variant_id) or fallback_reference_path(product_dir, variant)
         reference_images = [reference_image] if reference_image else []
     prompt = variant.get("video_prompt") or variant.get("image_prompt") or f"Create a UGC product video for {product_dir.name}."
-    output_path = product_dir / "videos" / f"variant-{variant_id:02d}.mp4"
+    output_path = video_dir / f"variant-{variant_id:02d}.mp4"
     if output_path.exists() and not args.force:
         return {
             "variant_id": variant_id,
@@ -274,23 +298,28 @@ def process_product(product_dir: Path, api_key: str, selected_variants: set[int]
     if not prompts:
         print(f"[skip] missing ugc_prompts.json: {product_dir}")
         return
-    results_path = product_dir / "videos" / "video_generation_results.json"
+    video_dir = existing_video_dir(product_dir)
+    video_dir.mkdir(parents=True, exist_ok=True)
+    results_path = video_dir / "video_generation_results.json"
     existing_results = load_json(results_path, {"results": []})
     results: list[dict[str, Any]] = list(existing_results.get("results", []))
     result_keys = {(int(item.get("variant_id", 0)), item.get("status", "")) for item in results if isinstance(item, dict)}
+    start_variant_id = existing_variant_max(video_dir) + 1
     for variant in prompts.get("variants", []):
         variant_id = int(variant.get("variant_id", 0))
         if variant_id not in selected_variants:
             continue
-        result = process_variant(product_dir, variant, api_key, args)
+        current_variant = dict(variant)
+        current_variant["variant_id"] = start_variant_id + (variant_id - 1)
+        result = process_variant(product_dir, current_variant, api_key, args, video_dir)
         if args.force:
-            results = [item for item in results if int(item.get("variant_id", 0)) != variant_id]
+            results = [item for item in results if int(item.get("variant_id", 0)) != current_variant["variant_id"]]
             results.append(result)
             result_keys = {(int(item.get("variant_id", 0)), item.get("status", "")) for item in results if isinstance(item, dict)}
-        elif (variant_id, result.get("status", "")) not in result_keys:
-            results = [item for item in results if int(item.get("variant_id", 0)) != variant_id]
+        elif (current_variant["variant_id"], result.get("status", "")) not in result_keys:
+            results = [item for item in results if int(item.get("variant_id", 0)) != current_variant["variant_id"]]
             results.append(result)
-            result_keys.add((variant_id, result.get("status", "")))
+            result_keys.add((current_variant["variant_id"], result.get("status", "")))
         write_json(results_path, {"results": results})
 
 

@@ -318,7 +318,8 @@ def normalize_variants(output: dict[str, Any], manifest: dict[str, Any], referen
     if len(variants) < count:
         raise RuntimeError(f"Model returned only {len(variants)} variants for {product_name}; expected {count}")
     normalized: list[dict[str, Any]] = []
-    for index, variant in enumerate(variants[:count], start=1):
+    start_variant_id = int(output.get("start_variant_id") or 1)
+    for index, variant in enumerate(variants[:count], start=start_variant_id):
         if not isinstance(variant, dict):
             raise RuntimeError(f"Variant {index} for {product_name} was not a JSON object")
         clean_variant = dict(variant)
@@ -765,6 +766,7 @@ def process_product(product_dir: Path, api_key: str, args: argparse.Namespace) -
     )
     output = normalize_variants(output, manifest, references, args.count, product_brief)
     output["selected_reference_images"] = references
+    output["start_variant_id"] = args.start_variant_id
     output["source_manifest"] = "product_manifest.json"
     output["source_image_analysis"] = "image_analysis.json"
     output["source_product_brief"] = "product_brief.json" if product_brief else None
@@ -788,6 +790,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Generate 10 product-faithful UGC prompt variants per product.")
     parser.add_argument("output_dir", type=Path)
     parser.add_argument("--count", type=int, default=10)
+    parser.add_argument("--start-variant-id", type=int, default=1)
     parser.add_argument("--output-file", default="ugc_prompts.json")
     parser.add_argument("--batch-label", default="")
     parser.add_argument("--history-glob", default="ugc_prompts*.json")
