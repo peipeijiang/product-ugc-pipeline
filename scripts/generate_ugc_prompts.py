@@ -266,19 +266,15 @@ def assign_spoken_lines_to_shots(shot_plan: list[dict[str, str]], voiceover: lis
 def storyboard_entries(variant: dict[str, Any]) -> list[dict[str, str]]:
     shot_plan = normalize_shot_plan_8s(variant.get("shot_plan"), variant)
     voiceover = normalize_voiceover_script_8s(variant.get("voiceover_script_8s"), hook=str(variant.get("hook") or ""))
-    callouts = normalize_on_screen_callouts(variant.get("on_screen_callouts"), str(variant.get("selling_angle") or variant.get("usage_logic") or ""))
     spoken_assignments = assign_spoken_lines_to_shots(shot_plan, voiceover)
     entries: list[dict[str, str]] = []
     for index, shot in enumerate(shot_plan):
-        overlay = callouts[min(index, len(callouts) - 1)] if callouts else ""
-        if index >= 3:
-            overlay = ""
         entries.append(
             {
                 "time": str(shot.get("time") or ""),
                 "visual": str(shot.get("shot") or ""),
                 "spoken": spoken_assignments.get(index, ""),
-                "overlay": overlay,
+                "overlay": "",
             }
         )
     return entries
@@ -288,7 +284,7 @@ def format_storyboard_for_prompt(variant: dict[str, Any]) -> str:
     lines: list[str] = []
     for entry in storyboard_entries(variant):
         spoken = entry.get("spoken") or "none"
-        overlay = entry.get("overlay") or "none"
+        overlay = "none"
         lines.append(
             f"[{entry.get('time')}] Visual: {entry.get('visual')}. Spoken: {spoken}. Overlay: {overlay}."
         )
@@ -838,8 +834,8 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
     )
     callouts = normalize_on_screen_callouts(variant.get("on_screen_callouts"), _plain_brief_list(variant.get("selling_angle") or usage_context, 3))
     overlay_block = (
-        f"Allow only tiny tasteful UGC overlay feature tags, optionally with one simple product-relevant emoji, not subtitles: {', '.join(callouts[:3])}. "
-        "Keep overlay labels short, sparse, decorative, and separate from the spoken script; no sentence captions, transcript text, platform icons/logos, or watermarks. "
+        f"Post-production overlay metadata only, not for VEO to render: {', '.join(callouts[:3])}. "
+        "Do not render these labels inside the video. "
         if callouts
         else ""
     )
@@ -860,7 +856,7 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
         "Create an 8-second vertical UGC product-use clip using the provided reference frame or start/end keyframes. "
         "If two reference images are provided, use image 1 as the exact first frame and image 2 as the exact final frame; create only a smooth practical transition between them. "
         "The hook is visual: start with the everyday problem, need, or convenience moment already visible; then show one simple satisfying use action; end on a clear proof/sell shot. "
-        f"Follow this exact 0-8s storyboard with visual beat, spoken line, and allowed overlay for each beat: {storyboard} "
+        f"Follow this exact 0-8s storyboard with visual beat and spoken line for each beat; overlay is always none during VEO generation: {storyboard} "
         f"Action arc: adult hands interact with the exact visible product and perform one supported use action: {usage_context}. "
         f"Scene context: {scene_context}. "
         f"Scene imagination: {scene_imagination}. "
@@ -874,7 +870,7 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
         f"{overlay_block}"
         f"{audio_block} "
         "Natural handheld phone camera, close practical use framing. "
-        "No subtitles, no sentence captions, no lower-third transcript, no karaoke-style text, no Instagram or INS icons, no TikTok icons, no app UI, no watermarks, and no readable on-screen text beyond the explicitly allowed tiny feature-tag overlays."
+        "No subtitles, no sentence captions, no lower-third transcript, no karaoke-style text, no feature-tag overlays, no emoji text, no readable on-screen words, no Instagram or INS icons, no TikTok icons, no app UI, and no watermarks."
     )
 
 
@@ -920,12 +916,12 @@ Each variant must include:
 - dialogue_script with natural spoken lines
 - function_intro_prompt: a separate prompt for generating concise spoken function explanation
 - voiceover_script_8s: timed 0-2s, 2-5s, 5-8s spoken script lines that introduce and explain the function
-- on_screen_callouts: 1-3 short social-style feature overlay labels that may include one simple product-relevant emoji; VEO may render them as tiny sparse UGC feature tags; never subtitles, sentence captions, app icons, platform logos, UI chrome, or watermarks
+- on_screen_callouts: 1-3 short social-style feature overlay labels that may include one simple product-relevant emoji; store them as post-production metadata only, never ask VEO to render them; never subtitles, sentence captions, app icons, platform logos, UI chrome, or watermarks
 - function_demo_prompt: editor-facing prompt that explains the function, proof moment, and final benefit
 - usage_logic: explain how the product works and why the scene is correct
 - proof_moment: the exact visual action that proves the function
 - shot_plan with exact 0-8 second timing
-- storyboard_8s: exact 0-8 second beats; each beat should include time, visual, spoken, and overlay, and the first/last beats must correspond to the start/end keyframes
+- storyboard_8s: exact 0-8 second beats; each beat should include time, visual, and spoken; overlay should be empty/none for VEO generation, and the first/last beats must correspond to the start/end keyframes
 - selected_reference_images using local paths from the preferred list
 - reference_scope: explain which visual details from source images lock product identity, and explicitly state that source-photo background/props/composition are not mandatory unless functionally necessary
 - selling_angle: one focused buyer benefit for this variant
@@ -941,8 +937,8 @@ Critical:
 4. The selected reference image must be the best true full-product reference: full silhouette, correct SKU/style, real proportions, visible key functional zones. Do not select alternate SKU images, accessory-only images, packaging-only images, loose parts, isolated cables, or detail images as canonical.
 5. Put concise native-audio voiceover lines into VEO video_prompt, and ensure the full spoken copy can naturally finish inside 8 seconds at normal creator pace.
 6. Keep every shot_plan, voiceover_script_8s, image-to-video prompt, and action arc designed for exactly 8 seconds. Do not write 9-12s, 10-12s, 12s, or 15s plans.
-7. Allow only tiny sparse UGC feature-tag overlays from on_screen_callouts; one simple product-relevant emoji is allowed per label. Do not ask for subtitles, transcript captions, lower-thirds, karaoke text, Instagram / INS / TikTok icons, app UI, or watermarks.
-8. Build the video from a single storyboard: video_prompt must include every beat's time, visual content, spoken line, and overlay label; start_frame_prompt must depict the first beat; end_frame_prompt must depict the final beat.
+7. Store feature-tag overlays from on_screen_callouts as post-production metadata only; one simple product-relevant emoji is allowed per label for later editing, but do not ask VEO to render any overlay text or emoji. Do not ask for subtitles, transcript captions, lower-thirds, karaoke text, Instagram / INS / TikTok icons, app UI, or watermarks.
+8. Build the video from a single storyboard: video_prompt must include every beat's time, visual content, and spoken line; start_frame_prompt must depict the first beat; end_frame_prompt must depict the final beat. Overlay is always none during VEO generation.
 9. Product reference images lock the product itself, not the entire source photo. Preserve product identity and usage mechanics, but freely imagine realistic buyer scenes, backgrounds, camera angles, and contextual props that clarify the function.
 10. Each variant should focus on one small function or selling point. Vary function, scene, action, and proof moment across the batch; do not produce ten versions of the same tabletop placement.
 11. Start/end keyframes should be meaningfully different enough for an 8-second action arc while preserving the same exact product.

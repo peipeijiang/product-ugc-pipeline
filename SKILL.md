@@ -104,7 +104,7 @@ Every UGC variant must include:
 - Hook in the first 2 seconds.
 - Creator persona and shot style, e.g. kitchen counter demo, unboxing, problem-solution, ASMR cleaning, mom-life hack, apartment mini-kitchen.
 - Natural dialogue that explains the product, not a silent product montage.
-- VEO prompts may include native English voiceover/dialogue when the user wants spoken product explanation. Short social-style overlay labels may include one relevant emoji when useful, but they must be feature tags only, not subtitles, transcripts, platform UI, icons, logos, or watermarks.
+- VEO prompts may include native English voiceover/dialogue when the user wants spoken product explanation. Do not ask VEO to render subtitles, captions, feature-tag overlays, emoji text, platform UI, icons, logos, or watermarks; text overlays should be added in post-production.
 - For 8-second VEO clips, the spoken copy must be written to finish naturally inside 8 seconds at normal creator pace, not merely shortened arbitrarily.
 - Keep 8-second native voiceover at normal spoken pace: target 16–20 English words total, hard maximum 22 words, and no more than 3 short lines. Do not repeat the same spoken line across multiple storyboard beats, and explicitly forbid extra filler/CTA beyond the scripted lines.
 - A proof moment showing the core function clearly.
@@ -127,11 +127,11 @@ Actual VEO `video_prompt` should be a conservative usage demo:
 - Describe the action flow, proof moment, and camera style, but avoid re-describing product geometry as if VEO should redesign it.
 - Do not ask VEO to add new product parts, mechanisms, labels, containers, chambers, hinges, buttons, reservoirs, or unsupported accessories.
 - Keep detailed UGC dialogue, product explanation, and usage logic in `dialogue_script`, `function_intro_prompt`, `voiceover_script_8s`, `usage_logic`, and `shot_plan` for planning/editing context. The final VEO prompt is always `video_prompt`.
-- Use a single `storyboard_8s` as the source of truth for each variant. Each beat should include `time`, `visual`, `spoken`, and `overlay`; `video_prompt` should include the full storyboard, `start_frame_prompt` should depict the first beat, and `end_frame_prompt` should depict the final beat.
+- Use a single `storyboard_8s` as the source of truth for each variant. Each beat should include `time`, `visual`, and `spoken`; `video_prompt` should include the full storyboard, `start_frame_prompt` should depict the first beat, and `end_frame_prompt` should depict the final beat. `overlay` should be empty/none during VEO generation.
 - In `storyboard_8s`, assign each spoken line to only one beat. Other beats should have no new spoken words rather than repeating the previous line, otherwise VEO may over-speak and cut off the ending.
 - Do not let start/end keyframes be generic “before/after” images. They must correspond to the first and final storyboard beats, with a visible action-state change while preserving the same product identity, subject, room, wardrobe, lighting, and continuity.
-- `on_screen_callouts` may contain short feature tags such as “⚡ Fast Setup”, “💧 Water Resistant”, or “Foldable Stand”. These may be passed into the VEO prompt as tiny tasteful UGC overlay labels when requested, but never as subtitles, sentence captions, transcript text, platform UI, platform icons/logos, or watermarks. Emoji should be simple, generic, and product-relevant; do not use Instagram/TikTok-style icons.
-- Never ask image or video models to render Instagram / INS / TikTok logos, app icons, story frames, platform UI chrome, like/comment/share bars, or watermarks. Overlay design, when used, should be tiny feature-tag text and may include one simple generic emoji.
+- `on_screen_callouts` may contain short feature tags such as “⚡ Fast Setup”, “💧 Water Resistant”, or “Foldable Stand”. These are post-production overlay metadata only and should not be rendered by VEO, because model-rendered text and emoji often become garbled. Emoji should be simple, generic, and product-relevant for later editing; do not use Instagram/TikTok-style icons.
+- Never ask image or video models to render Instagram / INS / TikTok logos, app icons, story frames, platform UI chrome, like/comment/share bars, subtitles, captions, feature-tag text, emoji text, or watermarks. Add overlays after video generation.
 
 Every UGC variant must be grounded in `product_brief.json`:
 
@@ -178,7 +178,7 @@ Before delivering outputs, inspect `materials.md`, `image_analysis.json`, and `u
 
 - Reject image prompts that do not preserve the exact product form.
 - Reject VEO prompts that redesign the product, invent mechanisms, or introduce unsupported actions.
-- Reject prompts that imply Instagram / INS / TikTok icons, logos, app UI, story stickers, or watermark overlays.
+- Reject prompts that imply Instagram / INS / TikTok icons, logos, app UI, story stickers, watermark overlays, subtitles, captions, or VEO-rendered feature-tag/emoji text.
 - Reject prompts that use a weak reference image when a cleaner product image exists.
 - Prefer close-up product photos as image references over lifestyle images.
 - Reject batches where the variants only differ cosmetically but repeat the same scene, camera angle, action, and proof moment.
