@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -260,16 +261,25 @@ def append_mid_native_audio_instruction(prompt: str, voice_lines: Any, callouts:
     safe_line = first_voice_line(voice_lines, "Here is how the product works.")
     overlay_block = ""
     if callouts:
-        joined = ", ".join(f"\"{item}\"" for item in callouts[:2])
+        safe_callouts = []
+        for item in callouts[:2]:
+            text = re.sub(r"[^\x00-\x7F]+", "", str(item))
+            text = re.sub(r"[^A-Za-z0-9 %&+/-]", "", text)
+            text = " ".join(text.split()[:3])[:18].strip()
+            if text:
+                safe_callouts.append(text)
+        joined = ", ".join(f"\"{item}\"" for item in safe_callouts)
         overlay_block = (
-            f" Post-production overlay metadata only, not for VEO to render: {joined}. "
-            "Do not render these words, emoji, labels, lower thirds, captions, subtitles, platform UI chrome, icons, or watermarks inside the generated video."
+            f" Allow only {len(safe_callouts)} tiny tasteful Instagram-style overlay words for feature tags: {joined}. "
+            "Keep them very small, decorative, brief, and not synchronized line-by-line with the spoken voiceover. Never render full-sentence captions, subtitles, transcripts, lower thirds, karaoke text, platform UI chrome, icons, watermarks, or emoji text."
+            if safe_callouts
+            else ""
         )
     audio_block = (
         "\n\nNATIVE AUDIO: Generate natural native audio inside the video: a bright, young American female ecommerce creator voice, friendly, clear, slightly energetic, not robotic, not corporate. "
         f"Spoken voiceover, complete within 8 seconds: \"{safe_line}\" "
         "Add subtle upbeat modern product-ad background music under the voice at low volume, no lyrics, plus light real handling sounds. "
-        "No subtitles, no captions, no feature-tag overlays, no emoji text, no labels, no readable on-screen words, no Instagram or INS icons, no TikTok icons, no app UI, and no watermarks."
+        "No subtitles, no captions, no full-sentence labels, no emoji text, no Instagram or INS icons, no TikTok icons, no app UI, and no watermarks. The only allowed readable text is the explicitly allowed tiny feature-tag overlay words."
     )
     return prompt + overlay_block + audio_block
 

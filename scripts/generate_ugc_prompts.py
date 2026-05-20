@@ -266,15 +266,17 @@ def assign_spoken_lines_to_shots(shot_plan: list[dict[str, str]], voiceover: lis
 def storyboard_entries(variant: dict[str, Any]) -> list[dict[str, str]]:
     shot_plan = normalize_shot_plan_8s(variant.get("shot_plan"), variant)
     voiceover = normalize_voiceover_script_8s(variant.get("voiceover_script_8s"), hook=str(variant.get("hook") or ""))
+    callouts = normalize_on_screen_callouts(variant.get("on_screen_callouts"), str(variant.get("selling_angle") or variant.get("usage_logic") or ""))
     spoken_assignments = assign_spoken_lines_to_shots(shot_plan, voiceover)
     entries: list[dict[str, str]] = []
     for index, shot in enumerate(shot_plan):
+        overlay = callouts[min(index, len(callouts) - 1)] if callouts and index < 2 else ""
         entries.append(
             {
                 "time": str(shot.get("time") or ""),
                 "visual": str(shot.get("shot") or ""),
                 "spoken": spoken_assignments.get(index, ""),
-                "overlay": "",
+                "overlay": overlay,
             }
         )
     return entries
@@ -284,7 +286,7 @@ def format_storyboard_for_prompt(variant: dict[str, Any]) -> str:
     lines: list[str] = []
     for entry in storyboard_entries(variant):
         spoken = entry.get("spoken") or "none"
-        overlay = "none"
+        overlay = entry.get("overlay") or "none"
         lines.append(
             f"[{entry.get('time')}] Visual: {entry.get('visual')}. Spoken: {spoken}. Overlay: {overlay}."
         )
@@ -608,16 +610,21 @@ def normalize_on_screen_callouts(raw_callouts: Any, feature_summary: str) -> lis
     clean: list[str] = []
     for candidate in candidates:
         label = re.sub(r"\s+", " ", candidate).strip(" .,-")
+        label = re.sub(r"[^\x00-\x7F]+", "", label)
+        label = re.sub(r"[^A-Za-z0-9 %&+/-]", "", label)
+        words = label.split()
+        if len(words) > 3:
+            label = " ".join(words[:3])
         if not label:
             continue
         lowered = label.lower()
         if any(marker in lowered for marker in banned):
             continue
         if label not in clean:
-            clean.append(label[:38])
+            clean.append(label[:18].strip())
         if len(clean) >= 3:
             break
-    return clean or ["✨ Quick demo", "👌 Easy control", "💧 Daily wear"]
+    return clean or ["Quick demo", "Easy control", "Daily wear"]
 
 
 def build_function_demo_prompt(product_name: str, feature_summary: str, scene: str = "") -> str:
@@ -834,8 +841,9 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
     )
     callouts = normalize_on_screen_callouts(variant.get("on_screen_callouts"), _plain_brief_list(variant.get("selling_angle") or usage_context, 3))
     overlay_block = (
-        f"Post-production overlay metadata only, not for VEO to render: {', '.join(callouts[:3])}. "
-        "Do not render these labels inside the video. "
+        f"Allow only {min(len(callouts), 2)} tiny tasteful Instagram-style overlay words for feature tags: {', '.join(repr(item) for item in callouts[:2])}. "
+        "Keep them very small, decorative, brief, and not synchronized line-by-line with the spoken voiceover. "
+        "Never render full-sentence captions, subtitles, transcripts, lower thirds, karaoke text, platform icons/logos, watermarks, or emoji text. "
         if callouts
         else ""
     )
@@ -856,7 +864,7 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
         "Create an 8-second vertical UGC product-use clip using the provided reference frame or start/end keyframes. "
         "If two reference images are provided, use image 1 as the exact first frame and image 2 as the exact final frame; create only a smooth practical transition between them. "
         "The hook is visual: start with the everyday problem, need, or convenience moment already visible; then show one simple satisfying use action; end on a clear proof/sell shot. "
-        f"Follow this exact 0-8s storyboard with visual beat and spoken line for each beat; overlay is always none during VEO generation: {storyboard} "
+        f"Follow this exact 0-8s storyboard with visual beat, spoken line, and sparse feature overlay for each beat: {storyboard} "
         f"Action arc: adult hands interact with the exact visible product and perform one supported use action: {usage_context}. "
         f"Scene context: {scene_context}. "
         f"Scene imagination: {scene_imagination}. "
@@ -870,7 +878,7 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
         f"{overlay_block}"
         f"{audio_block} "
         "Natural handheld phone camera, close practical use framing. "
-        "No subtitles, no sentence captions, no lower-third transcript, no karaoke-style text, no feature-tag overlays, no emoji text, no readable on-screen words, no Instagram or INS icons, no TikTok icons, no app UI, and no watermarks."
+        "No subtitles, no sentence captions, no lower-third transcript, no karaoke-style text, no emoji text, no Instagram or INS icons, no TikTok icons, no app UI, and no watermarks. The only allowed readable text is the explicitly allowed tiny feature-tag overlay words."
     )
 
 
@@ -916,12 +924,12 @@ Each variant must include:
 - dialogue_script with natural spoken lines
 - function_intro_prompt: a separate prompt for generating concise spoken function explanation
 - voiceover_script_8s: timed 0-2s, 2-5s, 5-8s spoken script lines that introduce and explain the function
-- on_screen_callouts: 1-3 short social-style feature overlay labels that may include one simple product-relevant emoji; store them as post-production metadata only, never ask VEO to render them; never subtitles, sentence captions, app icons, platform logos, UI chrome, or watermarks
+- on_screen_callouts: 1-3 short social-style feature overlay labels; for VEO use plain ASCII English, 1-3 words, max 18 characters, no emoji; never subtitles, sentence captions, app icons, platform logos, UI chrome, or watermarks
 - function_demo_prompt: editor-facing prompt that explains the function, proof moment, and final benefit
 - usage_logic: explain how the product works and why the scene is correct
 - proof_moment: the exact visual action that proves the function
 - shot_plan with exact 0-8 second timing
-- storyboard_8s: exact 0-8 second beats; each beat should include time, visual, and spoken; overlay should be empty/none for VEO generation, and the first/last beats must correspond to the start/end keyframes
+- storyboard_8s: exact 0-8 second beats; each beat should include time, visual, spoken, and optional sparse overlay; overlay must be short feature tags only, not subtitles, and the first/last beats must correspond to the start/end keyframes
 - selected_reference_images using local paths from the preferred list
 - reference_scope: explain which visual details from source images lock product identity, and explicitly state that source-photo background/props/composition are not mandatory unless functionally necessary
 - selling_angle: one focused buyer benefit for this variant
@@ -937,8 +945,8 @@ Critical:
 4. The selected reference image must be the best true full-product reference: full silhouette, correct SKU/style, real proportions, visible key functional zones. Do not select alternate SKU images, accessory-only images, packaging-only images, loose parts, isolated cables, or detail images as canonical.
 5. Put concise native-audio voiceover lines into VEO video_prompt, and ensure the full spoken copy can naturally finish inside 8 seconds at normal creator pace.
 6. Keep every shot_plan, voiceover_script_8s, image-to-video prompt, and action arc designed for exactly 8 seconds. Do not write 9-12s, 10-12s, 12s, or 15s plans.
-7. Store feature-tag overlays from on_screen_callouts as post-production metadata only; one simple product-relevant emoji is allowed per label for later editing, but do not ask VEO to render any overlay text or emoji. Do not ask for subtitles, transcript captions, lower-thirds, karaoke text, Instagram / INS / TikTok icons, app UI, or watermarks.
-8. Build the video from a single storyboard: video_prompt must include every beat's time, visual content, and spoken line; start_frame_prompt must depict the first beat; end_frame_prompt must depict the final beat. Overlay is always none during VEO generation.
+7. Allow only 1-2 tiny sparse VEO overlay labels from on_screen_callouts as feature tags, e.g. "100 speeds" or "Tilt airflow"; use plain ASCII English only, no emoji. Do not ask for subtitles, transcript captions, lower-thirds, karaoke text, Instagram / INS / TikTok icons, app UI, or watermarks.
+8. Build the video from a single storyboard: video_prompt must include every beat's time, visual content, spoken line, and optional sparse feature overlay; start_frame_prompt must depict the first beat; end_frame_prompt must depict the final beat. Overlay must not repeat the spoken line as subtitles.
 9. Product reference images lock the product itself, not the entire source photo. Preserve product identity and usage mechanics, but freely imagine realistic buyer scenes, backgrounds, camera angles, and contextual props that clarify the function.
 10. Each variant should focus on one small function or selling point. Vary function, scene, action, and proof moment across the batch; do not produce ten versions of the same tabletop placement.
 11. Start/end keyframes should be meaningfully different enough for an 8-second action arc while preserving the same exact product.
