@@ -717,10 +717,10 @@ def usage_keyframe_prompt(
     reference_scope = variant.get("reference_scope") or reference_scope_note(references)
     scene_imagination = build_scene_imagination(variant, brief)
     usage_context = _plain_brief_list(
-        brief.get("step_by_step_usage") or brief.get("confirmed_or_inferred_use_steps") or variant.get("usage_logic"),
+        variant.get("usage_logic") or brief.get("step_by_step_usage") or brief.get("confirmed_or_inferred_use_steps"),
         2,
     )
-    proof_moment = _plain_brief_list(brief.get("proof_moments") or variant.get("proof_moment"), 1)
+    proof_moment = _plain_brief_list(variant.get("proof_moment") or brief.get("proof_moments"), 1)
     endpoint = storyboard_endpoint(variant, frame_role)
     storyboard = format_storyboard_for_prompt(variant)
     if frame_role == "end":
@@ -739,7 +739,7 @@ def usage_keyframe_prompt(
             "This must establish the hook/problem/setup before the product action begins."
         )
         continuity = "This start frame establishes the person, scene, wardrobe, props, and camera setup that the end frame must continue."
-    scene_hint = _plain_brief_list(brief.get("recommended_ugc_scenes") or variant.get("shot_plan") or variant.get("title"), 2)
+    scene_hint = _plain_brief_list(variant.get("shot_plan") or brief.get("recommended_ugc_scenes") or variant.get("title"), 2)
     if not scene_hint:
         scene_hint = "a realistic use environment for this exact product"
     phone_geometry = phone_geometry_constraints_for_prompt(
@@ -785,7 +785,7 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
         3,
     )
     proof_moment = _plain_brief_list(variant.get("proof_moment") or brief.get("proof_moments"), 2)
-    scene_context = _plain_brief_list(brief.get("recommended_ugc_scenes") or variant.get("shot_plan"), 2)
+    scene_context = _plain_brief_list(variant.get("shot_plan") or brief.get("recommended_ugc_scenes"), 2)
     scene_imagination = build_scene_imagination(variant, brief)
     reference_scope = variant.get("reference_scope") or reference_scope_note(variant.get("selected_reference_images"))
     if not usage_context:
