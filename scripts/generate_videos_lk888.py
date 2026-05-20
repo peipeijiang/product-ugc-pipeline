@@ -183,6 +183,11 @@ def append_native_audio_instruction(prompt: str, voice_lines: Any) -> str:
     return prompt + audio_block
 
 
+def prompt_has_native_audio(prompt: str) -> bool:
+    upper_prompt = prompt.upper()
+    return "NATIVE AUDIO" in upper_prompt or "VOICEOVER" in upper_prompt
+
+
 def first_voice_line(voice_lines: Any, fallback: str = "") -> str:
     line = ""
     if isinstance(voice_lines, list) and voice_lines:
@@ -387,18 +392,21 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
     )
     base_prompt = variant.get("video_prompt") or "Create a product UGC video."
     callouts = overlay_callouts(variant, args.light_overlay)
-    prompt = base_prompt if args.audio_style == "none" else (
-        append_safe_audio_test_instruction(base_prompt, variant.get("voiceover_script_8s")) if args.safe_audio_test else (
-            append_asmr_audio_instruction(base_prompt)
-            if args.audio_style == "asmr"
-            else
-            append_mid_native_audio_instruction(base_prompt, variant.get("voiceover_script_8s"), callouts)
-            if args.audio_style == "mid"
-            else append_native_audio_instruction(base_prompt, variant.get("voiceover_script_8s"))
-            if args.audio_style == "legacy"
-            else append_safe_native_audio_instruction(base_prompt, variant.get("voiceover_script_8s"))
+    if args.audio_style == "none" or prompt_has_native_audio(base_prompt):
+        prompt = base_prompt
+    else:
+        prompt = (
+            append_safe_audio_test_instruction(base_prompt, variant.get("voiceover_script_8s")) if args.safe_audio_test else (
+                append_asmr_audio_instruction(base_prompt)
+                if args.audio_style == "asmr"
+                else
+                append_mid_native_audio_instruction(base_prompt, variant.get("voiceover_script_8s"), callouts)
+                if args.audio_style == "mid"
+                else append_native_audio_instruction(base_prompt, variant.get("voiceover_script_8s"))
+                if args.audio_style == "legacy"
+                else append_safe_native_audio_instruction(base_prompt, variant.get("voiceover_script_8s"))
+            )
         )
-    )
     params = build_model_params(args, [item["url"] for item in uploads])
     payload = {"model": args.model, "prompt": prompt, "params": params, "count": 1}
     print(f"[create] {product_dir.name} variant {variant_id:02d} model={args.model}", flush=True)
