@@ -71,7 +71,7 @@ For each product folder:
 - `images/`: original downloaded product-only images; never overwrite these.
 - `image_analysis.json`: per-image visual description, product-related flag, exact product-identity details, visible/inferred use mechanics, UGC usefulness score, prompt risks, and recommended usage.
 - `product_brief.json`: synthesized product cognition, including confirmed identity, step-by-step usage, scenes, proof moments, misuse risks, and reference image strategy.
-- `ugc_prompts.json`: canonical prompt file. New rerolls should append new variants into this same file so prompt history stays in one place.
+- `ugc_prompts.json`: canonical prompt file. New rerolls should append new variants into this same file so prompt history stays in one place. Final media generation reads `image_prompt`, `start_frame_prompt`, `end_frame_prompt`, and `video_prompt`; do not keep duplicate “model suggested” prompt fields in this canonical file.
 - `runs/`: append-only batch history. Every fresh reroll or re-generation should create a labeled run folder containing the batch JSON, intermediate keyframes, and that run's own result manifests. Keep only the latest canonical `generated_images/` and `videos/` at the top level for quick access.
 - `generated_images/`: GPT-Image-2 outputs named by prompt variant; with `--keyframes`, writes `variant-XX-start.png` and `variant-XX-end.png`.
 - `videos/`: canonical VEO output JSON, status JSON, and downloaded MP4 files. New runs should append by `variant-XX` inside this folder instead of creating `videos_*` batch folders.
@@ -125,7 +125,7 @@ Actual VEO `video_prompt` should be a conservative usage demo:
 - Allow adult hands and kitchen/sink/tabletop context when needed for a useful demo.
 - Describe the action flow, proof moment, and camera style, but avoid re-describing product geometry as if VEO should redesign it.
 - Do not ask VEO to add new product parts, mechanisms, labels, containers, chambers, hinges, buttons, reservoirs, or unsupported accessories.
-- Keep detailed UGC dialogue, product explanation, and usage logic in `dialogue_script`, `function_intro_prompt`, `voiceover_script_8s`, `usage_logic`, `shot_plan`, and `model_suggested_video_prompt` for later editing/voiceover; do not feed those directly to VEO by default.
+- Keep detailed UGC dialogue, product explanation, and usage logic in `dialogue_script`, `function_intro_prompt`, `voiceover_script_8s`, `usage_logic`, and `shot_plan` for planning/editing context. The final VEO prompt is always `video_prompt`.
 - `on_screen_callouts` may contain short feature tags such as “MagSafe Snap” or “Foldable Stand”. These may be passed into the VEO prompt as tiny tasteful UGC overlay labels when requested, but never as subtitles, sentence captions, transcript text, platform UI, icons, logos, or watermarks.
 - Never ask image or video models to render Instagram / INS / TikTok logos, app icons, story frames, platform UI chrome, like/comment/share bars, or watermarks. Overlay design, when used, must be plain text only.
 

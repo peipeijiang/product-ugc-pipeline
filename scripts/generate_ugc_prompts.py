@@ -346,8 +346,6 @@ def normalize_variants(output: dict[str, Any], manifest: dict[str, Any], referen
             image_prompt = fidelity + ("\n" + image_prompt if image_prompt else "")
         if "CANONICAL PRODUCT" not in video_prompt:
             video_prompt = fidelity + ("\n" + video_prompt if video_prompt else "")
-        clean_variant["model_suggested_image_prompt"] = image_prompt
-        clean_variant["model_suggested_video_prompt"] = video_prompt
         clean_variant["start_frame_prompt"] = usage_keyframe_prompt(product_name, clean_variant, product_brief, "start")
         clean_variant["end_frame_prompt"] = usage_keyframe_prompt(product_name, clean_variant, product_brief, "end")
         clean_variant["image_prompt"] = strict_pad_image_prompt(product_name, clean_variant, product_brief)
@@ -736,7 +734,6 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
                 "usage_logic",
                 "proof_moment",
                 "scene_imagination",
-                "model_suggested_video_prompt",
                 "video_prompt",
             )
         )
