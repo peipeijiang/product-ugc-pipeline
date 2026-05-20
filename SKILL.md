@@ -126,6 +126,8 @@ Actual VEO `video_prompt` should be a conservative usage demo:
 - Describe the action flow, proof moment, and camera style, but avoid re-describing product geometry as if VEO should redesign it.
 - Do not ask VEO to add new product parts, mechanisms, labels, containers, chambers, hinges, buttons, reservoirs, or unsupported accessories.
 - Keep detailed UGC dialogue, product explanation, and usage logic in `dialogue_script`, `function_intro_prompt`, `voiceover_script_8s`, `usage_logic`, and `shot_plan` for planning/editing context. The final VEO prompt is always `video_prompt`.
+- Use a single `storyboard_8s` as the source of truth for each variant. Each beat should include `time`, `visual`, `spoken`, and `overlay`; `video_prompt` should include the full storyboard, `start_frame_prompt` should depict the first beat, and `end_frame_prompt` should depict the final beat.
+- Do not let start/end keyframes be generic “before/after” images. They must correspond to the first and final storyboard beats, with a visible action-state change while preserving the same product identity, subject, room, wardrobe, lighting, and continuity.
 - `on_screen_callouts` may contain short feature tags such as “MagSafe Snap” or “Foldable Stand”. These may be passed into the VEO prompt as tiny tasteful UGC overlay labels when requested, but never as subtitles, sentence captions, transcript text, platform UI, icons, logos, or watermarks.
 - Never ask image or video models to render Instagram / INS / TikTok logos, app icons, story frames, platform UI chrome, like/comment/share bars, or watermarks. Overlay design, when used, must be plain text only.
 

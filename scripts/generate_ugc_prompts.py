@@ -15,6 +15,12 @@ UGC_SYSTEM_PROMPT = """You are a senior UGC creative director for short-form soc
 Create product-faithful creator ad prompts. Return JSON only."""
 
 VOICEOVER_SEGMENTS = [("0-2s", 8), ("2-5s", 10), ("5-8s", 10)]
+SHOT_TIME_SLOTS = {
+    3: ["0.0-2.0s", "2.0-5.0s", "5.0-8.0s"],
+    4: ["0.0-1.5s", "1.5-3.2s", "3.2-5.8s", "5.8-8.0s"],
+    5: ["0.0-1.2s", "1.2-2.8s", "2.8-5.2s", "5.2-6.8s", "6.8-8.0s"],
+    6: ["0.0-1.0s", "1.0-2.3s", "2.3-3.8s", "3.8-5.4s", "5.4-6.8s", "6.8-8.0s"],
+}
 
 
 def discover_history_files(product_dir: Path, history_glob: str) -> list[Path]:
@@ -192,6 +198,86 @@ def compact_voiceover_text(raw_voiceover: Any) -> str:
     return " ".join(item["line"] for item in normalized if item.get("line")).strip()
 
 
+def _shot_text(item: Any) -> str:
+    if isinstance(item, dict):
+        return str(item.get("shot") or item.get("visual") or item.get("description") or item.get("text") or "").strip()
+    return str(item or "").strip()
+
+
+def normalize_shot_plan_8s(raw_shot_plan: Any, variant: dict[str, Any]) -> list[dict[str, str]]:
+    raw_items = raw_shot_plan if isinstance(raw_shot_plan, list) else []
+    shots = [_shot_text(item) for item in raw_items]
+    shots = [shot for shot in shots if shot][:6]
+    if len(shots) < 3:
+        shots = [
+            f"Hook setup: {variant.get('hook') or variant.get('title') or 'show the buyer problem or need'}",
+            f"Product close-up: show the exact product identity and the main functional surface for {variant.get('primary_function_focus') or variant.get('selling_angle') or 'the core function'}",
+            f"Action demo: {variant.get('usage_logic') or 'perform one supported use action with the product clearly visible'}",
+            f"Proof moment: {variant.get('proof_moment') or 'show the practical result clearly'}",
+            "Final sell shot: keep the product visible in hand or beside the result",
+        ]
+    shot_count = min(max(len(shots), 3), 6)
+    slots = SHOT_TIME_SLOTS.get(shot_count, SHOT_TIME_SLOTS[5])
+    normalized: list[dict[str, str]] = []
+    for index, shot in enumerate(shots[:shot_count]):
+        normalized.append({"time": slots[index], "shot": shot})
+    return normalized
+
+
+def _slot_start_seconds(time_slot: str) -> float:
+    match = re.search(r"(\d+(?:\.\d+)?)", time_slot or "")
+    return float(match.group(1)) if match else 0.0
+
+
+def _voiceover_for_time(time_slot: str, voiceover: list[dict[str, str]]) -> str:
+    start = _slot_start_seconds(time_slot)
+    if not voiceover:
+        return ""
+    if start < 2:
+        return str(voiceover[0].get("line") or "")
+    if start < 5:
+        return str(voiceover[min(1, len(voiceover) - 1)].get("line") or "")
+    return str(voiceover[min(2, len(voiceover) - 1)].get("line") or "")
+
+
+def storyboard_entries(variant: dict[str, Any]) -> list[dict[str, str]]:
+    shot_plan = normalize_shot_plan_8s(variant.get("shot_plan"), variant)
+    voiceover = normalize_voiceover_script_8s(variant.get("voiceover_script_8s"), hook=str(variant.get("hook") or ""))
+    callouts = normalize_on_screen_callouts(variant.get("on_screen_callouts"), str(variant.get("selling_angle") or variant.get("usage_logic") or ""))
+    entries: list[dict[str, str]] = []
+    for index, shot in enumerate(shot_plan):
+        overlay = callouts[min(index, len(callouts) - 1)] if callouts else ""
+        if index >= 3:
+            overlay = ""
+        entries.append(
+            {
+                "time": str(shot.get("time") or ""),
+                "visual": str(shot.get("shot") or ""),
+                "spoken": _voiceover_for_time(str(shot.get("time") or ""), voiceover),
+                "overlay": overlay,
+            }
+        )
+    return entries
+
+
+def format_storyboard_for_prompt(variant: dict[str, Any]) -> str:
+    lines: list[str] = []
+    for entry in storyboard_entries(variant):
+        spoken = entry.get("spoken") or "none"
+        overlay = entry.get("overlay") or "none"
+        lines.append(
+            f"[{entry.get('time')}] Visual: {entry.get('visual')}. Spoken: {spoken}. Overlay: {overlay}."
+        )
+    return " ".join(lines)
+
+
+def storyboard_endpoint(variant: dict[str, Any], frame_role: str) -> dict[str, str]:
+    entries = storyboard_entries(variant)
+    if not entries:
+        return {"time": "0.0-1.2s" if frame_role == "start" else "6.8-8.0s", "visual": "", "spoken": "", "overlay": ""}
+    return entries[0] if frame_role == "start" else entries[-1]
+
+
 def summarize_variant_history(variant: dict[str, Any], source_file: str) -> dict[str, Any]:
     return {
         "source_file": source_file,
@@ -338,6 +424,8 @@ def normalize_variants(output: dict[str, Any], manifest: dict[str, Any], referen
             fallback=build_voiceover_script_8s(product_name, feature_summary, clean_variant.get("hook", ""))[1]["line"],
         )
         clean_variant["on_screen_callouts"] = normalize_on_screen_callouts(clean_variant.get("on_screen_callouts"), feature_summary)
+        clean_variant["shot_plan"] = normalize_shot_plan_8s(clean_variant.get("shot_plan"), clean_variant)
+        clean_variant["storyboard_8s"] = storyboard_entries(clean_variant)
         clean_variant.setdefault("function_demo_prompt", build_function_demo_prompt(product_name, feature_summary, clean_variant.get("title", "")))
         fidelity = product_fidelity_block(product_name)
         image_prompt = str(clean_variant.get("image_prompt") or "")
@@ -633,19 +721,22 @@ def usage_keyframe_prompt(
         2,
     )
     proof_moment = _plain_brief_list(brief.get("proof_moments") or variant.get("proof_moment"), 1)
+    endpoint = storyboard_endpoint(variant, frame_role)
+    storyboard = format_storyboard_for_prompt(variant)
     if frame_role == "end":
         moment = (
-            "END KEYFRAME: the same product is still clearly visible after one gentle use motion; "
-            "show a believable small cleaned/rinsed area or practical result, not a perfect magic transformation."
+            f"END KEYFRAME: match the final storyboard beat exactly: [{endpoint.get('time')}] {endpoint.get('visual')}. "
+            "This must be the visible final proof/sell-shot state, not a repeat of the start frame."
         )
         continuity = (
             "This end frame must look like the same exact person, same wardrobe, same room, same props, same lighting, "
-            "and same camera setup as the start frame, only a few seconds later in the same action."
+            "and same shoot as the start frame, but the action state, hand position, product interaction, phone/app/sink/result state, "
+            "and camera composition should advance to the final storyboard beat."
         )
     else:
         moment = (
-            "START KEYFRAME: an attention-grabbing problem setup; the same product is about to be used, "
-            "clearly visible beside or lightly held near the target surface."
+            f"START KEYFRAME: match the first storyboard beat exactly: [{endpoint.get('time')}] {endpoint.get('visual')}. "
+            "This must establish the hook/problem/setup before the product action begins."
         )
         continuity = "This start frame establishes the person, scene, wardrobe, props, and camera setup that the end frame must continue."
     scene_hint = _plain_brief_list(brief.get("recommended_ugc_scenes") or variant.get("shot_plan") or variant.get("title"), 2)
@@ -676,8 +767,10 @@ def usage_keyframe_prompt(
         "The referenced product must remain the exact same physical object, with unobstructed recognizable silhouette and surface details. "
         f"Use this product-appropriate scene rather than a generic kitchen unless the product is truly a kitchen product: {scene_hint}. "
         f"Scene imagination: {scene_imagination} "
+        f"Full 8-second storyboard for continuity: {storyboard} "
         "The lifestyle environment may differ from the original product photo; preserve the product, not the source-photo background. "
         f"{continuity} "
+        "The start and end keyframes must not be near-duplicates: keep product identity stable, but clearly change the action state according to the first vs final storyboard beat. "
         "Adult hands only if needed, natural phone-shot lighting, no subtitles, no transcript captions, no platform UI, no icons, no extra branding. "
         f"{phone_geometry} "
         "Avoid extreme close-ups, heavy occlusion, dramatic stains, magic effects, or any invented product mechanism. "
@@ -701,6 +794,7 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
         proof_moment = "end with the product clearly visible beside the practical result"
     if not scene_context:
         scene_context = "a realistic home setting where this product would naturally be used"
+    storyboard = format_storyboard_for_prompt(variant)
     raw_voiceover = variant.get("voiceover_script_8s") or []
     normalized_voiceover = normalize_voiceover_script_8s(
         raw_voiceover,
@@ -742,6 +836,7 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
         "Create an 8-second vertical UGC product-use clip using the provided reference frame or start/end keyframes. "
         "If two reference images are provided, use image 1 as the exact first frame and image 2 as the exact final frame; create only a smooth practical transition between them. "
         "The hook is visual: start with the everyday problem, need, or convenience moment already visible; then show one simple satisfying use action; end on a clear proof/sell shot. "
+        f"Follow this exact 0-8s storyboard with visual beat, spoken line, and allowed overlay for each beat: {storyboard} "
         f"Action arc: adult hands interact with the exact visible product and perform one supported use action: {usage_context}. "
         f"Scene context: {scene_context}. "
         f"Scene imagination: {scene_imagination}. "
@@ -806,6 +901,7 @@ Each variant must include:
 - usage_logic: explain how the product works and why the scene is correct
 - proof_moment: the exact visual action that proves the function
 - shot_plan with exact 0-8 second timing
+- storyboard_8s: exact 0-8 second beats; each beat should include time, visual, spoken, and overlay, and the first/last beats must correspond to the start/end keyframes
 - selected_reference_images using local paths from the preferred list
 - reference_scope: explain which visual details from source images lock product identity, and explicitly state that source-photo background/props/composition are not mandatory unless functionally necessary
 - selling_angle: one focused buyer benefit for this variant
@@ -822,13 +918,14 @@ Critical:
 5. Put concise native-audio voiceover lines into VEO video_prompt, and ensure the full spoken copy can naturally finish inside 8 seconds at normal creator pace.
 6. Keep every shot_plan, voiceover_script_8s, image-to-video prompt, and action arc designed for exactly 8 seconds. Do not write 9-12s, 10-12s, 12s, or 15s plans.
 7. Allow only tiny sparse plain-text UGC feature-tag overlays from on_screen_callouts. Do not ask for subtitles, transcript captions, lower-thirds, karaoke text, Instagram / INS / TikTok icons, app UI, or watermarks.
-8. Product reference images lock the product itself, not the entire source photo. Preserve product identity and usage mechanics, but freely imagine realistic buyer scenes, backgrounds, camera angles, and contextual props that clarify the function.
-9. Each variant should focus on one small function or selling point. Vary function, scene, action, and proof moment across the batch; do not produce ten versions of the same tabletop placement.
-10. Start/end keyframes should be meaningfully different enough for an 8-second action arc while preserving the same exact product.
-11. Read the historical variants listed above as actual prior creative work for this product. Do not paraphrase them. Avoid reusing the same scene setup, same use action, same proof moment, same buyer context, or same selling angle unless you materially transform at least 3 of those dimensions.
-12. When function overlap is unavoidable, deliberately choose a different buyer situation, a different visual hook, a different camera idea, and a different proof framing instead of repeating the same demo in new words.
-13. Before writing the variants, allocate one primary_function_focus per variant from confirmed_use_cases, step_by_step_usage, and proof_moments. Do not assign the same primary function to multiple fresh variants unless the product has only one confirmed function. For multifunction wearables such as smart rings, do not default every variant to photo-taking/remote shutter; split confirmed functions across health/app checks, charging, status display, touch control, activity tracking, waterproof daily wear, or fit/detail as supported by the brief.
-14. If a phone appears, make its orientation physically possible. For selfie/timer/remote-shutter demos, the phone screen faces the creator and the lens points toward the creator; the viewer sees phone back/side, mirror, or over-shoulder composition. For app-screen proof, use over-shoulder/tabletop/second-device geometry. For wireless charging, the phone lies flat screen-up on the charger unless the real product is a stand.
+8. Build the video from a single storyboard: video_prompt must include every beat's time, visual content, spoken line, and overlay label; start_frame_prompt must depict the first beat; end_frame_prompt must depict the final beat.
+9. Product reference images lock the product itself, not the entire source photo. Preserve product identity and usage mechanics, but freely imagine realistic buyer scenes, backgrounds, camera angles, and contextual props that clarify the function.
+10. Each variant should focus on one small function or selling point. Vary function, scene, action, and proof moment across the batch; do not produce ten versions of the same tabletop placement.
+11. Start/end keyframes should be meaningfully different enough for an 8-second action arc while preserving the same exact product.
+12. Read the historical variants listed above as actual prior creative work for this product. Do not paraphrase them. Avoid reusing the same scene setup, same use action, same proof moment, same buyer context, or same selling angle unless you materially transform at least 3 of those dimensions.
+13. When function overlap is unavoidable, deliberately choose a different buyer situation, a different visual hook, a different camera idea, and a different proof framing instead of repeating the same demo in new words.
+14. Before writing the variants, allocate one primary_function_focus per variant from confirmed_use_cases, step_by_step_usage, and proof_moments. Do not assign the same primary function to multiple fresh variants unless the product has only one confirmed function. For multifunction wearables such as smart rings, do not default every variant to photo-taking/remote shutter; split confirmed functions across health/app checks, charging, status display, touch control, activity tracking, waterproof daily wear, or fit/detail as supported by the brief.
+15. If a phone appears, make its orientation physically possible. For selfie/timer/remote-shutter demos, the phone screen faces the creator and the lens points toward the creator; the viewer sees phone back/side, mirror, or over-shoulder composition. For app-screen proof, use over-shoulder/tabletop/second-device geometry. For wireless charging, the phone lies flat screen-up on the charger unless the real product is a stand.
 """.strip()
     payload = {
         "model": model,
