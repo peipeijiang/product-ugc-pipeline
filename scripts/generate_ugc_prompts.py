@@ -229,21 +229,43 @@ def _slot_start_seconds(time_slot: str) -> float:
     return float(match.group(1)) if match else 0.0
 
 
-def _voiceover_for_time(time_slot: str, voiceover: list[dict[str, str]]) -> str:
-    start = _slot_start_seconds(time_slot)
-    if not voiceover:
-        return ""
-    if start < 2:
-        return str(voiceover[0].get("line") or "")
-    if start < 5:
-        return str(voiceover[min(1, len(voiceover) - 1)].get("line") or "")
-    return str(voiceover[min(2, len(voiceover) - 1)].get("line") or "")
+def _slot_bounds(time_slot: str) -> tuple[float, float]:
+    values = re.findall(r"(\d+(?:\.\d+)?)", time_slot or "")
+    if not values:
+        return 0.0, 0.0
+    start = float(values[0])
+    end = float(values[1]) if len(values) > 1 else start
+    return start, end
+
+
+def assign_spoken_lines_to_shots(shot_plan: list[dict[str, str]], voiceover: list[dict[str, str]]) -> dict[int, str]:
+    assignments: dict[int, str] = {}
+    for voice_item in voiceover:
+        line = str(voice_item.get("line") or "").strip()
+        if not line:
+            continue
+        voice_start, voice_end = _slot_bounds(str(voice_item.get("time") or ""))
+        chosen_index: int | None = None
+        for index, shot in enumerate(shot_plan):
+            shot_start, shot_end = _slot_bounds(str(shot.get("time") or ""))
+            overlaps = shot_start < voice_end and shot_end > voice_start
+            if overlaps:
+                chosen_index = index
+                break
+        if chosen_index is None:
+            chosen_index = min(range(len(shot_plan)), key=lambda index: abs(_slot_start_seconds(str(shot_plan[index].get("time") or "")) - voice_start)) if shot_plan else None
+        if chosen_index is None:
+            continue
+        existing = assignments.get(chosen_index)
+        assignments[chosen_index] = f"{existing} {line}".strip() if existing else line
+    return assignments
 
 
 def storyboard_entries(variant: dict[str, Any]) -> list[dict[str, str]]:
     shot_plan = normalize_shot_plan_8s(variant.get("shot_plan"), variant)
     voiceover = normalize_voiceover_script_8s(variant.get("voiceover_script_8s"), hook=str(variant.get("hook") or ""))
     callouts = normalize_on_screen_callouts(variant.get("on_screen_callouts"), str(variant.get("selling_angle") or variant.get("usage_logic") or ""))
+    spoken_assignments = assign_spoken_lines_to_shots(shot_plan, voiceover)
     entries: list[dict[str, str]] = []
     for index, shot in enumerate(shot_plan):
         overlay = callouts[min(index, len(callouts) - 1)] if callouts else ""
@@ -253,7 +275,7 @@ def storyboard_entries(variant: dict[str, Any]) -> list[dict[str, str]]:
             {
                 "time": str(shot.get("time") or ""),
                 "visual": str(shot.get("shot") or ""),
-                "spoken": _voiceover_for_time(str(shot.get("time") or ""), voiceover),
+                "spoken": spoken_assignments.get(index, ""),
                 "overlay": overlay,
             }
         )
@@ -805,10 +827,10 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
     timed_voiceover = " ".join(f"[{item['time']}] {item['line']}" for item in normalized_voiceover if item.get("line"))
     audio_block = (
         "Native audio: include a clear young American female ecommerce-host voiceover, energetic but natural, slightly bright and sales-friendly. "
-        "The spoken script must finish naturally within 8 seconds at normal creator pace, roughly 18 to 24 English words total. "
+        "The spoken script must finish naturally within 8 seconds at normal creator pace, roughly 12 to 18 English words total. "
         f"Speak these exact timed lines in order: {timed_voiceover}. "
         f"Combined exact script: \"{voiceover_text[:220]}\" "
-        "Keep the voiceover synchronized to the visual function demo. Add only subtle real product handling sounds; no music, no singing."
+        "Do not add intro words, filler, repeated lines, extra CTA, or any unscripted speech. Keep the voiceover synchronized to the visual function demo. Add only subtle real product handling sounds; no music, no singing."
         if voiceover_text
         else "Native audio: include subtle real product handling sounds only, no music."
     )
