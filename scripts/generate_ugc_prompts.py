@@ -25,6 +25,7 @@ def discover_history_files(product_dir: Path, history_glob: str) -> list[Path]:
 def _variant_text(variant: dict[str, Any]) -> str:
     parts = [
         variant.get("title", ""),
+        variant.get("primary_function_focus", ""),
         variant.get("hook", ""),
         variant.get("selling_angle", ""),
         variant.get("scene_imagination", ""),
@@ -196,6 +197,7 @@ def summarize_variant_history(variant: dict[str, Any], source_file: str) -> dict
         "source_file": source_file,
         "variant_id": variant.get("variant_id"),
         "title": variant.get("title", ""),
+        "primary_function_focus": variant.get("primary_function_focus", ""),
         "hook": variant.get("hook", ""),
         "selling_angle": variant.get("selling_angle", ""),
         "scene_imagination": variant.get("scene_imagination", ""),
@@ -504,6 +506,37 @@ def re_split_features(text: str) -> list[str]:
     return re.split(r";|,|\n|/|\|| and ", text)
 
 
+def phone_geometry_constraints_for_prompt(text: str) -> str:
+    lowered = (text or "").lower()
+    has_phone = any(marker in lowered for marker in ("phone", "smartphone", "iphone", "mobile"))
+    has_camera_context = any(
+        marker in lowered
+        for marker in (
+            "camera",
+            "photo",
+            "selfie",
+            "shutter",
+            "timer",
+            "record",
+            "filming",
+            "app screen",
+            "screen preview",
+            "wireless charging",
+            "charging pad",
+            "charger",
+        )
+    )
+    if not (has_phone and has_camera_context):
+        return ""
+    return (
+        "Phone geometry constraints: make the phone orientation physically possible. "
+        "For selfie, timer, or remote-shutter capture, the phone screen faces the creator and the camera lens points toward the creator; "
+        "the external viewer may see the phone back/side, a mirror reflection, or an over-shoulder setup, not an impossible front-camera shot with the screen facing the viewer. "
+        "For app-screen or screen-preview proof, use an over-shoulder/tabletop/second-device composition so the phone screen faces the external camera while the product or hand remains visible. "
+        "For wireless charging pads, keep the phone lying flat screen-up on the charger unless the actual product is visibly a stand; do not make the phone stand upright while charging."
+    )
+
+
 def strict_pad_image_prompt(product_name: str, variant: dict[str, Any], product_brief: dict[str, Any] | None = None) -> str:
     brief = product_brief or {}
     scene = variant.get("title") or variant.get("hook") or "UGC product demo setup"
@@ -513,6 +546,12 @@ def strict_pad_image_prompt(product_name: str, variant: dict[str, Any], product_
     usage_context = _brief_list(
         variant.get("usage_logic") or brief.get("step_by_step_usage") or brief.get("confirmed_or_inferred_use_steps"),
         3,
+    )
+    phone_geometry = phone_geometry_constraints_for_prompt(
+        " ".join(
+            str(variant.get(key) or "")
+            for key in ("title", "hook", "usage_logic", "proof_moment", "scene_imagination", "image_prompt")
+        )
     )
     return (
         product_fidelity_block(product_name)
@@ -527,6 +566,7 @@ def strict_pad_image_prompt(product_name: str, variant: dict[str, Any], product_
         "The product must not touch, scrub, squeeze, cut, open, press, wash, or interact with any object in this pad image unless that action is the selected supported function for this exact variant. "
         "Do not place the product inside a hand if that hides or deforms the shape. Do not crop the product. "
         "No invented text or branding on the product. No extra plastic shell, chamber, lid, latch, reservoir, or mechanical housing. "
+        f"{phone_geometry} "
         f"Scene concept: {scene}. Usage context for the later video only, not for this image: {usage_context}."
     )
 
@@ -590,6 +630,21 @@ def usage_keyframe_prompt(
     scene_hint = _plain_brief_list(brief.get("recommended_ugc_scenes") or variant.get("shot_plan") or variant.get("title"), 2)
     if not scene_hint:
         scene_hint = "a realistic use environment for this exact product"
+    phone_geometry = phone_geometry_constraints_for_prompt(
+        " ".join(
+            str(variant.get(key) or "")
+            for key in (
+                "title",
+                "hook",
+                "usage_logic",
+                "proof_moment",
+                "scene_imagination",
+                "start_frame_prompt",
+                "end_frame_prompt",
+                "image_prompt",
+            )
+        )
+    )
     return (
         product_fidelity_block(product_name)
         + "\nCreate a vertical 9:16 product-use keyframe for an 8-second UGC video. "
@@ -603,6 +658,7 @@ def usage_keyframe_prompt(
         "The lifestyle environment may differ from the original product photo; preserve the product, not the source-photo background. "
         f"{continuity} "
         "Adult hands only if needed, natural phone-shot lighting, no text overlay, no captions, no extra branding. "
+        f"{phone_geometry} "
         "Avoid extreme close-ups, heavy occlusion, dramatic stains, magic effects, or any invented product mechanism. "
         f"Supported use context: {usage_context}. Proof idea: {proof_moment}."
     )
@@ -641,6 +697,20 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
         if voiceover_text
         else "Native audio: include subtle real product handling sounds only, no music."
     )
+    phone_geometry = phone_geometry_constraints_for_prompt(
+        " ".join(
+            str(variant.get(key) or "")
+            for key in (
+                "title",
+                "hook",
+                "usage_logic",
+                "proof_moment",
+                "scene_imagination",
+                "model_suggested_video_prompt",
+                "video_prompt",
+            )
+        )
+    )
     return (
         "Create an 8-second vertical UGC product-use clip using the provided reference frame or start/end keyframes. "
         "If two reference images are provided, use image 1 as the exact first frame and image 2 as the exact final frame; create only a smooth practical transition between them. "
@@ -654,6 +724,7 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
         "Do not invent new product parts, labels, text, packaging, containers, chambers, hinges, buttons, motors, reservoirs, or mechanisms. "
         "Avoid magic-cleaning, sudden scene changes, heavy motion blur, product morphing, or unsupported functions. "
         f"Proof moment: {proof_moment}. "
+        f"{phone_geometry} "
         f"{audio_block} "
         "Natural handheld phone camera, close practical use framing. "
         "Do not let VEO render text: no on-screen words, no overlay labels, no subtitles, no sentence captions, no lower-third transcript, no karaoke-style text, no Instagram or INS icons, no TikTok icons, no app UI, no watermarks. "
@@ -697,6 +768,7 @@ Return JSON with:
 Each variant must include:
 - variant_id
 - title
+- primary_function_focus: the single confirmed product function this variant owns; allocate this before writing scenes so the batch does not collapse into one repeated function
 - creator_persona
 - hook
 - dialogue_script with natural spoken lines
@@ -727,6 +799,8 @@ Critical:
 9. Start/end keyframes should be meaningfully different enough for an 8-second action arc while preserving the same exact product.
 10. Read the historical variants listed above as actual prior creative work for this product. Do not paraphrase them. Avoid reusing the same scene setup, same use action, same proof moment, same buyer context, or same selling angle unless you materially transform at least 3 of those dimensions.
 11. When function overlap is unavoidable, deliberately choose a different buyer situation, a different visual hook, a different camera idea, and a different proof framing instead of repeating the same demo in new words.
+12. Before writing the variants, allocate one primary_function_focus per variant from confirmed_use_cases, step_by_step_usage, and proof_moments. Do not assign the same primary function to multiple fresh variants unless the product has only one confirmed function. For multifunction wearables such as smart rings, do not default every variant to photo-taking/remote shutter; split confirmed functions across health/app checks, charging, status display, touch control, activity tracking, waterproof daily wear, or fit/detail as supported by the brief.
+13. If a phone appears, make its orientation physically possible. For selfie/timer/remote-shutter demos, the phone screen faces the creator and the lens points toward the creator; the viewer sees phone back/side, mirror, or over-shoulder composition. For app-screen proof, use over-shoulder/tabletop/second-device geometry. For wireless charging, the phone lies flat screen-up on the charger unless the real product is a stand.
 """.strip()
     payload = {
         "model": model,

@@ -90,6 +90,15 @@ Before generating image/video prompts, separate cognition into four layers:
 Every batch should deliberately vary the variants by function, scenario, action, and proof moment. Avoid making all prompts the same “place product on counter/table, show result” pattern.
 For rerolls, always treat older `ugc_prompts*.json` files as history to avoid, not as the default video source, unless the user explicitly asks to rerun that exact batch.
 
+Before writing multiple variants, allocate a distinct `primary_function_focus` for each fresh variant from `product_brief.confirmed_use_cases`, `step_by_step_usage`, and `proof_moments`. Do not assign the same primary function to every product or every variant unless the product only has one confirmed function. If overlap is unavoidable, materially change at least four dimensions: buyer context, scene geometry, proof moment, camera idea, pace, and creator style. For multifunction wearables such as smart rings, do not default every clip to remote photo control; split variants across confirmed functions such as app/health check, display/status glance, charging dock, touch gesture, activity tracking, waterproof daily wear, or gift/fit detail as supported by the product brief.
+
+When a phone appears in an image or video prompt, specify physically possible phone geometry:
+
+- If the phone is acting as the camera for selfie / remote shutter / timer capture, the phone screen should face the creator and the camera lens should point toward the creator. The viewer should see the phone back/side, mirror reflection, or over-shoulder setup unless a second camera/phone is explicitly present.
+- If the viewer must see the phone screen or app preview, use an over-shoulder, mirror, tabletop, or second-device composition so the screen faces the external camera while the product/hand remains visible.
+- Do not show an impossible shot where a single phone both films the creator with its front camera and has its screen facing the external viewer with no mirror/secondary-camera explanation.
+- For wireless charging pads, the phone lies flat screen-up on the charging surface unless the actual product is a stand. Do not make the phone stand upright just because it is being charged.
+
 Every UGC variant must include:
 
 - Hook in the first 2 seconds.
