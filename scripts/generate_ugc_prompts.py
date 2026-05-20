@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -13,9 +14,12 @@ from common import load_json, request_json, require_api_key, selected_product_di
 UGC_SYSTEM_PROMPT = """You are a senior UGC creative director for short-form social video and TikTok Shop.
 Create product-faithful creator ad prompts. Return JSON only."""
 
+VOICEOVER_SEGMENTS = [("0-2s", 8), ("2-5s", 10), ("5-8s", 10)]
+
 
 def discover_history_files(product_dir: Path, history_glob: str) -> list[Path]:
-    return [path for path in sorted(product_dir.glob(history_glob)) if path.is_file()]
+    files = [path for path in sorted(product_dir.glob(history_glob)) if path.is_file()]
+    return [path for path in files if ".dry_run." not in path.name and not path.name.endswith(".dry_run.json")]
 
 
 def _variant_text(variant: dict[str, Any]) -> str:
@@ -124,20 +128,80 @@ def infer_pace_tag(variant: dict[str, Any]) -> str:
     )
 
 
+def _clean_spoken_text(text: str) -> str:
+    cleaned = re.sub(r"[\[\]\{\}\"“”]", " ", text or "")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" .,-")
+    return cleaned
+
+
+def _trim_to_words(text: str, max_words: int) -> str:
+    words = _clean_spoken_text(text).split()
+    if len(words) <= max_words:
+        return " ".join(words)
+    return " ".join(words[:max_words]).rstrip(" ,.-")
+
+
+def normalize_voiceover_script_8s(raw_voiceover: Any, hook: str = "", fallback: str = "") -> list[dict[str, str]]:
+    collected: list[str] = []
+    if isinstance(raw_voiceover, dict):
+        for time_slot, _ in VOICEOVER_SEGMENTS:
+            text = str(raw_voiceover.get(time_slot) or "").strip()
+            if text:
+                collected.append(text)
+    elif isinstance(raw_voiceover, list):
+        for item in raw_voiceover:
+            if isinstance(item, dict):
+                text = str(item.get("line") or item.get("text") or "").strip()
+            else:
+                text = str(item).strip()
+            if text:
+                collected.append(text)
+    elif isinstance(raw_voiceover, str) and raw_voiceover.strip():
+        collected = [part.strip() for part in re.split(r"(?<=[.!?])\s+", raw_voiceover.strip()) if part.strip()]
+    fallback_lines = [
+        hook or "Here is the quick demo.",
+        fallback or "Watch the core function in one clean action.",
+        "You get the proof shot before the clip ends.",
+    ]
+    normalized: list[dict[str, str]] = []
+    for index, (time_slot, max_words) in enumerate(VOICEOVER_SEGMENTS):
+        source = collected[index] if index < len(collected) else fallback_lines[index]
+        line = _trim_to_words(source, max_words)
+        if not line:
+            line = _trim_to_words(fallback_lines[index], max_words)
+        normalized.append({"time": time_slot, "line": line})
+    total_words = sum(len(item["line"].split()) for item in normalized)
+    if total_words > 28:
+        overflow = total_words - 28
+        for item in reversed(normalized):
+            words = item["line"].split()
+            removable = max(0, len(words) - 4)
+            if removable <= 0:
+                continue
+            cut = min(removable, overflow)
+            item["line"] = " ".join(words[:-cut]).rstrip(" ,.-")
+            overflow -= cut
+            if overflow <= 0:
+                break
+    return normalized
+
+
+def compact_voiceover_text(raw_voiceover: Any) -> str:
+    normalized = normalize_voiceover_script_8s(raw_voiceover)
+    return " ".join(item["line"] for item in normalized if item.get("line")).strip()
+
+
 def summarize_variant_history(variant: dict[str, Any], source_file: str) -> dict[str, Any]:
     return {
         "source_file": source_file,
         "variant_id": variant.get("variant_id"),
         "title": variant.get("title", ""),
+        "hook": variant.get("hook", ""),
         "selling_angle": variant.get("selling_angle", ""),
         "scene_imagination": variant.get("scene_imagination", ""),
         "usage_logic": variant.get("usage_logic", ""),
         "proof_moment": variant.get("proof_moment", ""),
-        "scene_tag": infer_scene_tag(variant),
-        "action_tag": infer_action_tag(variant),
-        "angle_tag": infer_angle_tag(variant),
-        "style_tag": infer_style_tag(variant),
-        "pace_tag": infer_pace_tag(variant),
+        "dialogue_script": variant.get("dialogue_script", ""),
     }
 
 
@@ -155,15 +219,17 @@ def collect_existing_variant_history(product_dir: Path, history_glob: str) -> tu
 def history_summary_for_prompt(history: list[dict[str, Any]], limit: int = 24) -> str:
     if not history:
         return "No historical prompt variants found for this product."
-    lines: list[str] = []
-    for item in history[:limit]:
-        lines.append(
-            f"- file={item['source_file']} variant={item.get('variant_id')} "
-            f"scene={item.get('scene_tag')} action={item.get('action_tag')} angle={item.get('angle_tag')} "
-            f"style={item.get('style_tag')} pace={item.get('pace_tag')} "
-            f"title={item.get('title')} selling_angle={item.get('selling_angle')} proof={item.get('proof_moment')}"
-        )
-    return "\n".join(lines)
+    return json.dumps(history[:limit], ensure_ascii=False, indent=2)
+
+
+def parse_json_text(text: str, context: str) -> dict[str, Any]:
+    stripped = text.strip()
+    if not stripped:
+        raise RuntimeError(f"{context}: empty model content")
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError as error:
+        raise RuntimeError(f"{context}: invalid JSON: {stripped[:800]}") from error
 
 
 def _brief_paths(product_brief: dict[str, Any], keys: list[str]) -> list[str]:
@@ -263,7 +329,11 @@ def normalize_variants(output: dict[str, Any], manifest: dict[str, Any], referen
         clean_variant.setdefault("selling_angle", infer_selling_angle(clean_variant, feature_summary))
         clean_variant.setdefault("negative_prompt", "Do not alter product geometry, color, material, logo/text, silhouette, or invent extra parts.")
         clean_variant.setdefault("function_intro_prompt", build_function_intro_prompt(product_name, feature_summary, clean_variant.get("hook", "")))
-        clean_variant.setdefault("voiceover_script_8s", build_voiceover_script_8s(product_name, feature_summary, clean_variant.get("hook", "")))
+        clean_variant["voiceover_script_8s"] = normalize_voiceover_script_8s(
+            clean_variant.get("voiceover_script_8s"),
+            hook=str(clean_variant.get("hook") or ""),
+            fallback=build_voiceover_script_8s(product_name, feature_summary, clean_variant.get("hook", ""))[1]["line"],
+        )
         clean_variant["on_screen_callouts"] = []
         clean_variant.setdefault("function_demo_prompt", build_function_demo_prompt(product_name, feature_summary, clean_variant.get("title", "")))
         fidelity = product_fidelity_block(product_name)
@@ -401,11 +471,15 @@ def build_function_intro_prompt(product_name: str, feature_summary: str, hook: s
 
 
 def build_voiceover_script_8s(product_name: str, feature_summary: str, hook: str = "") -> list[dict[str, str]]:
-    return [
-        {"time": "0-2s", "line": hook or f"Quick look at what this {product_name} actually does."},
-        {"time": "2-5s", "line": f"Show the core function clearly: {feature_summary[:180]}."},
-        {"time": "5-8s", "line": "End on the proof shot with the product still looking exactly like the reference."},
-    ]
+    return normalize_voiceover_script_8s(
+        [
+            hook or f"This is how the {product_name} works.",
+            f"The key function is simple: {feature_summary[:160]}",
+            "You see the proof before the eight-second clip ends.",
+        ],
+        hook=hook or f"This is how the {product_name} works.",
+        fallback=f"The key function is simple: {feature_summary[:160]}",
+    )
 
 
 def build_on_screen_callouts(feature_summary: str) -> list[str]:
@@ -502,11 +576,16 @@ def usage_keyframe_prompt(
             "END KEYFRAME: the same product is still clearly visible after one gentle use motion; "
             "show a believable small cleaned/rinsed area or practical result, not a perfect magic transformation."
         )
+        continuity = (
+            "This end frame must look like the same exact person, same wardrobe, same room, same props, same lighting, "
+            "and same camera setup as the start frame, only a few seconds later in the same action."
+        )
     else:
         moment = (
             "START KEYFRAME: an attention-grabbing problem setup; the same product is about to be used, "
             "clearly visible beside or lightly held near the target surface."
         )
+        continuity = "This start frame establishes the person, scene, wardrobe, props, and camera setup that the end frame must continue."
     scene_hint = _plain_brief_list(brief.get("recommended_ugc_scenes") or variant.get("shot_plan") or variant.get("title"), 2)
     if not scene_hint:
         scene_hint = "a realistic use environment for this exact product"
@@ -521,6 +600,7 @@ def usage_keyframe_prompt(
         f"Use this product-appropriate scene rather than a generic kitchen unless the product is truly a kitchen product: {scene_hint}. "
         f"Scene imagination: {scene_imagination} "
         "The lifestyle environment may differ from the original product photo; preserve the product, not the source-photo background. "
+        f"{continuity} "
         "Adult hands only if needed, natural phone-shot lighting, no text overlay, no captions, no extra branding. "
         "Avoid extreme close-ups, heavy occlusion, dramatic stains, magic effects, or any invented product mechanism. "
         f"Supported use context: {usage_context}. Proof idea: {proof_moment}."
@@ -543,20 +623,19 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
         proof_moment = "end with the product clearly visible beside the practical result"
     if not scene_context:
         scene_context = "a realistic home setting where this product would naturally be used"
-    voiceover_lines: list[str] = []
     raw_voiceover = variant.get("voiceover_script_8s") or []
-    if isinstance(raw_voiceover, list):
-        for item in raw_voiceover:
-            if isinstance(item, dict) and item.get("line"):
-                voiceover_lines.append(str(item["line"]).strip())
-            elif isinstance(item, str):
-                voiceover_lines.append(item.strip())
-    voiceover_text = " ".join(line for line in voiceover_lines if line)
-    if not voiceover_text:
-        voiceover_text = str(variant.get("dialogue_script") or variant.get("hook") or "").strip()
+    normalized_voiceover = normalize_voiceover_script_8s(
+        raw_voiceover,
+        hook=str(variant.get("hook") or ""),
+        fallback=str(variant.get("dialogue_script") or variant.get("title") or ""),
+    )
+    voiceover_text = compact_voiceover_text(normalized_voiceover)
+    timed_voiceover = " ".join(f"[{item['time']}] {item['line']}" for item in normalized_voiceover if item.get("line"))
     audio_block = (
         "Native audio: include a clear young American female ecommerce-host voiceover, energetic but natural, slightly bright and sales-friendly. "
-        f"Voiceover says exactly: \"{voiceover_text[:520]}\" "
+        "The spoken script must finish naturally within 8 seconds at normal creator pace, roughly 18 to 24 English words total. "
+        f"Speak these exact timed lines in order: {timed_voiceover}. "
+        f"Combined exact script: \"{voiceover_text[:220]}\" "
         "Keep the voiceover synchronized to the visual function demo. Add only subtle real product handling sounds; no music, no singing."
         if voiceover_text
         else "Native audio: include subtle real product handling sounds only, no music."
@@ -640,13 +719,13 @@ Critical:
 2. Do not invent unsupported functions.
 3. Every image_prompt and video_prompt must contain a product-fidelity block requiring exact preservation of the original product appearance.
 4. The selected reference image must be the best true full-product reference: full silhouette, correct SKU/style, real proportions, visible key functional zones. Do not select alternate SKU images, accessory-only images, packaging-only images, loose parts, isolated cables, or detail images as canonical.
-5. Put the concise voiceover lines into VEO video_prompt as native audio/dialogue, but keep subtitles/captions out.
+5. Put concise native-audio voiceover lines into VEO video_prompt, and ensure the full spoken copy can naturally finish inside 8 seconds at normal creator pace.
 6. Do not ask VEO to render text. Short plain-text social-style overlay labels belong in on_screen_callouts for post-production, not inside the generated video frames. Never ask for Instagram / INS / TikTok icons, app UI, or watermarks.
 7. Product reference images lock the product itself, not the entire source photo. Preserve product identity and usage mechanics, but freely imagine realistic buyer scenes, backgrounds, camera angles, and contextual props that clarify the function.
 8. Each variant should focus on one small function or selling point. Vary function, scene, action, and proof moment across the batch; do not produce ten versions of the same tabletop placement.
 9. Start/end keyframes should be meaningfully different enough for an 8-second action arc while preserving the same exact product.
-10. Compare against the historical variants listed above. New variants must avoid obvious overlap and differ from past variants in at least 2 of these dimensions: scene, action, selling angle, proof moment, pace, or style.
-11. When function overlap is unavoidable, diversify with a different camera idea, different buyer context, different rhythm, and different proof framing instead of repeating the same demo.
+10. Read the historical variants listed above as actual prior creative work for this product. Do not paraphrase them. Avoid reusing the same scene setup, same use action, same proof moment, same buyer context, or same selling angle unless you materially transform at least 3 of those dimensions.
+11. When function overlap is unavoidable, deliberately choose a different buyer situation, a different visual hook, a different camera idea, and a different proof framing instead of repeating the same demo in new words.
 """.strip()
     payload = {
         "model": model,
@@ -659,7 +738,7 @@ Critical:
     }
     response = request_json("/chat/completions", api_key, payload, base_url=base_url, timeout=timeout)
     content = (((response.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
-    return json.loads(content)
+    return parse_json_text(content, "generate_with_model")
 
 
 def process_product(product_dir: Path, api_key: str, args: argparse.Namespace) -> None:
@@ -691,10 +770,15 @@ def process_product(product_dir: Path, api_key: str, args: argparse.Namespace) -
     output["source_product_brief"] = "product_brief.json" if product_brief else None
     output["existing_variant_history_count"] = len(existing_history)
     output["existing_variant_history_files"] = history_files
+    output["generated_at"] = datetime.now(timezone.utc).isoformat()
+    output["prompt_batch_role"] = "history_aware_fresh_generation"
+    output["batch_label"] = args.batch_label or Path(args.output_file).stem
+    output["output_file"] = args.output_file
     output["diversity_guard"] = {
         "history_enabled": not args.ignore_history,
         "history_glob": args.history_glob,
-        "required_difference_dimensions": ["scene", "action", "selling_angle", "proof_moment", "pace", "style"],
+        "model_reads_full_history": True,
+        "required_difference_dimensions": ["scene", "action", "selling_angle", "proof_moment", "pace", "style", "buyer_context", "camera_idea"],
     }
     output_path = product_dir / args.output_file
     write_json(output_path, output)
@@ -705,6 +789,7 @@ def main() -> None:
     parser.add_argument("output_dir", type=Path)
     parser.add_argument("--count", type=int, default=10)
     parser.add_argument("--output-file", default="ugc_prompts.json")
+    parser.add_argument("--batch-label", default="")
     parser.add_argument("--history-glob", default="ugc_prompts*.json")
     parser.add_argument("--ignore-history", action="store_true")
     parser.add_argument("--model", default="gpt-5.2")

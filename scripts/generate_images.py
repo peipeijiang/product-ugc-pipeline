@@ -86,6 +86,28 @@ def build_keyframe_prompt(variant: dict[str, Any], product_name: str, frame_role
     )
 
 
+def keyframe_references(
+    product_dir: Path,
+    variant: dict[str, Any],
+    frame_role: str,
+    max_references: int,
+) -> list[Path]:
+    base_references = existing_references(product_dir, variant, max_references=max(1, max_references))
+    if frame_role != "end":
+        return base_references
+    variant_id = int(variant.get("variant_id", 0))
+    start_frame = product_dir / "generated_images" / f"variant-{variant_id:02d}-start.png"
+    if start_frame.exists():
+        chained: list[Path] = [start_frame]
+        for item in base_references:
+            if item not in chained:
+                chained.append(item)
+            if len(chained) >= max(1, max_references):
+                break
+        return chained
+    return base_references
+
+
 def parse_size(size: str) -> tuple[int, int]:
     width_text, height_text = size.lower().split("x", 1)
     return int(width_text), int(height_text)
@@ -140,9 +162,10 @@ def generate_image_file(
     args: argparse.Namespace,
     destination: Path,
     prompt: str,
+    reference_override: list[Path] | None = None,
 ) -> dict[str, Any]:
     variant_id = int(variant.get("variant_id", 0))
-    references = existing_references(product_dir, variant, max_references=max(1, args.max_reference_images))
+    references = reference_override or existing_references(product_dir, variant, max_references=max(1, args.max_reference_images))
     reference = references[0] if references else None
     if destination.exists() and not args.force:
         return {
@@ -189,7 +212,18 @@ def generate_image_file(
                 last_error = error
                 transient = any(
                     marker in str(error)
-                    for marker in ("UNEXPECTED_EOF", "urlopen error", "timed out", "Connection reset", "Max retries exceeded")
+                    for marker in (
+                        "UNEXPECTED_EOF",
+                        "urlopen error",
+                        "timed out",
+                        "Connection reset",
+                        "Max retries exceeded",
+                        "HTTP 502",
+                        "HTTP 503",
+                        "internal_server_error",
+                        "Bad Gateway",
+                        "Service Unavailable",
+                    )
                 )
                 if not transient or attempt == args.retries:
                     raise
@@ -228,8 +262,10 @@ def generate_one_image(
         for frame_role in ("start", "end"):
             destination = product_dir / "generated_images" / f"variant-{variant_id:02d}-{frame_role}.png"
             prompt = build_keyframe_prompt(variant, product_name, frame_role)
-            frame_result = generate_image_file(api_key, product_dir, variant, args, destination, prompt)
+            references = keyframe_references(product_dir, variant, frame_role, max(1, args.max_reference_images))
+            frame_result = generate_image_file(api_key, product_dir, variant, args, destination, prompt, reference_override=references)
             frame_result["frame_role"] = frame_role
+            frame_result["generation_strategy"] = "end_frame_chained_from_start" if frame_role == "end" and references and references[0].name.endswith("-start.png") else "direct_from_product_references"
             results.append(frame_result)
         return {
             "variant_id": variant_id,

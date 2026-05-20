@@ -21,6 +21,7 @@ Product references lock the product, not the whole source photo. Use source imag
 6. Run `scripts/generate_images.py` to create image-to-image “pad images” or start/end keyframes using GPT-Image-2 and the selected product references.
 7. Run `scripts/generate_videos.py` to send generated pad images or start/end keyframes to VEO 3.1 async video generation.
 8. If LaoZhang VEO channels are unavailable, run `scripts/generate_videos_lk888.py` to send public start/end keyframe URLs to LK888/updrama VEO.
+9. When the user asks for “two new versions”, “再来两个新版本”, or any fresh reroll, prefer `scripts/run_fresh_batch.py` so the skill first generates a new history-aware prompt file, then keyframes, then videos, instead of accidentally rerunning an old prompt batch.
 
 Default output structure:
 
@@ -48,6 +49,7 @@ LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_ugc_prompts
 LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_images.py product-ugc-output --variants 1-10 --model gpt-image-2-vip --size 1024x1536 --keyframes
 LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_videos.py product-ugc-output --variants 1-10 --model veo-3.1-fast-fl
 LK888_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_videos_lk888.py product-ugc-output --variants 1-10 --model veo3.1 --generation-mode fast
+LAOZHANG_API_KEY=sk-... LK888_API_KEY=sk-... python product-ugc-pipeline/scripts/run_fresh_batch.py product-ugc-output --products 01,02 --count 2 --batch-label 20260520-dual-refresh
 ```
 
 This skill does not use a local dry-run fallback for prompt/image/video generation. Generation steps should run through the real model/API path so outputs stay consistent with production behavior.
@@ -62,6 +64,7 @@ For each product folder:
 - `image_analysis.json`: per-image visual description, product-related flag, exact product-identity details, visible/inferred use mechanics, UGC usefulness score, prompt risks, and recommended usage.
 - `product_brief.json`: synthesized product cognition, including confirmed identity, step-by-step usage, scenes, proof moments, misuse risks, and reference image strategy.
 - `ugc_prompts.json`: 10 prompt variants with creator persona, scene, usage logic, proof moment, dialogue/script, image prompt, start/end keyframe prompts, video prompt, and selected reference images.
+- Fresh prompt batches created for rerolls should be saved as timestamped / labeled files such as `ugc_prompts_20260520-dual-refresh.json`, not by overwriting a previous themed batch like `ugc_prompts_morning_dual.json`.
 - `generated_images/`: GPT-Image-2 outputs named by prompt variant; with `--keyframes`, writes `variant-XX-start.png` and `variant-XX-end.png`.
 - `videos/`: VEO output JSON, status JSON, and downloaded MP4 files.
 
@@ -77,6 +80,7 @@ Before generating image/video prompts, separate cognition into four layers:
 4. Scene imagination: realistic lifestyle contexts inferred from the function and selling angle, not limited to the original product-page photos.
 
 Every batch should deliberately vary the variants by function, scenario, action, and proof moment. Avoid making all prompts the same “place product on counter/table, show result” pattern.
+For rerolls, always treat older `ugc_prompts*.json` files as history to avoid, not as the default video source, unless the user explicitly asks to rerun that exact batch.
 
 Every UGC variant must include:
 
@@ -84,6 +88,7 @@ Every UGC variant must include:
 - Creator persona and shot style, e.g. kitchen counter demo, unboxing, problem-solution, ASMR cleaning, mom-life hack, apartment mini-kitchen.
 - Natural dialogue that explains the product, not a silent product montage.
 - VEO prompts may include native English voiceover/dialogue when the user wants spoken product explanation. Short social-style feature overlay labels should be stored as post-production metadata; do not ask VEO to render overlay text because model-rendered text can garble.
+- For 8-second VEO clips, the spoken copy must be written to finish naturally inside 8 seconds at normal creator pace, not merely shortened arbitrarily.
 - A proof moment showing the core function clearly.
 - A final sell shot with product in hand or on counter.
 - Product-fidelity block: “Use the provided product reference as the canonical source. Do not redesign, recolor, simplify, enlarge logos, change flower/gourd/cat silhouette, or invent extra parts.”
@@ -97,6 +102,8 @@ Actual VEO `video_prompt` should be a conservative usage demo:
 - Show one simple real-world use action supported by `product_brief.json`.
 - Prefer start/end keyframes for 8-second usage videos: start = hook/problem setup, end = believable proof/sell shot.
 - Start/end keyframes should be meaningfully different enough to imply an 8-second action arc, while keeping the exact same product identity. Avoid nearly identical start/end frames unless the goal is a stable b-roll shot.
+- Start and end keyframes should usually stay in the same room, with the same subject identity, wardrobe, props, lighting, and camera setup; the end frame should feel like a few seconds later in the same moment, not a different shoot.
+- Prefer generating the end keyframe from the already-generated start keyframe plus canonical product references, so the person and scene stay continuous while the action advances.
 - When two keyframes exist, VEO receives both as `input_reference`; image 1 is the first frame and image 2 is the final frame.
 - Allow adult hands and kitchen/sink/tabletop context when needed for a useful demo.
 - Describe the action flow, proof moment, and camera style, but avoid re-describing product geometry as if VEO should redesign it.
@@ -166,3 +173,4 @@ Before delivering outputs, inspect `materials.md`, `image_analysis.json`, and `u
 - Scraping: use JSON-LD `Product.image` assets first and exclude generic page images by default. Add `--include-page-images` only when product pages lack structured product images.
 - Vision analysis: analyze the first 6 filtered product images by default. Use `--limit-images 0` to analyze all filtered images, or `--limit-images 2` for cheap quick tests.
 - Prompt generation: read `product_brief.json` when present; if missing, fall back to manifest + image analysis but treat that as lower confidence.
+- Prompt generation: use history-aware mode by default. `generate_ugc_prompts.py` passes the full prior `ugc_prompts*.json` history into the model context so the model can directly avoid repeating older scenes, actions, proof moments, buyer contexts, and selling angles.
