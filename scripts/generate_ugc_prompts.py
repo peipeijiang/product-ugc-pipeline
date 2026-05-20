@@ -750,7 +750,9 @@ def process_product(product_dir: Path, api_key: str, args: argparse.Namespace) -
         print(f"[skip] missing manifest: {product_dir}")
         return
     references = best_reference_images(image_analysis, product_brief, limit=4)
-    existing_history, history_files = collect_existing_variant_history(product_dir, args.history_glob) if not args.ignore_history else ([], [])
+    canonical_prompt_path = product_dir / "ugc_prompts.json"
+    history_glob = "ugc_prompts.json" if args.output_file == "ugc_prompts.json" and canonical_prompt_path.exists() else args.history_glob
+    existing_history, history_files = collect_existing_variant_history(product_dir, history_glob) if not args.ignore_history else ([], [])
     print(f"[prompts] {product_dir.name} refs={references} history={len(existing_history)}")
     output = generate_with_model(
         api_key,
@@ -782,7 +784,34 @@ def process_product(product_dir: Path, api_key: str, args: argparse.Namespace) -
         "model_reads_full_history": True,
         "required_difference_dimensions": ["scene", "action", "selling_angle", "proof_moment", "pace", "style", "buyer_context", "camera_idea"],
     }
-    output_path = product_dir / args.output_file
+    if args.output_file == "ugc_prompts.json" and canonical_prompt_path.exists():
+        existing_output = load_json(canonical_prompt_path, {})
+        if isinstance(existing_output, dict) and isinstance(existing_output.get("variants"), list):
+            existing_variants = [variant for variant in existing_output["variants"] if isinstance(variant, dict)]
+            next_variant_id = max((int(variant.get("variant_id", 0)) for variant in existing_variants), default=0) + 1
+            for offset, variant in enumerate(output.get("variants", []), start=next_variant_id):
+                if isinstance(variant, dict):
+                    variant["variant_id"] = offset
+            merged = dict(existing_output)
+            merged.update({k: v for k, v in output.items() if k != "variants"})
+            merged["variants"] = existing_variants + [variant for variant in output.get("variants", []) if isinstance(variant, dict)]
+            merged["variant_count_final"] = len(merged["variants"])
+            merged["variant_count_returned_by_model"] = len(output.get("variants", []))
+            merged["variant_count_requested"] = int(existing_output.get("variant_count_requested", 0) or 0) + args.count
+            prompt_history = []
+            if isinstance(existing_output.get("prompt_history"), list):
+                prompt_history.extend(item for item in existing_output["prompt_history"] if isinstance(item, dict))
+            prompt_history.append(
+                {
+                    "batch_label": output.get("batch_label") or args.batch_label or "canonical-append",
+                    "generated_at": output.get("generated_at"),
+                    "output_file": "ugc_prompts.json",
+                    "appended_variant_count": len([variant for variant in output.get("variants", []) if isinstance(variant, dict)]),
+                }
+            )
+            merged["prompt_history"] = prompt_history
+            output = merged
+    output_path = canonical_prompt_path if args.output_file == "ugc_prompts.json" else product_dir / args.output_file
     write_json(output_path, output)
 
 

@@ -21,7 +21,7 @@ Product references lock the product, not the whole source photo. Use source imag
 6. Run `scripts/generate_images.py` to create image-to-image “pad images” or start/end keyframes using GPT-Image-2 and the selected product references.
 7. Run `scripts/generate_videos.py` to send generated pad images or start/end keyframes to VEO 3.1 async video generation.
 8. If LaoZhang VEO channels are unavailable, run `scripts/generate_videos_lk888.py` to send public start/end keyframe URLs to LK888/updrama VEO.
-9. When the user asks for “two new versions”, “再来两个新版本”, or any fresh reroll, prefer `scripts/run_fresh_batch.py` so the skill first generates a new history-aware prompt file, then keyframes, then videos, instead of accidentally rerunning an old prompt batch.
+9. When the user asks for “two new versions”, “再来两个新版本”, or any fresh reroll, prefer `scripts/run_fresh_batch.py` so the skill first extends the canonical prompt file, then keyframes, then videos, instead of accidentally rerunning an old prompt batch.
 
 Default output structure:
 
@@ -34,6 +34,14 @@ product-ugc-output/
 │   ├── image_analysis.json
 │   ├── product_brief.json
 │   ├── ugc_prompts.json
+│   ├── runs/
+│   │   ├── 20260520-dual-refresh/
+│   │   │   ├── prompt_batch.json
+│   │   │   ├── image_generation_results.json
+│   │   │   ├── video_generation_results.json
+│   │   │   ├── keyframes/
+│   │   │   └── videos/
+│   │   └── ...
 │   ├── generated_images/
 │   └── videos/
 └── run_manifest.json
@@ -63,10 +71,10 @@ For each product folder:
 - `images/`: original downloaded product-only images; never overwrite these.
 - `image_analysis.json`: per-image visual description, product-related flag, exact product-identity details, visible/inferred use mechanics, UGC usefulness score, prompt risks, and recommended usage.
 - `product_brief.json`: synthesized product cognition, including confirmed identity, step-by-step usage, scenes, proof moments, misuse risks, and reference image strategy.
-- `ugc_prompts.json`: 10 prompt variants with creator persona, scene, usage logic, proof moment, dialogue/script, image prompt, start/end keyframe prompts, video prompt, and selected reference images.
-- Fresh prompt batches created for rerolls should be saved as timestamped / labeled files such as `ugc_prompts_20260520-dual-refresh.json`, not by overwriting a previous themed batch like `ugc_prompts_morning_dual.json`.
+- `ugc_prompts.json`: canonical prompt file. New rerolls should append new variants into this same file so prompt history stays in one place.
+- `runs/`: append-only batch history. Every fresh reroll or re-generation should create a labeled run folder containing the batch JSON, intermediate keyframes, and that run's own result manifests. Keep only the latest canonical `generated_images/` and `videos/` at the top level for quick access.
 - `generated_images/`: GPT-Image-2 outputs named by prompt variant; with `--keyframes`, writes `variant-XX-start.png` and `variant-XX-end.png`.
-- `videos/`: VEO output JSON, status JSON, and downloaded MP4 files.
+- `videos/`: canonical VEO output JSON, status JSON, and downloaded MP4 files. New runs should append by `variant-XX` inside this folder instead of creating `videos_*` batch folders.
 
 ## Prompt Standards
 

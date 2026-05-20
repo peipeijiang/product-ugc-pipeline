@@ -47,13 +47,6 @@ def generated_keyframe_paths(product_dir: Path, variant_id: int) -> list[Path]:
 
 
 def existing_video_dir(product_dir: Path) -> Path:
-    candidates = [product_dir / "videos"]
-    for path in sorted(product_dir.glob("videos*")):
-        if path.is_dir() and path.name.startswith("videos"):
-            candidates.append(path)
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
     return product_dir / "videos"
 
 
@@ -473,13 +466,11 @@ def process_product(product_dir: Path, api_key: str, selected_variants: set[int]
     results_path = output_dir / "video_generation_results.json"
     existing = load_json(results_path, {"results": []})
     results = list(existing.get("results", []))
-    start_variant_id = existing_variant_max(output_dir) + 1
     for variant in prompts.get("variants", []):
         variant_id = int(variant.get("variant_id", 0))
         if variant_id not in selected_variants:
             continue
         current_variant = dict(variant)
-        current_variant["variant_id"] = start_variant_id + (variant_id - 1)
         try:
             result = process_variant(product_dir, current_variant, api_key, args)
         except Exception as error:
