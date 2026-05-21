@@ -72,7 +72,7 @@ def existing_references(product_dir: Path, variant: dict[str, Any], max_referenc
 def build_image_prompt(variant: dict[str, Any], product_name: str) -> str:
     return (
         variant.get("image_prompt")
-        or f"Create a vertical short-form social UGC product pad image for {product_name}. Preserve the referenced product exactly. No Instagram or INS icons, no TikTok icons, no app UI, no watermarks."
+        or f"Create a vertical short-form ecommerce UGC product pad image for {product_name}. Preserve the referenced product exactly. No social media icons, no platform logos, no camera/reel icons, no reaction icons, no app UI, no watermarks."
     )
 
 
@@ -82,7 +82,7 @@ def build_keyframe_prompt(variant: dict[str, Any], product_name: str, frame_role
     return (
         variant.get(prompt_key)
         or variant.get("image_prompt")
-        or f"Create a vertical short-form social UGC {fallback_role} keyframe for {product_name}. Preserve the referenced product exactly. No Instagram or INS icons, no TikTok icons, no app UI, no watermarks."
+        or f"Create a vertical short-form ecommerce UGC {fallback_role} keyframe for {product_name}. Preserve the referenced product exactly. No social media icons, no platform logos, no camera/reel icons, no reaction icons, no app UI, no watermarks."
     )
 
 

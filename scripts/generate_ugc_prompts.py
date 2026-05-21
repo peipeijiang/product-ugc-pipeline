@@ -11,7 +11,7 @@ from typing import Any
 from common import load_json, request_json, require_api_key, selected_product_dirs, write_json
 
 
-UGC_SYSTEM_PROMPT = """You are a senior UGC creative director for short-form social video and TikTok Shop.
+UGC_SYSTEM_PROMPT = """You are a senior UGC creative director for short-form ecommerce product video.
 Create product-faithful creator ad prompts. Return JSON only."""
 
 VOICEOVER_SEGMENTS = [("0-2s", 6), ("2-5s", 9), ("5-8s", 7)]
@@ -574,7 +574,7 @@ def product_function_summary(manifest: dict[str, Any], product_brief: dict[str, 
 
 def build_function_intro_prompt(product_name: str, feature_summary: str, hook: str = "") -> str:
     return (
-        "Write a concise English TikTok Shop voiceover that explains the product function before the visual demo. "
+        "Write a concise English ecommerce creator voiceover that explains the product function before the visual demo. "
         "Use a young creator / ecommerce host tone, not a silent montage. "
         f"Product: {product_name}. Hook angle: {hook}. Confirmed functions/use only: {feature_summary}. "
         "Output should be 1-2 punchy spoken sentences, 18-32 words total, with no unsupported claims, no fake specs, and no brand names unless visible in source materials."
@@ -606,7 +606,23 @@ def normalize_on_screen_callouts(raw_callouts: Any, feature_summary: str) -> lis
         candidates = [part.strip() for part in re_split_features(raw_callouts)]
     else:
         candidates = build_on_screen_callouts(feature_summary)
-    banned = ("instagram", "ins", "tiktok", "logo", "subtitle", "caption", "watermark", "@")
+    banned = (
+        "instagram",
+        "ins",
+        "tiktok",
+        "logo",
+        "subtitle",
+        "caption",
+        "watermark",
+        "@",
+        "app",
+        "camera",
+        "like",
+        "follow",
+        "share",
+        "story",
+        "reel",
+    )
     clean: list[str] = []
     for candidate in candidates:
         label = re.sub(r"\s+", " ", candidate).strip(" .,-")
@@ -841,9 +857,9 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
     )
     callouts = normalize_on_screen_callouts(variant.get("on_screen_callouts"), _plain_brief_list(variant.get("selling_angle") or usage_context, 3))
     overlay_block = (
-        f"Allow only {min(len(callouts), 2)} tiny tasteful Instagram-style overlay words for feature tags: {', '.join(repr(item) for item in callouts[:2])}. "
+        f"Allow only {min(len(callouts), 2)} tiny minimal ecommerce overlay words for feature tags: {', '.join(repr(item) for item in callouts[:2])}. "
         "Keep them very small, decorative, brief, and not synchronized line-by-line with the spoken voiceover. "
-        "Never render full-sentence captions, subtitles, transcripts, lower thirds, karaoke text, platform icons/logos, watermarks, or emoji text. "
+        "Never render full-sentence captions, subtitles, transcripts, lower thirds, karaoke text, social media icons, platform icons/logos, camera icons, reaction icons, app UI, watermarks, or emoji text. "
         if callouts
         else ""
     )
@@ -878,7 +894,7 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
         f"{overlay_block}"
         f"{audio_block} "
         "Natural handheld phone camera, close practical use framing. "
-        "No subtitles, no sentence captions, no lower-third transcript, no karaoke-style text, no emoji text, no Instagram or INS icons, no TikTok icons, no app UI, and no watermarks. The only allowed readable text is the explicitly allowed tiny feature-tag overlay words."
+        "No subtitles, no sentence captions, no lower-third transcript, no karaoke-style text, no emoji text, no social media icons, no platform logos, no camera/reel icons, no reaction icons, no app UI, and no watermarks. The only allowed readable text is the explicitly allowed tiny feature-tag overlay words."
     )
 
 
@@ -895,7 +911,7 @@ def generate_with_model(
     timeout: int,
 ) -> dict[str, Any]:
     prompt = f"""
-Create {count} distinct UGC prompt variants for short-form social / TikTok Shop product ads.
+Create {count} distinct UGC prompt variants for short-form ecommerce product ads.
 
 Product manifest:
 {json.dumps(manifest, ensure_ascii=False)[:8000]}
@@ -924,7 +940,7 @@ Each variant must include:
 - dialogue_script with natural spoken lines
 - function_intro_prompt: a separate prompt for generating concise spoken function explanation
 - voiceover_script_8s: timed 0-2s, 2-5s, 5-8s spoken script lines that introduce and explain the function
-- on_screen_callouts: 1-3 short social-style feature overlay labels; for VEO use plain ASCII English, 1-3 words, max 18 characters, no emoji; never subtitles, sentence captions, app icons, platform logos, UI chrome, or watermarks
+- on_screen_callouts: 1-3 short ecommerce feature overlay labels; for VEO use plain ASCII English, 1-3 words, max 18 characters, no emoji; never subtitles, sentence captions, app icons, platform logos, social media icons, camera/reel icons, UI chrome, or watermarks
 - function_demo_prompt: editor-facing prompt that explains the function, proof moment, and final benefit
 - usage_logic: explain how the product works and why the scene is correct
 - proof_moment: the exact visual action that proves the function
@@ -945,7 +961,7 @@ Critical:
 4. The selected reference image must be the best true full-product reference: full silhouette, correct SKU/style, real proportions, visible key functional zones. Do not select alternate SKU images, accessory-only images, packaging-only images, loose parts, isolated cables, or detail images as canonical.
 5. Put concise native-audio voiceover lines into VEO video_prompt, and ensure the full spoken copy can naturally finish inside 8 seconds at normal creator pace.
 6. Keep every shot_plan, voiceover_script_8s, image-to-video prompt, and action arc designed for exactly 8 seconds. Do not write 9-12s, 10-12s, 12s, or 15s plans.
-7. Allow only 1-2 tiny sparse VEO overlay labels from on_screen_callouts as feature tags, e.g. "100 speeds" or "Tilt airflow"; use plain ASCII English only, no emoji. Do not ask for subtitles, transcript captions, lower-thirds, karaoke text, Instagram / INS / TikTok icons, app UI, or watermarks.
+7. Allow only 1-2 tiny sparse VEO overlay labels from on_screen_callouts as feature tags, e.g. "100 speeds" or "Tilt airflow"; use plain ASCII English only, no emoji. Do not ask for subtitles, transcript captions, lower-thirds, karaoke text, social media icons, platform logos, camera/reel icons, app UI, or watermarks. Never use positive platform-branded style phrases.
 8. Build the video from a single storyboard: video_prompt must include every beat's time, visual content, spoken line, and optional sparse feature overlay; start_frame_prompt must depict the first beat; end_frame_prompt must depict the final beat. Overlay must not repeat the spoken line as subtitles.
 9. Product reference images lock the product itself, not the entire source photo. Preserve product identity and usage mechanics, but freely imagine realistic buyer scenes, backgrounds, camera angles, and contextual props that clarify the function.
 10. Each variant should focus on one small function or selling point. Vary function, scene, action, and proof moment across the batch; do not produce ten versions of the same tabletop placement.

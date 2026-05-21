@@ -1,6 +1,6 @@
 ---
 name: product-ugc-pipeline
-description: Build product UGC ad-production pipelines from ecommerce product URLs. Use when Codex needs to scrape product pages, save product image/material folders, analyze image assets with a vision model, generate multiple short-form social / TikTok-style UGC prompts, create product-faithful reference images with LaoZhang GPT-Image-2, or create VEO 3.1 product videos through LaoZhang or LK888/updrama APIs.
+description: Build product UGC ad-production pipelines from ecommerce product URLs. Use when Codex needs to scrape product pages, save product image/material folders, analyze image assets with a vision model, generate multiple short-form ecommerce UGC prompts, create product-faithful reference images with LaoZhang GPT-Image-2, or create VEO 3.1 product videos through LaoZhang or LK888/updrama APIs.
 ---
 
 # Product UGC Pipeline
@@ -104,7 +104,7 @@ Every UGC variant must include:
 - Hook in the first 2 seconds.
 - Creator persona and shot style, e.g. kitchen counter demo, unboxing, problem-solution, ASMR cleaning, mom-life hack, apartment mini-kitchen.
 - Natural dialogue that explains the product, not a silent product montage.
-- VEO prompts may include native English voiceover/dialogue when the user wants spoken product explanation. VEO may render 1–2 tiny tasteful social-style overlay words for feature tags only, e.g. “100 speeds” or “Tilt airflow”. These must not be subtitles, sentence captions, transcripts, lower thirds, karaoke text, platform UI, icons, logos, or watermarks.
+- VEO prompts may include native English voiceover/dialogue when the user wants spoken product explanation. VEO may render 1–2 tiny minimal ecommerce overlay words for feature tags only, e.g. “100 speeds” or “Tilt airflow”. These must not be subtitles, sentence captions, transcripts, lower thirds, karaoke text, platform UI, social media icons, logos, reaction icons, camera icons, or watermarks.
 - For 8-second VEO clips, the spoken copy must be written to finish naturally inside 8 seconds at normal creator pace, not merely shortened arbitrarily.
 - Keep 8-second native voiceover at normal spoken pace: target 16–20 English words total, hard maximum 22 words, and no more than 3 short lines. Do not repeat the same spoken line across multiple storyboard beats, and explicitly forbid extra filler/CTA beyond the scripted lines.
 - A proof moment showing the core function clearly.
@@ -130,8 +130,8 @@ Actual VEO `video_prompt` should be a conservative usage demo:
 - Use a single `storyboard_8s` as the source of truth for each variant. Each beat should include `time`, `visual`, `spoken`, and optional `overlay`. `video_prompt` should include the full storyboard, `start_frame_prompt` should depict the first beat, and `end_frame_prompt` should depict the final beat. Overlay labels must be sparse feature tags only, never subtitles or repeated spoken text.
 - In `storyboard_8s`, assign each spoken line to only one beat. Other beats should have no new spoken words rather than repeating the previous line, otherwise VEO may over-speak and cut off the ending.
 - Do not let start/end keyframes be generic “before/after” images. They must correspond to the first and final storyboard beats, with a visible action-state change while preserving the same product identity, subject, room, wardrobe, lighting, and continuity.
-- `on_screen_callouts` may contain short feature tags such as “Fast Setup”, “Water Resistant”, or “Foldable Stand”. For VEO, prefer plain ASCII English words, 1–3 words per label, maximum 18 characters, no emoji, no punctuation-heavy styling. Emoji may be stored for later manual editing, but do not send emoji into VEO overlay instructions.
-- Never ask image or video models to render Instagram / INS / TikTok logos, app icons, story frames, platform UI chrome, like/comment/share bars, subtitles, captions, transcript text, lower thirds, karaoke text, or watermarks. If VEO overlays are used, they must be tiny decorative feature tags only.
+- `on_screen_callouts` may contain short feature tags such as “Fast Setup”, “Water Resistant”, or “Foldable Stand”. For VEO, prefer plain ASCII English words, 1–3 words per label, maximum 18 characters, no emoji, no punctuation-heavy styling, and no platform/app/action-icon words. Emoji may be stored for later manual editing, but do not send emoji into VEO overlay instructions.
+- Never ask image or video models to render any social media or platform logos/icons, app icons, story frames, platform UI chrome, like/comment/share bars, camera/reel icons, subtitles, captions, transcript text, lower thirds, karaoke text, or watermarks. Avoid positive platform-branded style phrases in generation prompts. If VEO overlays are used, they must be tiny plain feature-tag words only.
 
 Every UGC variant must be grounded in `product_brief.json`:
 
@@ -178,7 +178,7 @@ Before delivering outputs, inspect `materials.md`, `image_analysis.json`, and `u
 
 - Reject image prompts that do not preserve the exact product form.
 - Reject VEO prompts that redesign the product, invent mechanisms, or introduce unsupported actions.
-- Reject prompts that imply Instagram / INS / TikTok icons, logos, app UI, story stickers, watermark overlays, subtitles, captions, transcript text, lower thirds, karaoke text, or VEO-rendered emoji text. Allow only sparse tiny feature-tag overlay words.
+- Reject prompts that imply social media/platform icons, logos, app UI, story stickers, like/comment/share chrome, camera/reel icons, watermark overlays, subtitles, captions, transcript text, lower thirds, karaoke text, or VEO-rendered emoji text. Allow only sparse tiny plain feature-tag overlay words.
 - Reject prompts that use a weak reference image when a cleaner product image exists.
 - Prefer close-up product photos as image references over lifestyle images.
 - Reject batches where the variants only differ cosmetically but repeat the same scene, camera angle, action, and proof moment.

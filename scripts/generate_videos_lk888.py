@@ -190,7 +190,7 @@ def append_native_audio_instruction(prompt: str, voice_lines: Any) -> str:
         line = voice_lines.strip()
     audio_block = (
         "\n\nNATIVE AUDIO: Generate natural native audio inside the video: a bright, young American female ecommerce creator voice, energetic but not robotic, with subtle upbeat social-ad background music. "
-        "No subtitles, no captions, no readable on-screen text, no labels, no Instagram or INS icons, no TikTok icons, no app UI, no watermarks. "
+        "No subtitles, no captions, no readable on-screen text, no labels, no social media icons, no platform logos, no camera/reel icons, no reaction icons, no app UI, no watermarks. "
     )
     if line:
         audio_block += f"Spoken voiceover, complete within 8 seconds: \"{line}\""
@@ -241,7 +241,7 @@ def append_safe_audio_test_instruction(prompt: str, voice_lines: Any) -> str:
     safe_line = first_voice_line(voice_lines, "Place the trap outside after adding bait.")
     audio_block = (
         "\n\nNATIVE AUDIO TEST: Include one short natural English sentence in a young adult female voice. "
-        "No music, no singing, no hype, no slang, no labels, no subtitles, no captions, no readable on-screen text, no Instagram or INS icons, no TikTok icons, no app UI, no watermarks. "
+        "No music, no singing, no hype, no slang, no labels, no subtitles, no captions, no readable on-screen text, no social media icons, no platform logos, no camera/reel icons, no reaction icons, no app UI, no watermarks. "
         f"Speak exactly this one sentence and nothing else: \"{safe_line}\""
     )
     return prompt + audio_block
@@ -251,7 +251,7 @@ def append_safe_native_audio_instruction(prompt: str, voice_lines: Any) -> str:
     safe_line = first_voice_line(voice_lines, "Here is how the product works.")
     audio_block = (
         "\n\nNATIVE AUDIO: Include one short natural English voice line in a young adult female voice. "
-        "No music, no singing, no hype words, no slang, no labels, no subtitles, no captions, no readable on-screen text, no Instagram or INS icons, no TikTok icons, no app UI, no watermarks. "
+        "No music, no singing, no hype words, no slang, no labels, no subtitles, no captions, no readable on-screen text, no social media icons, no platform logos, no camera/reel icons, no reaction icons, no app UI, no watermarks. "
         f"Speak exactly this one sentence and nothing else: \"{safe_line}\""
     )
     return prompt + audio_block
@@ -270,8 +270,8 @@ def append_mid_native_audio_instruction(prompt: str, voice_lines: Any, callouts:
                 safe_callouts.append(text)
         joined = ", ".join(f"\"{item}\"" for item in safe_callouts)
         overlay_block = (
-            f" Allow only {len(safe_callouts)} tiny tasteful Instagram-style overlay words for feature tags: {joined}. "
-            "Keep them very small, decorative, brief, and not synchronized line-by-line with the spoken voiceover. Never render full-sentence captions, subtitles, transcripts, lower thirds, karaoke text, platform UI chrome, icons, watermarks, or emoji text."
+            f" Allow only {len(safe_callouts)} tiny minimal ecommerce overlay words for feature tags: {joined}. "
+            "Keep them very small, decorative, brief, and not synchronized line-by-line with the spoken voiceover. Never render full-sentence captions, subtitles, transcripts, lower thirds, karaoke text, social media icons, platform logos, camera/reel icons, reaction icons, app UI chrome, watermarks, or emoji text."
             if safe_callouts
             else ""
         )
@@ -279,7 +279,7 @@ def append_mid_native_audio_instruction(prompt: str, voice_lines: Any, callouts:
         "\n\nNATIVE AUDIO: Generate natural native audio inside the video: a bright, young American female ecommerce creator voice, friendly, clear, slightly energetic, not robotic, not corporate. "
         f"Spoken voiceover, complete within 8 seconds: \"{safe_line}\" "
         "Add subtle upbeat modern product-ad background music under the voice at low volume, no lyrics, plus light real handling sounds. "
-        "No subtitles, no captions, no full-sentence labels, no emoji text, no Instagram or INS icons, no TikTok icons, no app UI, and no watermarks. The only allowed readable text is the explicitly allowed tiny feature-tag overlay words."
+        "No subtitles, no captions, no full-sentence labels, no emoji text, no social media icons, no platform logos, no camera/reel icons, no reaction icons, no app UI, and no watermarks. The only allowed readable text is the explicitly allowed tiny feature-tag overlay words."
     )
     return prompt + overlay_block + audio_block
 
@@ -288,7 +288,7 @@ def append_asmr_audio_instruction(prompt: str) -> str:
     audio_block = (
         "\n\nNATIVE AUDIO: Generate clean ASMR-style native audio only. No spoken voiceover, no dialogue, no narration, no music. "
         "Use crisp realistic kitchen sounds only: suction click, vegetable tapping on the counter, gentle pusher contact, smooth crank rotation, stainless drum rasp, crisp slicing or grating texture, and shreds or slices falling into a glass bowl. "
-        "Keep the sound intimate, detailed, satisfying, and natural. No subtitles, no captions, no Instagram or INS icons, no TikTok icons, no app UI, no watermarks."
+        "Keep the sound intimate, detailed, satisfying, and natural. No subtitles, no captions, no social media icons, no platform logos, no camera/reel icons, no reaction icons, no app UI, no watermarks."
     )
     return prompt + audio_block
 
