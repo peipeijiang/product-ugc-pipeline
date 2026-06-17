@@ -197,4 +197,5 @@ Before delivering outputs, inspect `materials.md`, `image_analysis.json`, and `u
 - Vision analysis: analyze the first 6 filtered product images by default. Use `--limit-images 0` to analyze all filtered images, or `--limit-images 2` for cheap quick tests.
 - Prompt generation: read `product_brief.json` when present; if missing, fall back to manifest + image analysis but treat that as lower confidence.
 - Prompt generation: default model is `gpt-5.2`; override with `--model`, `--prompt-model`, or `PRODUCT_UGC_PROMPT_MODEL` when a specific provider/model such as `omni-flash` is available in the active API channel.
+- Prompt generation: do not use LK888 media/video models as prompt writers. For small ad-hoc rerolls where Codex has enough product context, Codex may directly author and append/rewrite variants in `ugc_prompts.json`; record this in `prompt_history` with a manual rewrite note.
 - Prompt generation: use history-aware mode by default. `generate_ugc_prompts.py` passes the full prior `ugc_prompts*.json` history into the model context so the model can directly avoid repeating older scenes, actions, proof moments, buyer contexts, and selling angles.
