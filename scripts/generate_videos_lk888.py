@@ -363,7 +363,7 @@ def build_model_params(args: argparse.Namespace, image_urls: list[str]) -> dict[
 def extract_task_ids(create_response: dict[str, Any]) -> list[str]:
     data = create_response.get("data") if isinstance(create_response.get("data"), dict) else create_response
     raw_ids: list[Any] = []
-    for key in ["task_id", "任务id", "任务ID"]:
+    for key in ["task_id", "id", "任务id", "任务ID"]:
         if data.get(key):
             raw_ids.append(data[key])
     for key in ["任务ids", "task_ids", "ids"]:
@@ -379,11 +379,11 @@ def normalize_status(status_response: dict[str, Any]) -> dict[str, Any]:
     return data if isinstance(data, dict) else status_response
 
 
-def poll_task(api_key: str, task_id: str, base_url: str, poll_seconds: int) -> dict[str, Any]:
+def poll_task(api_key: str, task_id: str, base_url: str, poll_seconds: int, status_endpoint: str) -> dict[str, Any]:
     transient_errors = 0
     while True:
         try:
-            raw = lk888_get(api_key, "/v1/skills/task-status", base_url, params={"task_id": task_id})
+            raw = lk888_get(api_key, status_endpoint, base_url, params={"task_id": task_id})
             transient_errors = 0
         except requests.RequestException as error:
             transient_errors += 1
@@ -454,7 +454,7 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
     if not task_ids:
         raise RuntimeError(f"Missing task_id: {json.dumps(create_response, ensure_ascii=False)}")
     task_id = task_ids[0]
-    status_response = poll_task(api_key, task_id, args.base_url, args.poll_seconds)
+    status_response = poll_task(api_key, task_id, args.base_url, args.poll_seconds, args.status_endpoint)
     result_url = status_response.get("result_url") or status_response.get("url")
     if not result_url:
         raise RuntimeError(f"Task completed without result_url: {json.dumps(status_response, ensure_ascii=False)}")
@@ -515,6 +515,7 @@ def main() -> None:
     parser.add_argument("--prompts-file", default="ugc_prompts.json")
     parser.add_argument("--model", default="veo3.1-lite")
     parser.add_argument("--base-url", default=BASE_URL)
+    parser.add_argument("--status-endpoint", default="/v1/skills/task-status")
     parser.add_argument("--generation-mode", default="fast")
     parser.add_argument("--quality", default="sd")
     parser.add_argument("--aspect-ratio", default="9:16")

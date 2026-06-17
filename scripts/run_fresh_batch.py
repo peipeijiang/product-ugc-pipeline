@@ -192,7 +192,7 @@ def main() -> None:
             args.audio_style,
         ]
         if video_model == "omni-flash":
-            command.extend(["--duration", "8"])
+            command.extend(["--duration", "8", "--base-url", "https://api.lk888.ai", "--status-endpoint", "/v1/media/status"])
         if args.light_overlay:
             command.append("--light-overlay")
         if args.single_reference:
