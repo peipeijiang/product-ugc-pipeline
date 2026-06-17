@@ -57,6 +57,7 @@ LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_ugc_prompts
 LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_images.py product-ugc-output --variants 1-10 --model gpt-image-2-vip --size 1024x1536 --keyframes
 LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_videos.py product-ugc-output --variants 1-10 --model veo-3.1-fast-fl
 LK888_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_videos_lk888.py product-ugc-output --variants 1-10 --model veo3.1 --generation-mode fast
+LK888_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_videos_lk888.py product-ugc-output --variants 1-10 --model omni-flash --duration 8
 LAOZHANG_API_KEY=sk-... LK888_API_KEY=sk-... python product-ugc-pipeline/scripts/run_fresh_batch.py product-ugc-output --products 01,02 --count 2 --batch-label 20260520-dual-refresh
 ```
 
@@ -167,6 +168,7 @@ Key defaults:
 - Balance endpoint: `GET /v1/skills/balance`; query it before paid batches when practical.
 - Media creation endpoint: `POST /v1/media/generate`; poll `GET /v1/skills/task-status?task_id={task_id}` until `is_final=true`.
 - VEO 3.1 model name: `veo3.1`; common params are `generation_mode=fast`, `aspect_ratio=9:16`, `images=[start_url,end_url]`, and `enhance_prompt=false`.
+- Gemini Omni Flash video model name: `omni-flash`; use the LK888 media endpoint with `duration=8`, `aspect_ratio=9:16`, `images=[start_url,end_url]`, and `enhance_prompt=false`. It is a video/media model, not a chat prompt-writing model.
 - `veo3.1-lite` uses `quality=sd|4k` instead of `generation_mode`, but may have inactive channels; verify pricing/status before relying on it.
 - Upload params require publicly reachable URLs. The API does not accept local file paths or multipart image uploads for `images`.
 - The adapter writes LK888 outputs to `videos_lk888/` so LaoZhang outputs in `videos/` remain untouched.

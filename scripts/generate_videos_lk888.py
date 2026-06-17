@@ -339,6 +339,16 @@ def build_model_params(args: argparse.Namespace, image_urls: list[str]) -> dict[
             "images": image_urls,
             "enhance_prompt": args.enhance_prompt,
         }
+    if args.model == "omni-flash":
+        params = {
+            "duration": str(args.duration),
+            "aspect_ratio": args.aspect_ratio,
+            "images": image_urls[:3],
+            "enhance_prompt": args.enhance_prompt,
+        }
+        if args.enable_upsample is not None:
+            params["enable_upsample"] = args.enable_upsample
+        return params
     params: dict[str, Any] = {
         "generation_mode": args.generation_mode,
         "aspect_ratio": args.aspect_ratio,
@@ -508,6 +518,7 @@ def main() -> None:
     parser.add_argument("--generation-mode", default="fast")
     parser.add_argument("--quality", default="sd")
     parser.add_argument("--aspect-ratio", default="9:16")
+    parser.add_argument("--duration", default="8")
     parser.add_argument("--audio-duration", default="8")
     parser.add_argument("--resolution", default="720p")
     parser.add_argument("--generate-audio", action="store_true")

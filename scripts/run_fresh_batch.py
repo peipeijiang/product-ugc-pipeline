@@ -191,6 +191,8 @@ def main() -> None:
             "--audio-style",
             args.audio_style,
         ]
+        if video_model == "omni-flash":
+            command.extend(["--duration", "8"])
         if args.light_overlay:
             command.append("--light-overlay")
         if args.single_reference:
