@@ -290,8 +290,8 @@ def append_mid_native_audio_instruction(prompt: str, voice_lines: Any, callouts:
                 safe_callouts.append(text)
         joined = ", ".join(f"\"{item}\"" for item in safe_callouts)
         overlay_block = (
-            f" Allow only {len(safe_callouts)} tiny minimal ecommerce overlay words for feature tags: {joined}. "
-            "Keep them very small, decorative, brief, and not synchronized line-by-line with the spoken voiceover. Never render full-sentence captions, subtitles, transcripts, lower thirds, karaoke text, social media icons, platform logos, camera/reel icons, reaction icons, app UI chrome, watermarks, or emoji text."
+            f" Allow only {len(safe_callouts)} stylish short-form creator typography feature-tag overlays: {joined}. "
+            "Render them as stylish short-form creator typography: bold rounded pill labels, warm vibrant accent tints, compact pop-up badges, modern fashion-tag feel. Keep them brief and not synchronized with the spoken voiceover. Never render full-sentence captions, subtitles, transcripts, lower thirds, karaoke text, social media icons, platform logos, camera/reel icons, reaction icons, app UI chrome, watermarks, or emoji text."
             if safe_callouts
             else ""
         )
