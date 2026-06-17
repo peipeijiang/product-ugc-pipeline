@@ -1067,7 +1067,7 @@ def main() -> None:
     parser.add_argument("--batch-label", default="")
     parser.add_argument("--history-glob", default="ugc_prompts*.json")
     parser.add_argument("--ignore-history", action="store_true")
-    parser.add_argument("--model", default="gpt-5.2")
+    parser.add_argument("--model", default="omni-flash")
     parser.add_argument("--base-url", default="https://api.laozhang.ai/v1")
     parser.add_argument("--timeout", type=int, default=420)
     parser.add_argument("--products", default="", help="Comma-separated product selectors, e.g. 01 or 01-flower")

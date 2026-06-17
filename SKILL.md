@@ -53,7 +53,7 @@ product-ugc-output/
 python product-ugc-pipeline/scripts/scrape_products.py urls.txt --out product-ugc-output
 LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/analyze_materials.py product-ugc-output
 LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/build_product_brief.py product-ugc-output
-LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_ugc_prompts.py product-ugc-output --count 10
+LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_ugc_prompts.py product-ugc-output --count 10 --model omni-flash
 LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_images.py product-ugc-output --variants 1-10 --model gpt-image-2-vip --size 1024x1536 --keyframes
 LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_videos.py product-ugc-output --variants 1-10 --model veo-3.1-fast-fl
 LK888_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_videos_lk888.py product-ugc-output --variants 1-10 --model veo3.1 --generation-mode fast
@@ -194,4 +194,5 @@ Before delivering outputs, inspect `materials.md`, `image_analysis.json`, and `u
 - Scraping: use JSON-LD `Product.image` assets first and exclude generic page images by default. Add `--include-page-images` only when product pages lack structured product images.
 - Vision analysis: analyze the first 6 filtered product images by default. Use `--limit-images 0` to analyze all filtered images, or `--limit-images 2` for cheap quick tests.
 - Prompt generation: read `product_brief.json` when present; if missing, fall back to manifest + image analysis but treat that as lower confidence.
+- Prompt generation: default model is `omni-flash` for faster fresh-batch ideation; override with `--model` or `--prompt-model` only when a specific provider/model is requested.
 - Prompt generation: use history-aware mode by default. `generate_ugc_prompts.py` passes the full prior `ugc_prompts*.json` history into the model context so the model can directly avoid repeating older scenes, actions, proof moments, buyer contexts, and selling angles.
