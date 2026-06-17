@@ -13,11 +13,11 @@ from common import load_json, request_json, require_api_key, selected_product_di
 
 
 UGC_SYSTEM_PROMPT = """You are a senior UGC creative director for short-form ecommerce product video.
-Create product-faithful creator ad prompts. Return JSON only."""
+Create product-faithful vertical creator-ad prompts with clear 8-second visual storytelling, natural native audio, and strict product continuity. Return JSON only."""
 
 VOICEOVER_SEGMENTS = [("0-2s", 6), ("2-5s", 9), ("5-8s", 7)]
-VOICEOVER_TARGET_WORDS = (16, 20)
-VOICEOVER_HARD_MAX_WORDS = 22
+VOICEOVER_TARGET_WORDS = (14, 18)
+VOICEOVER_HARD_MAX_WORDS = 20
 SHOT_TIME_SLOTS = {
     3: ["0.0-2.0s", "2.0-5.0s", "5.0-8.0s"],
     4: ["0.0-1.5s", "1.5-3.2s", "3.2-5.8s", "5.8-8.0s"],
@@ -585,12 +585,12 @@ def build_function_intro_prompt(product_name: str, feature_summary: str, hook: s
 def build_voiceover_script_8s(product_name: str, feature_summary: str, hook: str = "") -> list[dict[str, str]]:
     return normalize_voiceover_script_8s(
         [
-            hook or f"This is how the {product_name} works.",
-            f"The key function is simple: {feature_summary[:160]}",
-            "You see the proof before the eight-second clip ends.",
+            hook or f"Tiny upgrade, but it makes the setup feel instantly easier.",
+            f"Watch the real function: {feature_summary[:120]}",
+            "The final shot shows the product doing the job.",
         ],
-        hook=hook or f"This is how the {product_name} works.",
-        fallback=f"The key function is simple: {feature_summary[:160]}",
+        hook=hook or "Tiny upgrade, but it makes the setup feel instantly easier.",
+        fallback=f"Watch the real function: {feature_summary[:120]}",
     )
 
 
@@ -775,7 +775,7 @@ def usage_keyframe_prompt(
         continuity = (
             "This end frame must look like the same exact person, same wardrobe, same room, same props, same lighting, "
             "and same shoot as the start frame, but the action state, hand position, product interaction, phone/app/sink/result state, "
-            "and camera composition should advance to the final storyboard beat."
+            "and camera composition should advance to the final storyboard beat. If the start keyframe is provided as a reference image, copy its room geometry, wall texture, outlet plate or tabletop, screw positions, shadows, hand identity, wardrobe, lens height, and camera crop; change only the final action state."
         )
     else:
         moment = (
@@ -815,6 +815,7 @@ def usage_keyframe_prompt(
         "The lifestyle environment may differ from the original product photo; preserve the product, not the source-photo background. "
         f"{continuity} "
         "The start and end keyframes must not be near-duplicates: keep product identity stable, but clearly change the action state according to the first vs final storyboard beat. "
+        "Do not switch to a different room, outlet style, table surface, camera distance, person, wardrobe, or product position between start and end. "
         "Adult hands only if needed, natural phone-shot lighting, no subtitles, no transcript captions, no platform UI, no icons, no extra branding. "
         f"{phone_geometry} "
         "Avoid extreme close-ups, heavy occlusion, dramatic stains, magic effects, or any invented product mechanism. "
@@ -848,18 +849,18 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
     voiceover_text = compact_voiceover_text(normalized_voiceover)
     timed_voiceover = " ".join(f"[{item['time']}] {item['line']}" for item in normalized_voiceover if item.get("line"))
     audio_block = (
-        "Native audio: include a clear young American female ecommerce-host voiceover, energetic but natural, slightly bright and sales-friendly. "
-        "The spoken script must finish naturally within 8 seconds at normal creator pace, ideally 16 to 20 English words total and never more than 22 words. "
+        "Native audio: include a clear young American female lifestyle-commerce creator voiceover, bright, stylish, warm, emotionally engaged, and not robotic or corporate. "
+        "The spoken script must finish naturally within 8 seconds at normal creator pace, ideally 14 to 18 English words total and never more than 20 words. "
         f"Speak these exact timed lines in order: {timed_voiceover}. "
         f"Combined exact script: \"{voiceover_text[:220]}\" "
-        "Do not add intro words, filler, repeated lines, extra CTA, or any unscripted speech. Keep the voiceover synchronized to the visual function demo. Add only subtle real product handling sounds; no music, no singing."
+        "Do not add intro words, filler, repeated lines, extra CTA, or any unscripted speech. Keep the voiceover synchronized to the visual function demo. Add low-volume modern lifestyle background music plus subtle real product handling sounds; no singing."
         if voiceover_text
         else "Native audio: include subtle real product handling sounds only, no music."
     )
     callouts = normalize_on_screen_callouts(variant.get("on_screen_callouts"), _plain_brief_list(variant.get("selling_angle") or usage_context, 3))
     overlay_block = (
         f"Allow only {min(len(callouts), 2)} tiny minimal ecommerce overlay words for feature tags: {', '.join(repr(item) for item in callouts[:2])}. "
-        "Keep them very small, decorative, brief, and not synchronized line-by-line with the spoken voiceover. "
+        "Keep them very small, clean, decorative, brief, and not synchronized line-by-line with the spoken voiceover; if the model cannot render clean tiny feature-tag text, skip overlay entirely rather than rendering ugly or garbled words. "
         "Never render full-sentence captions, subtitles, transcripts, lower thirds, karaoke text, social media icons, platform icons/logos, camera icons, reaction icons, app UI, watermarks, or emoji text. "
         if callouts
         else ""
@@ -878,9 +879,9 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
         )
     )
     return (
-        "Create an 8-second vertical UGC product-use clip using the provided reference frame or start/end keyframes. "
-        "If two reference images are provided, use image 1 as the exact first frame and image 2 as the exact final frame; create only a smooth practical transition between them. "
-        "The hook is visual: start with the everyday problem, need, or convenience moment already visible; then show one simple satisfying use action; end on a clear proof/sell shot. "
+        "Create an 8-second vertical stylish creator-ad product-use clip using the provided reference frame or start/end keyframes. "
+        "If two reference images are provided, use image 1 as the exact first frame and image 2 as the exact final frame; create only a smooth practical transition between them. Preserve the same room, outlet/table, wall texture, person, wardrobe, camera height, lens angle, and product position unless the storyboard explicitly moves the product within that same scene. "
+        "The hook is visual and emotional: start with the everyday problem, need, or convenience moment already visible; then show one simple satisfying use action; end on a clear proof/sell shot. "
         f"Follow this exact 0-8s storyboard with visual beat, spoken line, and sparse feature overlay for each beat: {storyboard} "
         f"Action arc: adult hands interact with the exact visible product and perform one supported use action: {usage_context}. "
         f"Scene context: {scene_context}. "
@@ -894,7 +895,7 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
         f"{phone_geometry} "
         f"{overlay_block}"
         f"{audio_block} "
-        "Natural handheld phone camera, close practical use framing. "
+        "Natural handheld phone camera, close practical use framing, premium lifestyle lighting, quick but readable creator-ad pacing. "
         "No subtitles, no sentence captions, no lower-third transcript, no karaoke-style text, no emoji text, no social media icons, no platform logos, no camera/reel icons, no reaction icons, no app UI, and no watermarks. The only allowed readable text is the explicitly allowed tiny feature-tag overlay words."
     )
 
@@ -960,13 +961,13 @@ Critical:
 2. Do not invent unsupported functions.
 3. Every image_prompt and video_prompt must contain a product-fidelity block requiring exact preservation of the original product appearance.
 4. The selected reference image must be the best true full-product reference: full silhouette, correct SKU/style, real proportions, visible key functional zones. Do not select alternate SKU images, accessory-only images, packaging-only images, loose parts, isolated cables, or detail images as canonical.
-5. Put concise native-audio voiceover lines into VEO video_prompt, and ensure the full spoken copy can naturally finish inside 8 seconds at normal creator pace.
+5. Put concise native-audio voiceover lines into VEO video_prompt, and ensure the full spoken copy can naturally finish inside 8 seconds at normal creator pace: target 14-18 English words, hard max 20 words, no unfinished trailing phrase.
 6. Keep every shot_plan, voiceover_script_8s, image-to-video prompt, and action arc designed for exactly 8 seconds. Do not write 9-12s, 10-12s, 12s, or 15s plans.
-7. Allow only 1-2 tiny sparse VEO overlay labels from on_screen_callouts as feature tags, e.g. "100 speeds" or "Tilt airflow"; use plain ASCII English only, no emoji. Do not ask for subtitles, transcript captions, lower-thirds, karaoke text, social media icons, platform logos, camera/reel icons, app UI, or watermarks. Never use positive platform-branded style phrases.
+7. Allow only 1-2 tiny sparse VEO overlay labels from on_screen_callouts as feature tags, e.g. "100 speeds" or "Tilt airflow"; use plain ASCII English only, no emoji. If clean tiny text is uncertain, skip overlay rather than render ugly/garbled words. Do not ask for subtitles, transcript captions, lower-thirds, karaoke text, social media icons, platform logos, camera/reel icons, app UI, or watermarks. Never use positive platform-branded style phrases; say stylish short-form creator-ad energy instead.
 8. Build the video from a single storyboard: video_prompt must include every beat's time, visual content, spoken line, and optional sparse feature overlay; start_frame_prompt must depict the first beat; end_frame_prompt must depict the final beat. Overlay must not repeat the spoken line as subtitles.
 9. Product reference images lock the product itself, not the entire source photo. Preserve product identity and usage mechanics, but freely imagine realistic buyer scenes, backgrounds, camera angles, and contextual props that clarify the function.
 10. Each variant should focus on one small function or selling point. Vary function, scene, action, and proof moment across the batch; do not produce ten versions of the same tabletop placement.
-11. Start/end keyframes should be meaningfully different enough for an 8-second action arc while preserving the same exact product.
+11. Start/end keyframes should be meaningfully different enough for an 8-second action arc while preserving the same exact product. Generate the end frame as the same shoot a few seconds later: same room, wall socket/table, person, wardrobe, lighting, product identity, and camera geometry; only the action result changes.
 12. Read the historical variants listed above as actual prior creative work for this product. Do not paraphrase them. Avoid reusing the same scene setup, same use action, same proof moment, same buyer context, or same selling angle unless you materially transform at least 3 of those dimensions.
 13. When function overlap is unavoidable, deliberately choose a different buyer situation, a different visual hook, a different camera idea, and a different proof framing instead of repeating the same demo in new words.
 14. Before writing the variants, allocate one primary_function_focus per variant from confirmed_use_cases, step_by_step_usage, and proof_moments. Do not assign the same primary function to multiple fresh variants unless the product has only one confirmed function. For multifunction wearables such as smart rings, do not default every variant to photo-taking/remote shutter; split confirmed functions across health/app checks, charging, status display, touch control, activity tracking, waterproof daily wear, or fit/detail as supported by the brief.

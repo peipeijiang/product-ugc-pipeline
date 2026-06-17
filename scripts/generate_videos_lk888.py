@@ -204,6 +204,26 @@ def prompt_has_native_audio(prompt: str) -> bool:
     return "NATIVE AUDIO" in upper_prompt or "VOICEOVER" in upper_prompt
 
 
+def compact_voiceover_line(voice_lines: Any, fallback: str = "", max_words: int = 18) -> str:
+    lines: list[str] = []
+    if isinstance(voice_lines, list):
+        for item in voice_lines:
+            if isinstance(item, dict):
+                text = str(item.get("line") or item.get("text") or "").strip()
+            else:
+                text = str(item).strip()
+            if text:
+                lines.append(text)
+    elif isinstance(voice_lines, str):
+        lines.append(voice_lines.strip())
+    text = " ".join(lines) or fallback
+    text = text.replace("—", ", ")
+    words = text.split()
+    if len(words) > max_words:
+        text = " ".join(words[:max_words]).rstrip(" ,.-")
+    return text
+
+
 def first_voice_line(voice_lines: Any, fallback: str = "") -> str:
     line = ""
     if isinstance(voice_lines, list) and voice_lines:
@@ -258,7 +278,7 @@ def append_safe_native_audio_instruction(prompt: str, voice_lines: Any) -> str:
 
 
 def append_mid_native_audio_instruction(prompt: str, voice_lines: Any, callouts: list[str]) -> str:
-    safe_line = first_voice_line(voice_lines, "Here is how the product works.")
+    safe_line = compact_voiceover_line(voice_lines, "Watch this tiny upgrade make the setup feel easier.", max_words=18)
     overlay_block = ""
     if callouts:
         safe_callouts = []
@@ -276,9 +296,9 @@ def append_mid_native_audio_instruction(prompt: str, voice_lines: Any, callouts:
             else ""
         )
     audio_block = (
-        "\n\nNATIVE AUDIO: Generate natural native audio inside the video: a bright, young American female ecommerce creator voice, friendly, clear, slightly energetic, not robotic, not corporate. "
+        "\n\nNATIVE AUDIO: Generate natural native audio inside the video: a bright young American female lifestyle-commerce creator voice, stylish, warm, emotionally engaged, friendly, clear, not robotic, not corporate. "
         f"Spoken voiceover, complete within 8 seconds: \"{safe_line}\" "
-        "Add subtle upbeat modern product-ad background music under the voice at low volume, no lyrics, plus light real handling sounds. "
+        "Add subtle upbeat modern lifestyle background music under the voice at low volume, no lyrics, plus light real handling sounds. "
         "No subtitles, no captions, no full-sentence labels, no emoji text, no social media icons, no platform logos, no camera/reel icons, no reaction icons, no app UI, and no watermarks. The only allowed readable text is the explicitly allowed tiny feature-tag overlay words."
     )
     return prompt + overlay_block + audio_block
