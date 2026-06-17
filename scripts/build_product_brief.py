@@ -53,6 +53,7 @@ Return JSON with:
 - proof_moments: visual moments that prove the product works
 - reference_image_strategy: which local image paths are best for full product reconstruction and why
 - misuse_risks_to_avoid: likely wrong usages, impossible demos, or model hallucinations to avoid
+- hallucination_defense: structured defense against VEO/image-model hallucinations. Include: phantom_parts (list what product does NOT have), shape_preservation (exact silhouette rules), material_texture_lock (surface/color constraints), action_bounds (what product can and cannot do), context_contamination (scene elements training data might wrongly inject), scale_anchor (realistic size reference)
 - video_prompt_rules: strict rules a video prompt must follow
 
 The brief is used to write prompts. If you are unsure about how the product works, say so and create a conservative demo rather than inventing.

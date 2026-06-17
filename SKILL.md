@@ -77,6 +77,26 @@ For each product folder:
 - `generated_images/`: GPT-Image-2 outputs named by prompt variant; with `--keyframes`, writes `variant-XX-start.png` and `variant-XX-end.png`.
 - `videos/`: canonical VEO output JSON, status JSON, and downloaded MP4 files. New runs should append by `variant-XX` inside this folder instead of creating `videos_*` batch folders.
 
+### Universal Hallucination Defense
+
+Every product gets automatic hallucination-defense injection into all VEO/image prompts.
+
+**How it works:**
+1. `build_product_brief.py` asks the LLM to produce `hallucination_defense` with six categories per product:
+   phantom_parts, shape_preservation, material_texture_lock, action_bounds, context_contamination, scale_anchor.
+2. `generate_ugc_prompts.py` reads `product_brief.json` and auto-injects defense into:
+   `product_fidelity_block()` (appended to every prompt), `negative_prompt`, and LLM prompt-writing instructions.
+3. Without `product_brief.json`, a universal baseline defense fires covering all common VEO hallucination categories.
+
+**Categories (universal):**
+- Phantom parts: cables, wires, hoses, motors, buttons, lids, chambers, hinges, handles, blades, text, packaging
+- Shape drift: silhouette must not change (flower→circle, gourd→cylinder)
+- Material/texture: surface finish, color, transparency must stay exact
+- Action invention: product cannot do things unsupported by reference images
+- Context contamination: training-data clichés (“every outlet has a cord”, “every kitchen has a window”)
+- Scale distortion: product must stay realistic size relative to hands/objects
+
+
 ## Prompt Standards
 
 Generate prompts in English for image/video models, but keep metadata fields readable in either Chinese or English depending on user preference.

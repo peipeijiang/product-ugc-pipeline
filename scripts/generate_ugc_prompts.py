@@ -450,7 +450,7 @@ def normalize_variants(output: dict[str, Any], manifest: dict[str, Any], referen
         clean_variant["shot_plan"] = normalize_shot_plan_8s(clean_variant.get("shot_plan"), clean_variant)
         clean_variant["storyboard_8s"] = storyboard_entries(clean_variant)
         clean_variant.setdefault("function_demo_prompt", build_function_demo_prompt(product_name, feature_summary, clean_variant.get("title", "")))
-        fidelity = product_fidelity_block(product_name)
+        fidelity = product_fidelity_block(product_name, product_brief)
         image_prompt = str(clean_variant.get("image_prompt") or "")
         video_prompt = str(clean_variant.get("video_prompt") or "")
         if "CANONICAL PRODUCT" not in image_prompt:
@@ -471,12 +471,80 @@ def normalize_variants(output: dict[str, Any], manifest: dict[str, Any], referen
     return output
 
 
-def product_fidelity_block(product_name: str) -> str:
+def build_hallucination_defense_block(product_brief: dict[str, Any] | None = None) -> str:
+    """Build a product-specific hallucination defense block from product_brief.json.
+    Returns a universal defense even if brief is None."""
+    brief = product_brief or {}
+    defense = brief.get('hallucination_defense') or {}
+
+    # Universal baseline — covers all common VEO hallucination categories
+    base = (
+        'HALLUCINATION DEFENSE (universal): '
+        'Do not add, invent, redesign, or hallucinate ANY of the following unless explicitly visible in the reference image: '
+        'cables, wires, cords, hoses, tubes, pipes. '
+        'motors, engines, fans, spinning parts unless shown. '
+        'buttons, switches, knobs, dials, sliders. '
+        'lids, caps, covers, hinges, latches, seals. '
+        'chambers, compartments, containers, reservoirs, tanks, trays, drawers. '
+        'blades, cutting edges, graters, slicers, crushers. '
+        'handles, grips, straps, hooks, mounts, stands. '
+        'labels, text, branding, logos, markings, decals (besides what reference shows). '
+        'packaging, boxes, wrappers, bags. '
+        'accessories: remotes, chargers, adapters, batteries, tools, replacement parts. '
+        'lights, LEDs, screens, displays, indicators. '
+        'liquids, powders, food items, ingredients, chemicals. '
+    )
+
+    if not defense:
+        return base
+
+    # Product-specific phantom parts
+    phantom = defense.get('phantom_parts')
+    if phantom:
+        parts_list = ', '.join(str(p) for p in phantom) if isinstance(phantom, list) else str(phantom)
+        base += f' SPECIFICALLY FORBIDDEN for this product: {parts_list}. '
+
+    # Shape preservation
+    shape = defense.get('shape_preservation')
+    if shape:
+        base += f' SHAPE LOCK: {shape}. '
+
+    # Material/texture
+    mat = defense.get('material_texture_lock')
+    if mat:
+        base += f' MATERIAL LOCK: {mat}. '
+
+    # Action bounds
+    bounds = defense.get('action_bounds')
+    if bounds:
+        base += f' ACTION BOUNDS: {bounds}. '
+
+    # Context contamination
+    context = defense.get('context_contamination')
+    if context:
+        base += f' CONTEXT WARNING: {context}. '
+
+    # Scale anchor
+    scale = defense.get('scale_anchor')
+    if scale:
+        base += f' SCALE ANCHOR: {scale}. '
+
+    # Also inject misuse_risks
+    misuse = brief.get('misuse_risks_to_avoid')
+    if misuse and isinstance(misuse, list):
+        risks = '; '.join(str(r) for r in misuse[:5])
+        base += f' MISUSE PREVENTION: {risks}. '
+
+    return base
+
+def product_fidelity_block(product_name: str, product_brief: dict[str, Any] | None = None) -> str:
+    defense_block = build_hallucination_defense_block(product_brief)
     return (
         f"CANONICAL PRODUCT: {product_name}. Use the provided product reference image as the source of truth. "
         "Preserve exact product shape, proportions, color, material, texture, visible mechanisms, logo/text, packaging, and distinctive silhouette. "
         "Do not redesign, recolor, simplify, distort, or replace the product. "
-        "Do not add any feature that is not visible in the reference image: no new lid, cap, hinge, latch, transparent chamber, water tank, handle, button, blade, motor, brand text, embossed text, container body, or storage compartment unless that exact feature already exists in the reference."
+        "Do not add any feature that is not visible in the reference image: no new lid, cap, hinge, latch, transparent chamber, water tank, handle, button, blade, motor, brand text, embossed text, container body, or storage compartment unless that exact feature already exists in the reference. "
+        f"\n{defense_block}"
     )
 
 
@@ -707,7 +775,7 @@ def strict_pad_image_prompt(product_name: str, variant: dict[str, Any], product_
         )
     )
     return (
-        product_fidelity_block(product_name)
+        product_fidelity_block(product_name, product_brief)
         + "\nCreate a vertical 9:16 first-frame pad image for a UGC video. "
         "This is a product-accurate setup shot, not a usage/action shot. Treat the reference product as a locked physical prop, not a design suggestion. "
         f"Use these selected reference images as the product identity source: {json.dumps(references, ensure_ascii=False)}. "
@@ -802,7 +870,7 @@ def usage_keyframe_prompt(
         )
     )
     return (
-        product_fidelity_block(product_name)
+        product_fidelity_block(product_name, product_brief)
         + "\nCreate a vertical 9:16 product-use keyframe for an 8-second UGC video. "
         f"{moment} "
         f"Use these selected reference images as the product identity source: {json.dumps(references, ensure_ascii=False)}. "
