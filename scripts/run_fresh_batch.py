@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 from datetime import datetime
@@ -71,7 +72,7 @@ def main() -> None:
     parser.add_argument("--count", type=int, default=2, help="New variants to generate per product.")
     parser.add_argument("--batch-label", default=f"fresh-{datetime.now().strftime('%Y%m%d-%H%M')}")
     parser.add_argument("--history-glob", default="ugc_prompts*.json")
-    parser.add_argument("--prompt-model", default="omni-flash")
+    parser.add_argument("--prompt-model", default=os.getenv("PRODUCT_UGC_PROMPT_MODEL", "gpt-5.2"))
     parser.add_argument("--prompt-base-url", default="https://api.laozhang.ai/v1")
     parser.add_argument("--image-model", default="gpt-image-2-vip")
     parser.add_argument("--image-size", default="1024x1536")
