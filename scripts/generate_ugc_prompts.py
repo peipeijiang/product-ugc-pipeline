@@ -912,10 +912,13 @@ def usage_keyframe_prompt(
         start_entry = storyboard_entries(variant)[0] if storyboard_entries(variant) else {"visual": "hook setup"}
         start_visual = sanitize_single_photo_prompt_text(str(start_entry.get("visual", "")))
         moment = (
-            f"END FRAME PHOTO: create only the final visible proof/sell-shot moment: [{endpoint.get('time')}] {endpoint_visual}. "
-            "This must be VISUALLY DIFFERENT from the start of the video (which showed: " + start_visual + "). "
-            "The scene has progressed: the product is now in its final use state, the action is complete, the proof moment is visible. "
-            "Do NOT repeat the opening hook composition — this is the satisfying conclusion shot."
+            f"END FRAME PHOTO: this is the final shot of the 8-second story. "
+            f"The opening hook was: {start_visual}. "
+            f"Now create the SATISFYING CONCLUSION: [{endpoint.get('time')}] {endpoint_visual}. "
+            "You are given the start-frame reference image for continuity (same room, same person, same lighting, same product identity). "
+            "But the composition MUST be different — this is the END of the story, not the beginning. "
+            "The product is now in its final use state, the action is complete, the proof is visible. "
+            "Keep the room/person/lighting/product from the reference, but replace the composition with this conclusion moment."
         )
         continuity = (
             "This end frame must look like the same exact person, same wardrobe, same room, same props, same lighting, "

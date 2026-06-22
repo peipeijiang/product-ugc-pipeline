@@ -93,11 +93,19 @@ def keyframe_references(
     max_references: int,
 ) -> list[Path]:
     base_references = existing_references(product_dir, variant, max_references=max(1, max_references))
-    if frame_role == "end":
-        # Do NOT pass the start frame as a reference image for the end keyframe.
-        # The start frame biases Image2 toward copying the composition instead of advancing the scene.
-        # End frame should only lock the product identity from canonical product references.
+    if frame_role != "end":
         return base_references
+    variant_id = int(variant.get("variant_id", 0))
+    start_frame = product_dir / "generated_images" / f"variant-{variant_id:02d}-start.png"
+    if start_frame.exists():
+        chained: list[Path] = [start_frame]
+        for item in base_references:
+            if item not in chained:
+                chained.append(item)
+            if len(chained) >= max(1, max_references):
+                break
+        return chained
+    return base_references
     return base_references
 
 
