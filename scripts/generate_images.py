@@ -258,6 +258,12 @@ def generate_one_image(
     product_name = (load_json(product_dir / "product_manifest.json", {}) or {}).get("product_name", product_dir.name)
     variant_id = int(variant.get("variant_id", 0))
     if args.keyframes:
+        if args.compose_only and not args.allow_compose_keyframes:
+            raise RuntimeError(
+                f"{product_dir.name} variant {variant_id:02d}: --compose-only is not allowed for functional start/end keyframes. "
+                "Use Image2/model-generated keyframes so the first frame can show the pre-use scene and the end frame can show the real usage outcome. "
+                "Only pass --allow-compose-keyframes for explicit stable b-roll, not product-use videos."
+            )
         results: list[dict[str, Any]] = []
         for frame_role in ("start", "end"):
             destination = product_dir / "generated_images" / f"variant-{variant_id:02d}-{frame_role}.png"
@@ -307,6 +313,7 @@ def main() -> None:
     parser.add_argument("--retries", type=int, default=2)
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--compose-only", action="store_true", help="Create deterministic 9:16 pad images from the original reference without AI redraw.")
+    parser.add_argument("--allow-compose-keyframes", action="store_true", help="Explicitly permit compose-only start/end keyframes for stable b-roll only; never use for functional usage demos.")
     parser.add_argument("--keyframes", action="store_true", help="Generate start/end keyframe images named variant-XX-start.png and variant-XX-end.png.")
     parser.add_argument("--max-reference-images", type=int, default=1, help="Maximum selected reference images to send to image edit requests.")
     args = parser.parse_args()

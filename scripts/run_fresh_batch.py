@@ -65,6 +65,38 @@ def write_run_manifests(output_dir: Path, products: str, label: str, count: int,
         )
 
 
+def assert_ready_for_fresh_batch(output_dir: Path, products: str) -> None:
+    for product_dir in selected_product_dirs(output_dir, products):
+        missing = [
+            filename
+            for filename in ("product_manifest.json", "image_analysis.json", "product_brief.json")
+            if not (product_dir / filename).exists()
+        ]
+        if missing:
+            raise RuntimeError(
+                f"{product_dir.name}: missing {missing}. Refusing to run fresh batch before scrape, vision analysis, and product brief are complete."
+            )
+        image_analysis = load_json(product_dir / "image_analysis.json", {})
+        failed = [
+            item.get("local_path", "unknown")
+            for item in image_analysis.get("images", [])
+            if (item.get("analysis") or {}).get("error")
+        ]
+        if failed:
+            raise RuntimeError(
+                f"{product_dir.name}: image_analysis.json contains failed visual model outputs for {failed}. "
+                "Rerun analyze_materials with a working vision model before generating prompts/images/videos."
+            )
+        product_brief = load_json(product_dir / "product_brief.json", {})
+        required = ["confirmed_identity", "confirmed_use_cases", "step_by_step_usage", "misuse_risks_to_avoid"]
+        missing_brief = [key for key in required if not product_brief.get(key)]
+        if missing_brief:
+            raise RuntimeError(
+                f"{product_dir.name}: product_brief.json missing required cognition fields {missing_brief}. "
+                "Refusing to generate videos until product use is understood."
+            )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate a fresh history-aware prompt batch, keyframes, and videos.")
     parser.add_argument("output_dir", type=Path)
@@ -86,6 +118,7 @@ def main() -> None:
     parser.add_argument("--continue-on-error", action="store_true")
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
+    assert_ready_for_fresh_batch(args.output_dir, args.products)
 
     run_command(
         [

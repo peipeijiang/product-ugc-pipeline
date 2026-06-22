@@ -151,6 +151,11 @@ def analyze_product_dir(product_dir: Path, api_key: str, model: str, base_url: s
         print(f"[analyze] {product_dir.name}/{local_path}", flush=True)
         response = analyze_image(api_key, image_path, manifest["product_name"], model, base_url)
         parsed = extract_json_content(response)
+        if parsed.get("error"):
+            raise RuntimeError(
+                f"Vision analysis failed for {product_dir.name}/{local_path}: "
+                f"{parsed.get('error')}. Refusing to write image_analysis.json with invalid model output."
+            )
         analyses.append(
             {
                 "local_path": local_path,

@@ -333,6 +333,30 @@ def history_summary_for_prompt(history: list[dict[str, Any]], limit: int = 24) -
     return json.dumps(history[:limit], ensure_ascii=False, indent=2)
 
 
+def assert_clean_generation_inputs(product_dir: Path, image_analysis: dict[str, Any], product_brief: dict[str, Any]) -> None:
+    if not image_analysis or not isinstance(image_analysis.get("images"), list) or not image_analysis.get("images"):
+        raise RuntimeError(f"{product_dir.name}: missing or empty image_analysis.json. Run successful vision analysis first.")
+    failed = [
+        item.get("local_path", "unknown")
+        for item in image_analysis.get("images", [])
+        if (item.get("analysis") or {}).get("error")
+    ]
+    if failed:
+        raise RuntimeError(
+            f"{product_dir.name}: image_analysis.json contains failed model outputs for {failed}. "
+            "Refusing to generate prompts from invalid visual cognition."
+        )
+    if not product_brief:
+        raise RuntimeError(f"{product_dir.name}: missing product_brief.json. Run successful product-brief synthesis first.")
+    required_brief_keys = ["confirmed_identity", "confirmed_use_cases", "step_by_step_usage", "misuse_risks_to_avoid"]
+    missing = [key for key in required_brief_keys if not product_brief.get(key)]
+    if missing:
+        raise RuntimeError(
+            f"{product_dir.name}: product_brief.json is missing required cognition fields {missing}. "
+            "Refusing to generate prompts until the product function is understood."
+        )
+
+
 def parse_json_text(text: str, context: str) -> dict[str, Any]:
     stripped = text.strip()
     if not stripped:
@@ -1071,6 +1095,7 @@ def process_product(product_dir: Path, api_key: str, args: argparse.Namespace) -
     if not manifest:
         print(f"[skip] missing manifest: {product_dir}")
         return
+    assert_clean_generation_inputs(product_dir, image_analysis, product_brief)
     references = best_reference_images(image_analysis, product_brief, limit=4)
     canonical_prompt_path = product_dir / "ugc_prompts.json"
     history_glob = "ugc_prompts.json" if args.output_file == "ugc_prompts.json" and canonical_prompt_path.exists() else args.history_glob
