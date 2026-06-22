@@ -655,6 +655,43 @@ def _plain_brief_list(value: Any, limit: int = 4) -> str:
     return str(value or "")
 
 
+def sanitize_single_photo_prompt_text(value: Any) -> str:
+    text = str(value or "")
+    replacements = {
+        "Full 8-second storyboard": "single-frame visual plan",
+        "storyboard": "scene",
+        "Storyboard": "Scene",
+        "keyframe": "photo",
+        "Keyframe": "Photo",
+        "first vs final": "selected",
+        "multi-colorway": "single selected colorway",
+        "multi colorway": "single selected colorway",
+        "multiple colorways": "one selected colorway",
+        "Five prints": "one selected print",
+        "five prints": "one selected print",
+        "Pick Your Print": "Selected Print",
+        "flat-lay": "natural single-product lifestyle view",
+        "flat lay": "natural single-product lifestyle view",
+        "grid": "single image",
+        "collage": "single image",
+        "multi-panel": "single image",
+        "split-screen": "single image",
+        "contact sheet": "single image",
+        "before-and-after": "single moment",
+        "before and after": "single moment",
+        "side-by-side": "single",
+        "quad": "single",
+        "3-panel": "single image",
+        "4-up": "single image",
+        "print options": "the selected product",
+        "color options": "the selected product",
+        "product lineup": "the single product",
+    }
+    for source, target in replacements.items():
+        text = text.replace(source, target)
+    return " ".join(text.split())
+
+
 def product_function_summary(manifest: dict[str, Any], product_brief: dict[str, Any] | None = None) -> str:
     brief = product_brief or {}
     candidates = [
@@ -867,26 +904,34 @@ def usage_keyframe_prompt(
     )
     proof_moment = _plain_brief_list(variant.get("proof_moment") or brief.get("proof_moments"), 1)
     endpoint = storyboard_endpoint(variant, frame_role)
-    storyboard = format_storyboard_for_prompt(variant)
+    endpoint_visual = sanitize_single_photo_prompt_text(endpoint.get("visual"))
+    usage_context = sanitize_single_photo_prompt_text(usage_context)
+    proof_moment = sanitize_single_photo_prompt_text(proof_moment)
+    scene_imagination = sanitize_single_photo_prompt_text(scene_imagination)
     if frame_role == "end":
+        start_entry = storyboard_entries(variant)[0] if storyboard_entries(variant) else {"visual": "hook setup"}
+        start_visual = sanitize_single_photo_prompt_text(str(start_entry.get("visual", "")))
         moment = (
-            f"END KEYFRAME: match the final storyboard beat exactly: [{endpoint.get('time')}] {endpoint.get('visual')}. "
-            "This must be the visible final proof/sell-shot state, not a repeat of the start frame."
+            f"END FRAME PHOTO: create only the final visible proof/sell-shot moment: [{endpoint.get('time')}] {endpoint_visual}. "
+            "This must be VISUALLY DIFFERENT from the start of the video (which showed: " + start_visual + "). "
+            "The scene has progressed: the product is now in its final use state, the action is complete, the proof moment is visible. "
+            "Do NOT repeat the opening hook composition — this is the satisfying conclusion shot."
         )
         continuity = (
             "This end frame must look like the same exact person, same wardrobe, same room, same props, same lighting, "
             "and same shoot as the start frame, but the action state, hand position, product interaction, phone/app/sink/result state, "
-            "and camera composition should advance to the final storyboard beat. If the start keyframe is provided as a reference image, copy its room geometry, wall texture, outlet plate or tabletop, screw positions, shadows, hand identity, wardrobe, lens height, and camera crop; change only the final action state."
+            "and camera composition should advance to the final visible moment. If the start frame is provided as a reference image, copy its room geometry, wall texture, outlet plate or tabletop, screw positions, shadows, hand identity, wardrobe, lens height, and camera crop; change only the final action state."
         )
     else:
         moment = (
-            f"START KEYFRAME: match the first storyboard beat exactly: [{endpoint.get('time')}] {endpoint.get('visual')}. "
-            "This must establish the hook/problem/setup before the product action begins."
+            f"START FRAME PHOTO: create only the opening hook/problem/setup moment: [{endpoint.get('time')}] {endpoint_visual}. "
+            "This must establish the scene before the product action begins."
         )
         continuity = "This start frame establishes the person, scene, wardrobe, props, and camera setup that the end frame must continue."
     scene_hint = _plain_brief_list(variant.get("shot_plan") or brief.get("recommended_ugc_scenes") or variant.get("title"), 2)
     if not scene_hint:
         scene_hint = "a realistic use environment for this exact product"
+    scene_hint = sanitize_single_photo_prompt_text(scene_hint)
     phone_geometry = phone_geometry_constraints_for_prompt(
         " ".join(
             str(variant.get(key) or "")
@@ -904,7 +949,7 @@ def usage_keyframe_prompt(
     )
     return (
         product_fidelity_block(product_name, product_brief)
-        + "\nCreate a vertical 9:16 product-use keyframe for an 8-second UGC video. "
+        + "\nCreate ONE single vertical 9:16 realistic product-use photo in one continuous camera view. This must be one still image only, with no layout design, comparison graphic, product range display, or visual sequence. "
         f"{moment} "
         f"Use these selected reference images as the product identity source: {json.dumps(references, ensure_ascii=False)}. "
         f"Reference scope: {reference_scope} "
@@ -912,15 +957,18 @@ def usage_keyframe_prompt(
         "The referenced product must remain the exact same physical object, with unobstructed recognizable silhouette and surface details. "
         f"Use this product-appropriate scene rather than a generic kitchen unless the product is truly a kitchen product: {scene_hint}. "
         f"Scene imagination: {scene_imagination} "
-        f"Full 8-second storyboard for continuity: {storyboard} "
         "The lifestyle environment may differ from the original product photo; preserve the product, not the source-photo background. "
         f"{continuity} "
-        "The start and end keyframes must not be near-duplicates: keep product identity stable, but clearly change the action state according to the first vs final storyboard beat. "
+        "The start and end photos must not be near-duplicates: keep product identity stable, but clearly change only the visible action state for this selected moment. "
         "Do not switch to a different room, outlet style, table surface, camera distance, person, wardrobe, or product position between start and end. "
         "Adult hands only if needed, natural phone-shot lighting, no subtitles, no transcript captions, no platform UI, no icons, no extra branding. "
         f"{phone_geometry} "
         "Avoid extreme close-ups, heavy occlusion, dramatic stains, magic effects, or any invented product mechanism. "
-        f"Supported use context: {usage_context}. Proof idea: {proof_moment}."
+        f"Supported use context: {usage_context}. Proof idea: {proof_moment}. "
+        "IMPORTANT ANTI-COLLAGE: This must be exactly one single undivided photograph. "
+        "Do not produce any multi-panel layouts, split-screens, before-after comparisons, contact sheets, product grids, collages, storyboard frames, or 2-up/3-up/4-up arrangements. "
+        "Do not include any on-image text labels, captions, callouts, arrows, circles, or graphic overlays. "
+        "Output one clean standalone 9:16 vertical photo only."
     )
 
 

@@ -82,7 +82,7 @@ def build_keyframe_prompt(variant: dict[str, Any], product_name: str, frame_role
     return (
         variant.get(prompt_key)
         or variant.get("image_prompt")
-        or f"Create a vertical short-form ecommerce UGC {fallback_role} keyframe for {product_name}. Preserve the referenced product exactly. No social media icons, no platform logos, no camera/reel icons, no reaction icons, no app UI, no watermarks."
+        or f"Create a single vertical 9:16 short-form ecommerce UGC {fallback_role} keyframe photo for {product_name}. For END frames: use the start-frame reference for room/lighting/person/product continuity ONLY, create a VISIBLY DIFFERENT final moment. Preserve the referenced product exactly. Output exactly one undivided photograph. No multi-panel layouts, no split-screens, no before-after comparisons, no contact sheets, no product grids, no collages, no storyboard frames, no 2-up/3-up/4-up arrangements. No on-image text labels, captions, callouts, arrows, or graphic overlays. No social media icons, no platform logos, no camera/reel icons, no reaction icons, no app UI, no watermarks."
     )
 
 
@@ -93,18 +93,11 @@ def keyframe_references(
     max_references: int,
 ) -> list[Path]:
     base_references = existing_references(product_dir, variant, max_references=max(1, max_references))
-    if frame_role != "end":
+    if frame_role == "end":
+        # Do NOT pass the start frame as a reference image for the end keyframe.
+        # The start frame biases Image2 toward copying the composition instead of advancing the scene.
+        # End frame should only lock the product identity from canonical product references.
         return base_references
-    variant_id = int(variant.get("variant_id", 0))
-    start_frame = product_dir / "generated_images" / f"variant-{variant_id:02d}-start.png"
-    if start_frame.exists():
-        chained: list[Path] = [start_frame]
-        for item in base_references:
-            if item not in chained:
-                chained.append(item)
-            if len(chained) >= max(1, max_references):
-                break
-        return chained
     return base_references
 
 
