@@ -15,7 +15,7 @@ from common import (
     load_json,
     multipart_request,
     request_json,
-    require_api_key,
+    require_api_key_for_base_url,
     selected_product_dirs,
     write_json,
 )
@@ -329,7 +329,7 @@ def main() -> None:
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
     selected_variants = parse_variants(args.variants)
-    api_key = require_api_key()
+    api_key = require_api_key_for_base_url(args.base_url)
     for product_dir in selected_product_dirs(args.output_dir, args.products):
         process_product(product_dir, api_key, selected_variants, args)
 

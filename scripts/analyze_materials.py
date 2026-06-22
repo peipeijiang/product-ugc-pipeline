@@ -5,7 +5,7 @@ import argparse
 from pathlib import Path
 from typing import Any
 
-from common import data_url, image_quality_metadata, load_json, request_json, require_api_key, selected_product_dirs, write_json, write_text
+from common import data_url, image_quality_metadata, load_json, request_json, require_api_key_for_base_url, selected_product_dirs, write_json, write_text
 
 
 SYSTEM_PROMPT = """You are a product-asset analyst for ecommerce UGC ads.
@@ -186,7 +186,7 @@ def main() -> None:
     parser.add_argument("--products", default="", help="Comma-separated product selectors, e.g. 01 or 01-flower")
     parser.add_argument("--limit-images", type=int, default=6, help="Only analyze the first N filtered product images per selected product. Use 0 for all.")
     args = parser.parse_args()
-    api_key = require_api_key()
+    api_key = require_api_key_for_base_url(args.base_url)
     for product_dir in selected_product_dirs(args.output_dir, args.products):
         analyze_product_dir(product_dir, api_key, args.model, args.base_url, args.limit_images)
 

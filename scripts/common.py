@@ -189,6 +189,21 @@ def require_api_key() -> str:
     return api_key
 
 
+def require_api_key_for_base_url(base_url: str) -> str:
+    lowered = (base_url or "").lower()
+    if "minimax" in lowered or "minimaxi" in lowered:
+        env_names = ("MINIMAX_API_KEY", "PRODUCT_UGC_API_KEY", "LAOZHANG_API_KEY")
+    elif "laozhang" in lowered:
+        env_names = ("LAOZHANG_API_KEY", "PRODUCT_UGC_API_KEY")
+    else:
+        env_names = ("PRODUCT_UGC_API_KEY", "LAOZHANG_API_KEY", "MINIMAX_API_KEY")
+    for env_name in env_names:
+        api_key = os.environ.get(env_name, "").strip()
+        if api_key:
+            return api_key
+    raise SystemExit(f"Missing API key. Export one of: {', '.join(env_names)}")
+
+
 def download_binary(url: str, destination: Path, timeout: int = 60) -> bool:
     try:
         _, headers, body = http_request(url, timeout=timeout)

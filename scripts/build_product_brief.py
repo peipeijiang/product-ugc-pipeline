@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from common import load_json, request_json, require_api_key, selected_product_dirs, write_json, write_text
+from common import load_json, request_json, require_api_key_for_base_url, selected_product_dirs, write_json, write_text
 
 
 SYSTEM_PROMPT = """You are a product usage researcher for UGC ad production.
@@ -140,7 +140,7 @@ def main() -> None:
     parser.add_argument("--timeout", type=int, default=420)
     parser.add_argument("--products", default="", help="Comma-separated product selectors, e.g. 01 or 01-flower")
     args = parser.parse_args()
-    api_key = require_api_key()
+    api_key = require_api_key_for_base_url(args.base_url)
     for product_dir in selected_product_dirs(args.output_dir, args.products):
         process_product(product_dir, api_key, args)
 
