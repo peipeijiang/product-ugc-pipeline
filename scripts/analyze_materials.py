@@ -55,6 +55,17 @@ def extract_json_content(response: dict[str, Any]) -> dict[str, Any]:
     if not content:
         return {"raw_response": response, "error": "empty content"}
     import json
+    import re
+
+    content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", content, flags=re.DOTALL)
+    if fenced:
+        content = fenced.group(1).strip()
+    elif not content.startswith("{"):
+        start = content.find("{")
+        end = content.rfind("}")
+        if start >= 0 and end > start:
+            content = content[start : end + 1]
 
     try:
         return json.loads(content)

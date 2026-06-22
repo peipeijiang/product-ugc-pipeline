@@ -337,6 +337,15 @@ def parse_json_text(text: str, context: str) -> dict[str, Any]:
     stripped = text.strip()
     if not stripped:
         raise RuntimeError(f"{context}: empty model content")
+    stripped = re.sub(r"<think>.*?</think>", "", stripped, flags=re.DOTALL).strip()
+    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", stripped, flags=re.DOTALL)
+    if fenced:
+        stripped = fenced.group(1).strip()
+    elif not stripped.startswith("{"):
+        start = stripped.find("{")
+        end = stripped.rfind("}")
+        if start >= 0 and end > start:
+            stripped = stripped[start : end + 1]
     try:
         return json.loads(stripped)
     except json.JSONDecodeError as error:

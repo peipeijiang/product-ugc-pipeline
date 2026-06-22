@@ -177,6 +177,18 @@ Read `references/laozhang-api-notes.md` before changing API calls. Key defaults:
 - VEO 3.1 async endpoint: `POST /videos`, poll `GET /videos/{id}`, then download via `GET /videos/{id}/content`.
 - Use VEO models with `-fl` suffix for image-to-video reference frames.
 
+## MiniMax API Notes
+
+MiniMax can be used as a backup vision/chat provider when LaoZhang vision endpoints fail.
+
+Key defaults:
+
+- Base URL: `https://api.minimaxi.com/v1`
+- Common model: `MiniMax-M3`
+- The current scripts are OpenAI-compatible and can call MiniMax by passing `--model MiniMax-M3 --base-url https://api.minimaxi.com/v1`.
+- MiniMax may return JSON inside `<think>...</think>` blocks or fenced ```json code blocks. The JSON parsers in `analyze_materials.py`, `build_product_brief.py`, and `generate_ugc_prompts.py` strip those wrappers before parsing.
+- The legacy `https://api.minimax.io` host may not accept newer `sk-cp-...` keys; prefer `https://api.minimaxi.com/v1` for these keys.
+
 ## LK888 / updrama API Notes
 
 Use `scripts/generate_videos_lk888.py` only when LK888/updrama is the requested provider or LaoZhang VEO is unavailable.
