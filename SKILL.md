@@ -116,14 +116,15 @@ Generate prompts in English for image/video models, but keep metadata fields rea
 Before generating image/video prompts, separate cognition into four layers:
 
 1. Product identity: exact appearance, silhouette, materials, functional surfaces, visible mechanisms, ports, accessories, and SKU/colorway that must never drift.
-2. Product function: confirmed use cases, step-by-step operation, proof moments, misuse risks, and what must be visible for a buyer to understand how it works.
-3. Selling angle: the small buyer benefit each variant highlights, such as speed, portability, storage, one-handed use, fewer cables, compactness, precision, giftability, or cleaning convenience.
-4. Scene imagination: realistic lifestyle contexts inferred from the function and selling angle, not limited to the original product-page photos.
+2. Commercial promise: the product title, page selling points, and confirmed selling points that explain why a buyer would care.
+3. Product function: confirmed use cases, step-by-step operation, proof moments, misuse risks, and what must be visible for a buyer to believe the promise.
+4. Buyer-visible effect: the after-state created by the product, such as calmer pet, cleaner sink, faster prep, less clutter, easier setup, cooler air, more comfortable sleep, or safer grooming.
+5. Scene imagination: realistic lifestyle contexts inferred from the buyer problem, function, and selling angle, not limited to the original product-page photos.
 
-Every batch should deliberately vary the variants by function, scenario, action, and proof moment. Avoid making all prompts the same “place product on counter/table, show result” pattern.
+Every batch should deliberately vary the variants by buyer problem, selling angle, scenario, action, proof moment, and final effect. Avoid making all prompts the same “place product on counter/table, show result” pattern.
 For rerolls, always treat older `ugc_prompts*.json` files as history to avoid, not as the default video source, unless the user explicitly asks to rerun that exact batch.
 
-Before writing multiple variants, allocate a distinct `primary_function_focus` for each fresh variant from `product_brief.confirmed_use_cases`, `step_by_step_usage`, and `proof_moments`. Do not assign the same primary function to every product or every variant unless the product only has one confirmed function. If overlap is unavoidable, materially change at least four dimensions: buyer context, scene geometry, proof moment, camera idea, pace, and creator style. For multifunction wearables such as smart rings, do not default every clip to remote photo control; split variants across confirmed functions such as app/health check, display/status glance, charging dock, touch gesture, activity tracking, waterproof daily wear, or gift/fit detail as supported by the product brief.
+Before writing multiple variants, allocate a distinct `primary_function_focus` from `product_brief.confirmed_selling_points`, product-page `selling_points`, `confirmed_use_cases`, `step_by_step_usage`, and `proof_moments`. Do not let minor hardware details, materials, or setup steps become the lead angle when the product title/page clearly sells a higher-level benefit. If overlap is unavoidable, materially change at least four dimensions: buyer problem, buyer-visible effect, scene geometry, proof moment, camera idea, pace, and creator style. For multifunction wearables such as smart rings, do not default every clip to remote photo control; split variants across confirmed functions such as app/health check, display/status glance, charging dock, touch gesture, activity tracking, waterproof daily wear, or fit/detail as supported by the product brief.
 
 When a phone appears in an image or video prompt, specify physically possible phone geometry:
 
@@ -136,12 +137,12 @@ Every UGC variant must include:
 
 - Hook in the first 2 seconds.
 - Creator persona and shot style, e.g. kitchen counter demo, unboxing, problem-solution, ASMR cleaning, mom-life hack, apartment mini-kitchen.
-- Natural dialogue that explains the product, not a silent product montage. The voice should feel like a stylish short-form lifestyle creator: young, bright, specific, and emotionally interested in the product benefit, without asking for any platform UI, platform logo, or social icon.
+- Natural dialogue that sells the buyer problem/desire, the product intervention, and the improved after-state. The voice should feel like a stylish short-form lifestyle creator: young, bright, specific, and emotionally interested in the product benefit, without asking for any platform UI, platform logo, or social icon.
 - VEO prompts may include native English voiceover/dialogue when the user wants a spoken product explanation. VEO may render 1–2 stylish feature-tag overlays (bold rounded pill labels, warm vibrant accent tints, compact pop-up badge typography) with short plain-English words like “100 speeds” or “Tilt airflow”. These must not be subtitles, sentence captions, transcripts, lower thirds, karaoke text, platform UI, social media icons, logos, reaction icons, camera icons, or watermarks.
 - For 8-second VEO clips, the spoken copy must be written to finish naturally inside 8 seconds at normal creator pace, not merely shortened arbitrarily.
 - Keep 8-second native voiceover at normal spoken pace: target 14–18 English words total, hard maximum 20 words, and no more than 3 short lines. Avoid unfinished trailing phrases such as “set and...”. Do not repeat the same spoken line across multiple storyboard beats, and explicitly forbid extra filler/CTA beyond the scripted lines.
-- A proof moment showing the core function clearly.
-- A final sell shot with product in hand or on counter.
+- A proof/result moment showing the product creating the advertised benefit or a safe buyer-perceived version of that benefit.
+- A final sell shot where the viewer understands the improved outcome, not merely a product-in-hand beauty shot.
 - Product-fidelity block: “Use the provided product reference as the canonical source. Do not redesign, recolor, simplify, enlarge logos, change flower/gourd/cat silhouette, or invent extra parts.”
 - Negative constraints: no fake claims, no impossible effects, no unrelated accessories, no distorted product geometry.
 - `reference_scope`: a short note that says which parts of source images are product identity locks and which parts are free to reinterpret as lifestyle scene design.
@@ -150,33 +151,36 @@ Every UGC variant must include:
 Actual VEO `video_prompt` should be a conservative usage demo:
 
 - Treat the generated pad image / first frame as the visual identity lock.
-- Show one simple real-world use action supported by `product_brief.json`.
-- Prefer start/end keyframes for 8-second usage videos: start = hook/problem setup, end = believable proof/sell shot.
+- Show one simple real-world use action supported by `product_brief.json`, but organize the clip around the buyer-visible effect.
+- Prefer start/end keyframes for 8-second usage videos: start = hook/problem setup, end = believable improved outcome / proof / sell shot.
 - For wearable products such as collars, rings, braces, or pillows, the start frame should show the real pre-use context and the product about to be used; the end frame should show the same subject wearing/using it correctly. Static product-photo pads are not acceptable for functional usage videos.
 - Start/end keyframes should be meaningfully different enough to imply an 8-second action arc, while keeping the exact same product identity. Avoid nearly identical start/end frames unless the goal is a stable b-roll shot.
 - Start and end keyframes should usually stay in the same room, with the same subject identity, wardrobe, props, lighting, and camera setup; the end frame should feel like a few seconds later in the same moment, not a different shoot.
 - Prefer generating the end keyframe from the already-generated start keyframe plus canonical product references, so the person and scene stay continuous while the action advances.
 - When two keyframes exist, VEO receives both as `input_reference`; image 1 is the first frame and image 2 is the final frame.
 - Allow adult hands and kitchen/sink/tabletop context when needed for a useful demo.
-- Describe the action flow, proof moment, and camera style, but avoid re-describing product geometry as if VEO should redesign it.
-- Do not ask VEO to add new product parts, mechanisms, labels, containers, chambers, hinges, buttons, reservoirs, or unsupported accessories.
+- Describe the buyer problem, product intervention, after-state, proof moment, and camera style. Keep product-identity constraints concise so they do not drown out the selling idea.
+- Do not ask VEO to add new product parts, mechanisms, labels, containers, chambers, hinges, buttons, reservoirs, or unsupported accessories. Do not pile on generic negative constraints unrelated to this product; use only the few risks that matter.
 - Keep detailed UGC dialogue, product explanation, and usage logic in `dialogue_script`, `function_intro_prompt`, `voiceover_script_8s`, `usage_logic`, and `shot_plan` for planning/editing context. The final VEO prompt is always `video_prompt`.
 - Use a single `storyboard_8s` as the source of truth for each variant. Each beat should include `time`, `visual`, `spoken`, and optional `overlay`. `video_prompt` should include the full storyboard, `start_frame_prompt` should depict the first beat, and `end_frame_prompt` should depict the final beat. Overlay labels must be sparse feature tags only, never subtitles or repeated spoken text.
+- `start_frame_prompt` and `end_frame_prompt` are still-image prompts, not planning prompts. They must request one single vertical 9:16 realistic photo for the chosen beat only. Do not include the full storyboard, timeline, multiple beats, “first vs final” wording, contact sheet language, multi-panel language, collage/grid wording, or colorway-range phrases such as “five prints” / “multi-colorway”. Keep only the current frame description, product identity constraints, reference-image scope, and same-scene continuity requirements.
 - The start keyframe is generated first from canonical product references. The end keyframe should usually be generated from the start keyframe plus canonical product references, so the same outlet/table/person/room/camera carries through while only the action result advances. The end frame must not independently invent a different room, wall socket, phone orientation, person, wardrobe, or product state.
 - In `storyboard_8s`, assign each spoken line to only one beat. Other beats should have no new spoken words rather than repeating the previous line, otherwise VEO may over-speak and cut off the ending.
 - Do not let start/end keyframes be generic “before/after” images. They must correspond to the first and final storyboard beats, with a visible action-state change while preserving the same product identity, subject, room, wardrobe, lighting, and continuity.
+- Voiceover and visuals must pass the benefit test: with sound on, the spoken line names the buyer problem/desire and the product-created result; with sound off, the first and final frames still show a believable before/after or need/payoff arc.
 - `on_screen_callouts` may contain short feature tags such as “Fast Setup”, “Water Resistant”, or “Foldable Stand”. For VEO, prefer short plain-English words, 1–3 words per label, max 18 characters, rendered as stylish short-form creator typography (bold rounded pill badges, warm vibrant accent tints, compact pop-up labels) — but never platform/app/action icons, camera/reel icons, reaction icons, or UI chrome. If clean stylish text is uncertain, skip overlay rather than produce ugly or garbled text. Emoji may be stored for later manual editing only; do not send emoji into VEO overlay instructions.
 - Never ask image or video models to render any social media or platform logos/icons, app icons, story frames, platform UI chrome, like/comment/share bars, camera/reel icons, subtitles, captions, transcript text, lower thirds, karaoke text, or watermarks. Avoid positive platform-branded style phrases in generation prompts; say "stylish short-form creator-ad energy" instead. If VEO overlays are used, they must be stylish short-form feature-tag typography only (bold pill labels, warm vibrant tints), never platform branding.
 
 Every UGC variant must be grounded in `product_brief.json`:
 
+- Use `confirmed_selling_points`, product-page `selling_points`, and the product title to identify the main buyer reason to care before choosing a scene.
 - Use `step_by_step_usage` and `confirmed_use_cases` as the truth source for product operation.
 - Use `misuse_risks_to_avoid` to prevent wrong demonstrations.
 - Use `reference_image_strategy` plus `image_analysis.json` to choose full-product reference images for Image 2.
 - Prefer explicit `canonical_reference_images` / `full_product_reference_images` in `product_brief.json` when present, and exclude `alternate_sku_reference_images`, `rejected_reference_images`, `non_canonical_reference_images`, and `avoid_reference_images`.
 - The canonical reference must show the true product full silhouette, correct SKU/style, real proportions, and key functional zones. Do not use accessory-only, packaging-only, loose parts, alternate colorway/SKU, or detail-only photos as the identity reference.
 - Do not let the reference image over-constrain the lifestyle scene. Once the correct product identity and usage mechanics are locked, expand the scene to realistic buyer contexts that make the function easier to understand.
-- For each variant, map one small function or selling point to one scene and one proof moment. If several functions exist, split them across variants rather than cramming them into the same clip.
+- For each variant, map one selling point to one buyer problem, one usage action, one proof/result moment, and one final improved after-state. If several functions exist, split them across variants rather than cramming them into the same clip.
 - If usage is uncertain, write a conservative tabletop/hand demo rather than inventing a dramatic function.
 
 ## LaoZhang API Notes

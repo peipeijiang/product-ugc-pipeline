@@ -65,6 +65,7 @@ def existing_variant_max(video_dir: Path) -> int:
 def upload_litterbox(path: Path, lifetime: str = "1h") -> str:
     command = [
         "curl",
+        "--noproxy", "*",
         "--http1.1",
         "-fsS",
         "-F",
@@ -88,6 +89,7 @@ def upload_uguu(path: Path) -> str:
             "https://uguu.se/upload.php",
             files={"files[]": (path.name, file_handle, "image/png")},
             timeout=120,
+            proxies={"http": None, "https": None},
         )
     if response.status_code >= 400:
         raise RuntimeError(f"Uguu upload failed HTTP {response.status_code}: {response.text[:500]}")

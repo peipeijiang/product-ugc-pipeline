@@ -13,7 +13,7 @@ from common import load_json, request_json, require_api_key_for_base_url, select
 
 
 UGC_SYSTEM_PROMPT = """You are a senior UGC creative director for short-form ecommerce product video.
-Create product-faithful vertical creator-ad prompts with clear 8-second visual storytelling, natural native audio, and strict product continuity. Return JSON only."""
+Create product-faithful vertical creator-ad prompts that sell the main buyer benefit, show the product-created result, use natural native audio, and preserve strict product continuity. Return JSON only."""
 
 VOICEOVER_SEGMENTS = [("0-2s", 6), ("2-5s", 9), ("5-8s", 7)]
 VOICEOVER_TARGET_WORDS = (14, 18)
@@ -695,12 +695,13 @@ def sanitize_single_photo_prompt_text(value: Any) -> str:
 def product_function_summary(manifest: dict[str, Any], product_brief: dict[str, Any] | None = None) -> str:
     brief = product_brief or {}
     candidates = [
+        brief.get("confirmed_selling_points"),
+        manifest.get("selling_points"),
         brief.get("confirmed_use_cases"),
         brief.get("step_by_step_usage"),
         brief.get("function_research"),
         manifest.get("functional_understanding"),
         manifest.get("usage_signals"),
-        manifest.get("selling_points"),
         manifest.get("description"),
     ]
     parts: list[str] = []
@@ -711,10 +712,34 @@ def product_function_summary(manifest: dict[str, Any], product_brief: dict[str, 
     return "; ".join(parts)[:1200] or "demonstrate the confirmed product function with a clear hands-on proof moment"
 
 
+def buyer_effect_summary(variant: dict[str, Any], product_brief: dict[str, Any] | None = None) -> str:
+    """Summarize the buyer-visible result the ad should dramatize.
+
+    This intentionally gives the video model a positive commercial north star
+    before constraints, so clips do not collapse into neutral feature demos.
+    """
+    brief = product_brief or {}
+    candidates = [
+        variant.get("selling_angle"),
+        variant.get("hook"),
+        variant.get("proof_moment"),
+        variant.get("usage_logic"),
+        brief.get("confirmed_selling_points"),
+        brief.get("recommended_ugc_scenes"),
+        brief.get("proof_moments"),
+    ]
+    parts: list[str] = []
+    for candidate in candidates:
+        text = _plain_brief_list(candidate, 3)
+        if text and text not in parts:
+            parts.append(text)
+    return "; ".join(parts)[:700] or "show the product creating a clear practical improvement for the buyer"
+
+
 def build_function_intro_prompt(product_name: str, feature_summary: str, hook: str = "") -> str:
     return (
-        "Write a concise English ecommerce creator voiceover that explains the product function before the visual demo. "
-        "Use a young creator / ecommerce host tone, not a silent montage. "
+        "Write concise English ecommerce creator voiceover around the main buyer benefit and the visible result after using the product, not just how to operate it. "
+        "Use a young creator / ecommerce host tone with a clear problem-before, product-intervention, benefit-after arc. "
         f"Product: {product_name}. Hook angle: {hook}. Confirmed functions/use only: {feature_summary}. "
         "Output should be 1-2 punchy spoken sentences, 18-32 words total, with no unsupported claims, no fake specs, and no brand names unless visible in source materials."
     )
@@ -723,9 +748,9 @@ def build_function_intro_prompt(product_name: str, feature_summary: str, hook: s
 def build_voiceover_script_8s(product_name: str, feature_summary: str, hook: str = "") -> list[dict[str, str]]:
     return normalize_voiceover_script_8s(
         [
-            hook or f"Tiny upgrade, but it makes the setup feel instantly easier.",
-            f"Watch the real function: {feature_summary[:120]}",
-            "The final shot shows the product doing the job.",
+            hook or "This is the small fix that changes the whole routine.",
+            f"Use it once, and the benefit is obvious: {feature_summary[:90]}",
+            "The result is easier, calmer, and more useful.",
         ],
         hook=hook or "Tiny upgrade, but it makes the setup feel instantly easier.",
         fallback=f"Watch the real function: {feature_summary[:120]}",
@@ -977,6 +1002,7 @@ def usage_keyframe_prompt(
 
 def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, Any] | None = None) -> str:
     brief = product_brief or {}
+    buyer_effect = buyer_effect_summary(variant, brief)
     usage_context = _plain_brief_list(
         variant.get("usage_logic") or brief.get("step_by_step_usage") or brief.get("confirmed_or_inferred_use_steps"),
         3,
@@ -1002,10 +1028,11 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
     timed_voiceover = " ".join(f"[{item['time']}] {item['line']}" for item in normalized_voiceover if item.get("line"))
     audio_block = (
         "Native audio: include a clear young American female lifestyle-commerce creator voiceover, bright, stylish, warm, emotionally engaged, and not robotic or corporate. "
+        "The spoken copy must name the buyer problem or desire and the improved result the product creates; do not spend the line only naming parts, materials, or generic setup steps. "
         "The spoken script must finish naturally within 8 seconds at normal creator pace, ideally 14 to 18 English words total and never more than 20 words. "
         f"Speak these exact timed lines in order: {timed_voiceover}. "
         f"Combined exact script: \"{voiceover_text[:220]}\" "
-        "Do not add intro words, filler, repeated lines, extra CTA, or any unscripted speech. Keep the voiceover synchronized to the visual function demo. Add low-volume modern lifestyle background music plus subtle real product handling sounds; no singing."
+        "Do not add intro words, filler, repeated lines, extra CTA, or any unscripted speech. Keep the voiceover synchronized to the benefit/result arc. Add low-volume modern lifestyle background music plus subtle real product handling sounds; no singing."
         if voiceover_text
         else "Native audio: include subtle real product handling sounds only, no music."
     )
@@ -1032,18 +1059,18 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
     )
     return (
         "Create an 8-second vertical stylish creator-ad product-use clip using the provided reference frame or start/end keyframes. "
-        "If two reference images are provided, use image 1 as the exact first frame and image 2 as the exact final frame; create only a smooth practical transition between them. Preserve the same room, outlet/table, wall texture, person, wardrobe, camera height, lens angle, and product position unless the storyboard explicitly moves the product within that same scene. "
-        "The hook is visual and emotional: start with the everyday problem, need, or convenience moment already visible; then show one simple satisfying use action; end on a clear proof/sell shot. "
+        "If two reference images are provided, use image 1 as the first frame and image 2 as the final frame, keeping the same subject, room, lighting, wardrobe, and camera geometry unless the storyboard intentionally moves within that same scene. "
+        "Commercial north star: every visual beat and the voiceover must sell the buyer-visible result, not merely list product parts. "
+        f"Buyer-visible effect to dramatize: {buyer_effect}. "
+        "Use a clear problem-before, product-intervention, benefit-after arc: show the need or frustration, show the product being used correctly, then show the improved outcome, calmer routine, saved effort, comfort, confidence, or other confirmed benefit. "
         f"Follow this exact 0-8s storyboard with visual beat, spoken line, and sparse feature overlay for each beat: {storyboard} "
-        f"Action arc: adult hands interact with the exact visible product and perform one supported use action: {usage_context}. "
+        f"Supported product action: {usage_context}. "
         f"Scene context: {scene_context}. "
         f"Scene imagination: {scene_imagination}. "
         f"Reference scope: {reference_scope} "
         "Keep the same visible product identity throughout: silhouette, proportions, color, texture, and distinctive details must stay consistent while it moves. "
-        "Hands may enter and use the product, but avoid covering the product for more than a brief moment. "
-        "Do not invent new product parts, labels, text, packaging, containers, chambers, hinges, buttons, motors, reservoirs, or mechanisms. "
-        "Avoid magic-cleaning, sudden scene changes, heavy motion blur, product morphing, or unsupported functions. "
-        f"Proof moment: {proof_moment}. "
+        "Avoid unsupported claims, magic effects, sudden scene changes, product morphing, or new product mechanisms. "
+        f"Proof/result moment: {proof_moment}. Make this proof moment feel like the satisfying payoff of the buyer-visible effect. "
         f"{phone_geometry} "
         f"{overlay_block}"
         f"{audio_block} "
@@ -1088,12 +1115,13 @@ Return JSON with:
 Each variant must include:
 - variant_id
 - title
-- primary_function_focus: the single confirmed product function this variant owns; allocate this before writing scenes so the batch does not collapse into one repeated function
+- primary_function_focus: the single confirmed selling point or product function this variant owns; allocate this before writing scenes so the batch does not collapse into one repeated function
+- buyer_effect: the concrete buyer-visible outcome after using the product, such as calmer pet, cleaner sink, faster prep, less clutter, easier setup, cooler air, more comfortable sleep, or safer grooming; this must drive both visuals and voiceover
 - creator_persona
 - hook
 - dialogue_script with natural spoken lines
 - function_intro_prompt: a separate prompt for generating concise spoken function explanation
-- voiceover_script_8s: timed 0-2s, 2-5s, 5-8s spoken script lines that introduce and explain the function
+- voiceover_script_8s: timed 0-2s, 2-5s, 5-8s spoken script lines that sell the main buyer problem/desire, show the product intervention, and land the buyer-visible result
 - on_screen_callouts: 1-3 short ecommerce feature overlay labels rendered as stylish short-form creator typography (bold pill badges, warm vibrant tints, compact pop-up labels); 1-3 plain-English words only, max 18 characters, no emoji; never subtitles, sentence captions, app icons, platform logos, social media icons, camera/reel icons, UI chrome, or watermarks
 - function_demo_prompt: editor-facing prompt that explains the function, proof moment, and final benefit
 - usage_logic: explain how the product works and why the scene is correct
@@ -1109,21 +1137,23 @@ Each variant must include:
 - negative_prompt
 
 Critical:
-1. Use product_brief.step_by_step_usage / confirmed_use_cases as the source of truth for how the product is used.
-2. Do not invent unsupported functions.
-3. Every image_prompt and video_prompt must contain a product-fidelity block requiring exact preservation of the original product appearance.
-4. The selected reference image must be the best true full-product reference: full silhouette, correct SKU/style, real proportions, visible key functional zones. Do not select alternate SKU images, accessory-only images, packaging-only images, loose parts, isolated cables, or detail images as canonical.
-5. Put concise native-audio voiceover lines into VEO video_prompt, and ensure the full spoken copy can naturally finish inside 8 seconds at normal creator pace: target 14-18 English words, hard max 20 words, no unfinished trailing phrase.
-6. Keep every shot_plan, voiceover_script_8s, image-to-video prompt, and action arc designed for exactly 8 seconds. Do not write 9-12s, 10-12s, 12s, or 15s plans.
-7. Allow only 1-2 tiny sparse VEO overlay labels from on_screen_callouts as feature tags, e.g. "100 speeds" or "Tilt airflow"; render them as stylish short-form creator typography (bold rounded pill badges, warm vibrant accent tints, compact pop-up labels), plain-English only, no emoji. If clean stylish text is uncertain, skip overlay rather than render ugly/garbled words. Do not ask for subtitles, transcript captions, lower-thirds, karaoke text, social media icons, platform logos, camera/reel icons, app UI, or watermarks. Never use positive platform-branded style phrases; say stylish short-form creator-ad energy instead.
-8. Build the video from a single storyboard: video_prompt must include every beat's time, visual content, spoken line, and optional sparse feature overlay; start_frame_prompt must depict the first beat; end_frame_prompt must depict the final beat. Overlay must not repeat the spoken line as subtitles.
-9. Product reference images lock the product itself, not the entire source photo. Preserve product identity and usage mechanics, but freely imagine realistic buyer scenes, backgrounds, camera angles, and contextual props that clarify the function.
-10. Each variant should focus on one small function or selling point. Vary function, scene, action, and proof moment across the batch; do not produce ten versions of the same tabletop placement.
-11. Start/end keyframes should be meaningfully different enough for an 8-second action arc while preserving the same exact product. Generate the end frame as the same shoot a few seconds later: same room, wall socket/table, person, wardrobe, lighting, product identity, and camera geometry; only the action result changes.
-12. Read the historical variants listed above as actual prior creative work for this product. Do not paraphrase them. Avoid reusing the same scene setup, same use action, same proof moment, same buyer context, or same selling angle unless you materially transform at least 3 of those dimensions.
-13. When function overlap is unavoidable, deliberately choose a different buyer situation, a different visual hook, a different camera idea, and a different proof framing instead of repeating the same demo in new words.
-14. Before writing the variants, allocate one primary_function_focus per variant from confirmed_use_cases, step_by_step_usage, and proof_moments. Do not assign the same primary function to multiple fresh variants unless the product has only one confirmed function. For multifunction wearables such as smart rings, do not default every variant to photo-taking/remote shutter; split confirmed functions across health/app checks, charging, status display, touch control, activity tracking, waterproof daily wear, or fit/detail as supported by the brief.
-15. If a phone appears, make its orientation physically possible. For selfie/timer/remote-shutter demos, the phone screen faces the creator and the lens points toward the creator; the viewer sees phone back/side, mirror, or over-shoulder composition. For app-screen proof, use over-shoulder/tabletop/second-device geometry. For wireless charging, the phone lies flat screen-up on the charger unless the real product is a stand.
+1. Start from product_brief.confirmed_selling_points, manifest.selling_points, and the product title to identify the buyer's main reason to care. Then use product_brief.step_by_step_usage / confirmed_use_cases only to keep the demo mechanically correct.
+2. Do not invent unsupported functions, but do not bury the commercial promise. If a claim is hard to prove visually, translate it into a safe buyer-perceived result/routine instead of deleting it.
+3. Every variant must pass this commercial test: could a shopper understand the product's benefit with the sound on and again with the sound off? If not, rewrite the storyboard before returning JSON.
+4. Every image_prompt and video_prompt must contain a product-fidelity block requiring exact preservation of the original product appearance.
+5. The selected reference image must be the best true full-product reference: full silhouette, correct SKU/style, real proportions, visible key functional zones. Do not select alternate SKU images, accessory-only images, packaging-only images, loose parts, isolated cables, or detail images as canonical.
+6. Put concise native-audio voiceover lines into VEO video_prompt, and ensure the full spoken copy can naturally finish inside 8 seconds at normal creator pace: target 14-18 English words, hard max 20 words, no unfinished trailing phrase.
+7. Voiceover must be benefit-led: mention the buyer problem/desire and the result after using the product. Avoid scripts that only say "snap it", "soft fabric", "white buckle", "easy setup", or other part/setup descriptions unless those words are tied to the main buyer outcome.
+8. Keep every shot_plan, voiceover_script_8s, image-to-video prompt, and action arc designed for exactly 8 seconds. Do not write 9-12s, 10-12s, 12s, or 15s plans.
+9. Allow only 1-2 tiny sparse VEO overlay labels from on_screen_callouts as feature tags, e.g. "100 speeds" or "Tilt airflow"; render them as stylish short-form creator typography (bold rounded pill badges, warm vibrant accent tints, compact pop-up labels), plain-English only, no emoji. If clean stylish text is uncertain, skip overlay rather than render ugly/garbled words. Do not ask for subtitles, transcript captions, lower-thirds, karaoke text, social media icons, platform logos, camera/reel icons, app UI, or watermarks. Never use positive platform-branded style phrases; say stylish short-form creator-ad energy instead.
+10. Build the video from a single storyboard: video_prompt must include every beat's time, visual content, spoken line, and optional sparse feature overlay; start_frame_prompt must depict the first beat's problem/setup; end_frame_prompt must depict the final beat's improved result/payoff. Overlay must not repeat the spoken line as subtitles.
+11. Product reference images lock the product itself, not the entire source photo. Preserve product identity and usage mechanics, but freely imagine realistic buyer scenes, backgrounds, camera angles, and contextual props that clarify the benefit.
+12. Each variant should focus on one small selling point or function. Vary buyer problem, scene, action, proof/result moment, and emotional payoff across the batch; do not produce ten versions of the same tabletop placement.
+13. Start/end keyframes should be meaningfully different enough for an 8-second action arc while preserving the same exact product. Generate the end frame as the same shoot a few seconds later: same room, wall socket/table, person, wardrobe, lighting, product identity, and camera geometry; only the action result changes.
+14. Read the historical variants listed above as actual prior creative work for this product. Do not paraphrase them. Avoid reusing the same scene setup, same use action, same proof moment, same buyer context, or same selling angle unless you materially transform at least 3 of those dimensions.
+15. When function overlap is unavoidable, deliberately choose a different buyer problem, a different visible result, a different camera idea, and a different proof framing instead of repeating the same demo in new words.
+16. Before writing the variants, allocate one primary_function_focus per variant from confirmed_selling_points, manifest selling_points, confirmed_use_cases, step_by_step_usage, and proof_moments. Do not let minor hardware details or materials become the lead selling angle when the product title/page clearly sells a higher-level benefit. For multifunction wearables such as smart rings, do not default every variant to photo-taking/remote shutter; split confirmed functions across health/app checks, charging, status display, touch control, activity tracking, waterproof daily wear, or fit/detail as supported by the brief.
+17. If a phone appears, make its orientation physically possible. For selfie/timer/remote-shutter demos, the phone screen faces the creator and the lens points toward the creator; the viewer sees phone back/side, mirror, or over-shoulder composition. For app-screen proof, use over-shoulder/tabletop/second-device geometry. For wireless charging, the phone lies flat screen-up on the charger unless the real product is a stand.
 """.strip()
     payload = {
         "model": model,
