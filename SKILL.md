@@ -220,7 +220,6 @@ Key defaults:
 - Balance endpoint: `GET /v1/skills/balance`; query it before paid batches when practical.
 - Media creation endpoint: `POST /v1/media/generate`; poll `GET /v1/skills/task-status?task_id={task_id}` until `is_final=true`.
 - VEO 3.1 production default model name: `veo3.1`; common params are `generation_mode=fast`, `aspect_ratio=9:16`, `images=[start_url,end_url]`, and `enhance_prompt=false`.
-- Gemini Omni Flash video model name: `omni-flash`; user shorthand `omni-fast` should be treated as `omni-flash` unless LK888 exposes a separate exact model. Use the updrama media endpoint with `base_url=https://api.lk888.ai`, create path `/v1/media/generate`, status path `/v1/media/status`, `duration=8`, `aspect_ratio=9:16`, `images=[start_url,end_url]`, and `enhance_prompt=false`. It is a video/media model, not a chat prompt-writing model, and it is a non-VEO model that requires explicit user approval.
 - `veo3.1-lite` uses `quality=sd|4k` instead of `generation_mode`, but may have inactive channels; verify pricing/status before relying on it.
 - Upload params require publicly reachable URLs. The API does not accept local file paths or multipart image uploads for `images`.
 - The adapter writes LK888 outputs to `videos_lk888/` so LaoZhang outputs in `videos/` remain untouched.
