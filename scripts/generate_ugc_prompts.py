@@ -140,6 +140,7 @@ def infer_pace_tag(variant: dict[str, Any]) -> str:
 
 def _clean_spoken_text(text: str) -> str:
     cleaned = re.sub(r"[\[\]\{\}\"“”]", " ", text or "")
+    cleaned = re.sub(r"^\s*(?:\d+(?:\.\d+)?\s*[-–]\s*\d+(?:\.\d+)?\s*s?|[0-9]+\s*[-–]\s*[0-9]+\s*seconds?)\s*:\s*", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s+", " ", cleaned).strip(" .,-")
     return cleaned
 
@@ -712,6 +713,24 @@ def product_function_summary(manifest: dict[str, Any], product_brief: dict[str, 
     return "; ".join(parts)[:1200] or "demonstrate the confirmed product function with a clear hands-on proof moment"
 
 
+def commercial_promise_summary(manifest: dict[str, Any], product_brief: dict[str, Any] | None = None) -> str:
+    brief = product_brief or {}
+    candidates = [
+        manifest.get("source_url"),
+        manifest.get("product_name"),
+        brief.get("product_name"),
+        brief.get("confirmed_selling_points"),
+        manifest.get("selling_points"),
+        manifest.get("description"),
+    ]
+    parts: list[str] = []
+    for candidate in candidates:
+        text = _plain_brief_list(candidate, 8)
+        if text and text not in parts:
+            parts.append(text)
+    return "; ".join(parts)[:1600] or "infer the main buyer promise from the product page and brief"
+
+
 def buyer_effect_summary(variant: dict[str, Any], product_brief: dict[str, Any] | None = None) -> str:
     """Summarize the buyer-visible result the ad should dramatize.
 
@@ -1091,8 +1110,14 @@ def generate_with_model(
     base_url: str,
     timeout: int,
 ) -> dict[str, Any]:
+    commercial_promise = commercial_promise_summary(manifest, product_brief)
     prompt = f"""
 Create {count} distinct UGC prompt variants for short-form ecommerce product ads.
+
+HIGH-PRIORITY COMMERCIAL PROMISE SIGNALS:
+{commercial_promise}
+
+Use these signals to decide the lead selling idea before reading mechanical details. If a page title or URL sells a high-level benefit but source images cannot visually prove the literal claim, translate it into a safe buyer-perceived routine, concern, or after-state. Do not delete that commercial promise and retreat into minor hardware/material details.
 
 Product manifest:
 {json.dumps(manifest, ensure_ascii=False)[:8000]}
@@ -1137,7 +1162,7 @@ Each variant must include:
 - negative_prompt
 
 Critical:
-1. Start from product_brief.confirmed_selling_points, manifest.selling_points, and the product title to identify the buyer's main reason to care. Then use product_brief.step_by_step_usage / confirmed_use_cases only to keep the demo mechanically correct.
+1. Start from the HIGH-PRIORITY COMMERCIAL PROMISE SIGNALS, product_brief.confirmed_selling_points, manifest.selling_points, URL/product-title language, and the product title to identify the buyer's main reason to care. Then use product_brief.step_by_step_usage / confirmed_use_cases only to keep the demo mechanically correct.
 2. Do not invent unsupported functions, but do not bury the commercial promise. If a claim is hard to prove visually, translate it into a safe buyer-perceived result/routine instead of deleting it.
 3. Every variant must pass this commercial test: could a shopper understand the product's benefit with the sound on and again with the sound off? If not, rewrite the storyboard before returning JSON.
 4. Every image_prompt and video_prompt must contain a product-fidelity block requiring exact preservation of the original product appearance.
@@ -1152,7 +1177,7 @@ Critical:
 13. Start/end keyframes should be meaningfully different enough for an 8-second action arc while preserving the same exact product. Generate the end frame as the same shoot a few seconds later: same room, wall socket/table, person, wardrobe, lighting, product identity, and camera geometry; only the action result changes.
 14. Read the historical variants listed above as actual prior creative work for this product. Do not paraphrase them. Avoid reusing the same scene setup, same use action, same proof moment, same buyer context, or same selling angle unless you materially transform at least 3 of those dimensions.
 15. When function overlap is unavoidable, deliberately choose a different buyer problem, a different visible result, a different camera idea, and a different proof framing instead of repeating the same demo in new words.
-16. Before writing the variants, allocate one primary_function_focus per variant from confirmed_selling_points, manifest selling_points, confirmed_use_cases, step_by_step_usage, and proof_moments. Do not let minor hardware details or materials become the lead selling angle when the product title/page clearly sells a higher-level benefit. For multifunction wearables such as smart rings, do not default every variant to photo-taking/remote shutter; split confirmed functions across health/app checks, charging, status display, touch control, activity tracking, waterproof daily wear, or fit/detail as supported by the brief.
+16. Before writing the variants, allocate one primary_function_focus per variant from the high-priority commercial promise, confirmed_selling_points, manifest selling_points, confirmed_use_cases, step_by_step_usage, and proof_moments. Do not let minor hardware details or materials become the lead selling angle when the product title/page/URL clearly sells a higher-level benefit. For this situation, hardware details such as buckle, slider, material, color, or pattern should support the main promise rather than replace it. For multifunction wearables such as smart rings, do not default every variant to photo-taking/remote shutter; split confirmed functions across health/app checks, charging, status display, touch control, activity tracking, waterproof daily wear, or fit/detail as supported by the brief.
 17. If a phone appears, make its orientation physically possible. For selfie/timer/remote-shutter demos, the phone screen faces the creator and the lens points toward the creator; the viewer sees phone back/side, mirror, or over-shoulder composition. For app-screen proof, use over-shoulder/tabletop/second-device geometry. For wireless charging, the phone lies flat screen-up on the charger unless the real product is a stand.
 """.strip()
     payload = {

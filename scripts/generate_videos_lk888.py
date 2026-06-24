@@ -346,6 +346,14 @@ def lk888_get(api_key: str, endpoint: str, base_url: str, params: dict[str, Any]
 
 
 def build_model_params(args: argparse.Namespace, image_urls: list[str]) -> dict[str, Any]:
+    if args.model == "kwvideo-v2":
+        return {
+            "version": args.version,
+            "duration": str(args.duration),
+            "aspect_ratio": args.aspect_ratio,
+            "resolution": args.resolution,
+            "images": image_urls[:2],
+        }
     if args.model.startswith("doubao-seedance"):
         return {
             "images": image_urls,
@@ -539,6 +547,7 @@ def main() -> None:
     parser.add_argument("--base-url", default=BASE_URL)
     parser.add_argument("--status-endpoint", default="/v1/skills/task-status")
     parser.add_argument("--generation-mode", default="fast")
+    parser.add_argument("--version", default="快速")
     parser.add_argument("--quality", default="sd")
     parser.add_argument("--aspect-ratio", default="9:16")
     parser.add_argument("--duration", default="8")

@@ -6,6 +6,7 @@ import json
 import mimetypes
 import os
 import re
+import subprocess
 import time
 import urllib.error
 import urllib.parse
@@ -209,7 +210,14 @@ def download_binary(url: str, destination: Path, timeout: int = 60) -> bool:
         _, headers, body = http_request(url, timeout=timeout)
     except RuntimeError as error:
         print(f"[warn] download failed: {url} ({error})")
-        return False
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        command = ["curl", "-L", "--retry", "3", "--retry-delay", "2", "--max-time", str(timeout), url, "-o", str(destination)]
+        try:
+            subprocess.run(command, check=True, capture_output=True, text=True, timeout=timeout + 15)
+            return destination.exists() and destination.stat().st_size > 0
+        except Exception as curl_error:
+            print(f"[warn] curl fallback download failed: {url} ({curl_error})")
+            return False
     content_type = headers.get("Content-Type", "")
     if "text/html" in content_type and len(body) < 2000:
         print(f"[warn] skipped likely html asset: {url}")
