@@ -346,8 +346,6 @@ def lk888_get(api_key: str, endpoint: str, base_url: str, params: dict[str, Any]
 
 
 def build_model_params(args: argparse.Namespace, image_urls: list[str]) -> dict[str, Any]:
-    if args.model == "omni-fast":
-        args.model = "omni-flash"
     if args.model == "kwvideo-v2":
         return {
             "version": args.version,
@@ -474,8 +472,7 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
             )
         )
     params = build_model_params(args, [item["url"] for item in uploads])
-    model_name = "omni-flash" if args.model == "omni-fast" else args.model
-    payload = {"model": model_name, "prompt": prompt, "params": params, "count": 1}
+    payload = {"model": args.model, "prompt": prompt, "params": params, "count": 1}
     print(f"[create] {product_dir.name} variant {variant_id:02d} model={args.model}", flush=True)
     create_response = with_retries(
         f"create task for {product_dir.name} variant {variant_id:02d}",
@@ -502,7 +499,7 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
     return {
         "variant_id": variant_id,
         "task_id": task_id,
-        "model": model_name,
+        "model": args.model,
         "reference_images": uploads,
         "prompt": prompt,
         "params": params,
