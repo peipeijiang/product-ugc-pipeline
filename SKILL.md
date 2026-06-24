@@ -17,7 +17,7 @@ Product references lock the product, not the whole source photo. Use source imag
 2. Run `scripts/scrape_products.py` to create numbered product folders and download product-only page images.
 3. Run `scripts/analyze_materials.py` with `LAOZHANG_API_KEY` to describe filtered product images and identify usage mechanics/reference roles.
 4. Run `scripts/build_product_brief.py` to synthesize product usage cognition from `product_manifest.json` + `image_analysis.json`.
-5. Run `scripts/generate_ugc_prompts.py` to create 10 UGC prompt variants grounded in the product brief.
+5. Run `scripts/generate_ugc_prompts.py` to create UGC prompt variants grounded in the product brief. This step must first build a benefit ladder from the highest-priority commercial promise, then write the hook, voiceover, storyboard, keyframe prompts, and VEO prompt around that ladder.
 6. Run `scripts/generate_images.py` to create image-to-image “pad images” or start/end keyframes using GPT-Image-2 and the selected product references.
 7. Run `scripts/generate_videos_lk888.py` to send public start/end keyframe URLs to LK888/updrama VEO. Production default video generation is LK888 `veo3.1`.
 8. Use `scripts/generate_videos.py` for LaoZhang VEO only when the user explicitly asks for LaoZhang or LK888 is not the requested provider.
@@ -115,7 +115,24 @@ Every product gets automatic hallucination-defense injection into all VEO/image 
 
 Generate prompts in English for image/video models, but keep metadata fields readable in either Chinese or English depending on user preference.
 
-Before generating image/video prompts, separate cognition into four layers:
+### Core Selling-Point Flow
+
+The skill must capture the core selling point before it writes any scene, voiceover, or image prompt. The commercial logic is:
+
+1. `product_manifest.json`: captures title, URL wording, page description, price, and page selling points. This is where the raw commercial promise first appears.
+2. `image_analysis.json`: filters which claims are visually supported, identifies true product appearance, and flags risks where the page promise cannot be literally shown.
+3. `product_brief.json`: converts raw promise + visual evidence into confirmed selling points, supported use cases, proof moments, misuse risks, and safe buyer-perceived results.
+4. `generate_ugc_prompts.py`: builds a per-variant `benefit_ladder` before writing creative:
+   - `core_selling_claim`: the one buyer reason to care.
+   - `buyer_problem`: the desire, worry, frustration, or routine moment that creates demand.
+   - `product_intervention`: the one supported product action shown correctly.
+   - `buyer_result`: the visible or spoken after-state that makes the promise believable.
+   - `proof_moment`: the exact visual moment that proves the result without hallucinating.
+5. `video_prompt`: receives the benefit ladder explicitly, so VEO is guided by the commercial spine instead of drifting into generic “how it works” or hardware-only demos.
+
+For example, a pet collar marketed around pest/outdoor protection should not lead with “white buckle” or “soft fabric” unless those details support the buyer promise. A stronger ladder is: outdoor worry → put the collar on before balcony/grass time → pet is comfortable and owner feels prepared. If literal pest removal cannot be visually proven, use safe routine/result language instead of fake insect-killing visuals.
+
+Before generating image/video prompts, separate cognition into five layers:
 
 1. Product identity: exact appearance, silhouette, materials, functional surfaces, visible mechanisms, ports, accessories, and SKU/colorway that must never drift.
 2. Commercial promise: the product title, page selling points, and confirmed selling points that explain why a buyer would care.
@@ -139,10 +156,11 @@ Every UGC variant must include:
 
 - Hook in the first 2 seconds.
 - Creator persona and shot style, e.g. kitchen counter demo, unboxing, problem-solution, ASMR cleaning, mom-life hack, apartment mini-kitchen.
-- Natural dialogue that sells the buyer problem/desire, the product intervention, and the improved after-state. The voice should feel like a stylish short-form lifestyle creator: young, bright, specific, and emotionally interested in the product benefit, without asking for any platform UI, platform logo, or social icon.
+- Natural dialogue that sells the buyer problem/desire, the product intervention, and the improved after-state. The voice should feel like a stylish short-form lifestyle creator: young, bright, specific, and emotionally interested in the product benefit, without asking for any platform UI, platform logo, or social icon. The dialogue must make the product feel worth buying; do not let it collapse into neutral part naming or generic setup narration.
 - VEO prompts may include native English voiceover/dialogue when the user wants a spoken product explanation. VEO may render 1–2 stylish feature-tag overlays (bold rounded pill labels, warm vibrant accent tints, compact pop-up badge typography) with short plain-English words like “100 speeds” or “Tilt airflow”. These must not be subtitles, sentence captions, transcripts, lower thirds, karaoke text, platform UI, social media icons, logos, reaction icons, camera icons, or watermarks.
 - For 8-second VEO clips, the spoken copy must be written to finish naturally inside 8 seconds at normal creator pace, not merely shortened arbitrarily.
 - Keep 8-second native voiceover at normal spoken pace: target 14–18 English words total, hard maximum 20 words, and no more than 3 short lines. Avoid unfinished trailing phrases such as “set and...”. Do not repeat the same spoken line across multiple storyboard beats, and explicitly forbid extra filler/CTA beyond the scripted lines.
+- For every 8-second voiceover, use the `benefit_ladder` order: buyer problem/desire → product intervention → buyer result. Avoid dead lines like “here is how it works,” “easy setup,” or “soft material” unless they clearly support the core buying reason.
 - A proof/result moment showing the product creating the advertised benefit or a safe buyer-perceived version of that benefit.
 - A final sell shot where the viewer understands the improved outcome, not merely a product-in-hand beauty shot.
 - Product-fidelity block: “Use the provided product reference as the canonical source. Do not redesign, recolor, simplify, enlarge logos, change flower/gourd/cat silhouette, or invent extra parts.”

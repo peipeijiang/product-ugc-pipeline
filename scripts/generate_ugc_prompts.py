@@ -12,8 +12,8 @@ from typing import Any
 from common import load_json, request_json, require_api_key_for_base_url, selected_product_dirs, write_json
 
 
-UGC_SYSTEM_PROMPT = """You are a senior UGC creative director for short-form ecommerce product video.
-Create product-faithful vertical creator-ad prompts that sell the main buyer benefit, show the product-created result, use natural native audio, and preserve strict product continuity. Return JSON only."""
+UGC_SYSTEM_PROMPT = """You are a senior UGC creative director and ecommerce offer strategist for short-form product video.
+Before writing scenes, identify the buyer's core reason to buy, then turn it into a product-faithful vertical creator ad that sells the result, uses natural native audio, and preserves strict product continuity. Return JSON only."""
 
 VOICEOVER_SEGMENTS = [("0-2s", 6), ("2-5s", 9), ("5-8s", 7)]
 VOICEOVER_TARGET_WORDS = (14, 18)
@@ -473,6 +473,14 @@ def normalize_variants(output: dict[str, Any], manifest: dict[str, Any], referen
         clean_variant.setdefault("reference_scope", reference_scope_note(references))
         clean_variant.setdefault("scene_imagination", build_scene_imagination(clean_variant, product_brief))
         clean_variant.setdefault("selling_angle", infer_selling_angle(clean_variant, feature_summary))
+        benefit_ladder = build_benefit_ladder(clean_variant, manifest, feature_summary, product_brief)
+        clean_variant["benefit_ladder"] = benefit_ladder
+        clean_variant.setdefault("core_selling_claim", benefit_ladder["core_selling_claim"])
+        clean_variant.setdefault("buyer_problem", benefit_ladder["buyer_problem"])
+        clean_variant.setdefault("product_intervention", benefit_ladder["product_intervention"])
+        clean_variant.setdefault("buyer_result", benefit_ladder["buyer_result"])
+        if not str(clean_variant.get("buyer_effect") or "").strip():
+            clean_variant["buyer_effect"] = benefit_ladder["buyer_result"]
         clean_variant.setdefault("negative_prompt", "Do not alter product geometry, color, material, logo/text, silhouette, or invent extra parts.")
         clean_variant.setdefault("function_intro_prompt", build_function_intro_prompt(product_name, feature_summary, clean_variant.get("hook", "")))
         clean_variant["voiceover_script_8s"] = normalize_voiceover_script_8s(
@@ -616,6 +624,73 @@ def infer_selling_angle(variant: dict[str, Any], feature_summary: str) -> str:
         if marker in combined:
             return angle
     return "clear buyer benefit tied to the confirmed product function"
+
+
+def build_benefit_ladder(
+    variant: dict[str, Any],
+    manifest: dict[str, Any],
+    feature_summary: str,
+    product_brief: dict[str, Any] | None = None,
+) -> dict[str, str]:
+    """Create the commercial spine every prompt must follow.
+
+    The model is still responsible for creative writing. This helper makes the
+    generation schema explicit and prevents later normalization from falling
+    back to hardware-only scripts like "snap the buckle" or "soft fabric".
+    """
+    brief = product_brief or {}
+    core_claim = _plain_brief_list(
+        variant.get("core_selling_claim")
+        or variant.get("commercial_promise")
+        or variant.get("primary_function_focus")
+        or variant.get("selling_angle")
+        or brief.get("confirmed_selling_points")
+        or manifest.get("selling_points")
+        or manifest.get("product_name"),
+        2,
+    )
+    buyer_problem = _plain_brief_list(
+        variant.get("buyer_problem")
+        or variant.get("hook")
+        or variant.get("buyer_desire")
+        or variant.get("pain_point")
+        or variant.get("selling_angle"),
+        1,
+    )
+    product_intervention = _plain_brief_list(
+        variant.get("product_intervention")
+        or variant.get("usage_logic")
+        or brief.get("confirmed_use_cases")
+        or brief.get("step_by_step_usage"),
+        2,
+    )
+    buyer_result = _plain_brief_list(
+        variant.get("buyer_result")
+        or variant.get("buyer_effect")
+        or variant.get("proof_moment")
+        or variant.get("selling_angle")
+        or brief.get("proof_moments"),
+        2,
+    )
+    proof = _plain_brief_list(
+        variant.get("proof_moment") or brief.get("proof_moments"),
+        1,
+    )
+    if not core_claim:
+        core_claim = feature_summary[:220] or "the main confirmed buyer benefit"
+    if not buyer_problem:
+        buyer_problem = f"the shopper needs {core_claim}"
+    if not product_intervention:
+        product_intervention = feature_summary[:220] or "show the confirmed product use correctly"
+    if not buyer_result:
+        buyer_result = f"the shopper sees the promised result: {core_claim}"
+    return {
+        "core_selling_claim": core_claim[:260],
+        "buyer_problem": buyer_problem[:220],
+        "product_intervention": product_intervention[:260],
+        "buyer_result": buyer_result[:260],
+        "proof_moment": proof[:260],
+    }
 
 
 def build_scene_imagination(variant: dict[str, Any], product_brief: dict[str, Any] | None = None) -> str:
@@ -1022,6 +1097,23 @@ def usage_keyframe_prompt(
 def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, Any] | None = None) -> str:
     brief = product_brief or {}
     buyer_effect = buyer_effect_summary(variant, brief)
+    benefit_ladder = variant.get("benefit_ladder") if isinstance(variant.get("benefit_ladder"), dict) else {}
+    core_selling_claim = _plain_brief_list(
+        variant.get("core_selling_claim") or benefit_ladder.get("core_selling_claim") or variant.get("selling_angle"),
+        1,
+    )
+    buyer_problem = _plain_brief_list(
+        variant.get("buyer_problem") or benefit_ladder.get("buyer_problem") or variant.get("hook"),
+        1,
+    )
+    product_intervention = _plain_brief_list(
+        variant.get("product_intervention") or benefit_ladder.get("product_intervention") or variant.get("usage_logic"),
+        1,
+    )
+    buyer_result = _plain_brief_list(
+        variant.get("buyer_result") or benefit_ladder.get("buyer_result") or variant.get("buyer_effect") or buyer_effect,
+        1,
+    )
     usage_context = _plain_brief_list(
         variant.get("usage_logic") or brief.get("step_by_step_usage") or brief.get("confirmed_or_inferred_use_steps"),
         3,
@@ -1047,7 +1139,8 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
     timed_voiceover = " ".join(f"[{item['time']}] {item['line']}" for item in normalized_voiceover if item.get("line"))
     audio_block = (
         "Native audio: include a clear young American female lifestyle-commerce creator voiceover, bright, stylish, warm, emotionally engaged, and not robotic or corporate. "
-        "The spoken copy must name the buyer problem or desire and the improved result the product creates; do not spend the line only naming parts, materials, or generic setup steps. "
+        f"Commercial spine for the spoken copy: buyer problem/desire = {buyer_problem}; product intervention = {product_intervention}; buyer result = {buyer_result}. "
+        "The spoken copy must sell this spine with a natural creator cadence; do not spend the line only naming parts, materials, or generic setup steps. "
         "The spoken script must finish naturally within 8 seconds at normal creator pace, ideally 14 to 18 English words total and never more than 20 words. "
         f"Speak these exact timed lines in order: {timed_voiceover}. "
         f"Combined exact script: \"{voiceover_text[:220]}\" "
@@ -1080,6 +1173,8 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
         "Create an 8-second vertical stylish creator-ad product-use clip using the provided reference frame or start/end keyframes. "
         "If two reference images are provided, use image 1 as the first frame and image 2 as the final frame, keeping the same subject, room, lighting, wardrobe, and camera geometry unless the storyboard intentionally moves within that same scene. "
         "Commercial north star: every visual beat and the voiceover must sell the buyer-visible result, not merely list product parts. "
+        f"Core buyer reason to buy: {core_selling_claim}. "
+        f"Benefit ladder: problem/desire = {buyer_problem}; product action = {product_intervention}; result/proof = {buyer_result}. "
         f"Buyer-visible effect to dramatize: {buyer_effect}. "
         "Use a clear problem-before, product-intervention, benefit-after arc: show the need or frustration, show the product being used correctly, then show the improved outcome, calmer routine, saved effort, comfort, confidence, or other confirmed benefit. "
         f"Follow this exact 0-8s storyboard with visual beat, spoken line, and sparse feature overlay for each beat: {storyboard} "
@@ -1140,6 +1235,11 @@ Return JSON with:
 Each variant must include:
 - variant_id
 - title
+- core_selling_claim: the single highest-priority buyer reason to care, chosen from product title/page selling points/confirmed selling points before scene writing
+- buyer_problem: the shopper or creator pain/desire that makes the product feel worth buying
+- product_intervention: the one supported product action that answers that buyer problem
+- buyer_result: the visible or spoken after-state that makes the promise believable
+- benefit_ladder: object with core_selling_claim, buyer_problem, product_intervention, buyer_result, and proof_moment; this is the creative spine and must be written before hook/voiceover/storyboard
 - primary_function_focus: the single confirmed selling point or product function this variant owns; allocate this before writing scenes so the batch does not collapse into one repeated function
 - buyer_effect: the concrete buyer-visible outcome after using the product, such as calmer pet, cleaner sink, faster prep, less clutter, easier setup, cooler air, more comfortable sleep, or safer grooming; this must drive both visuals and voiceover
 - creator_persona
@@ -1162,13 +1262,13 @@ Each variant must include:
 - negative_prompt
 
 Critical:
-1. Start from the HIGH-PRIORITY COMMERCIAL PROMISE SIGNALS, product_brief.confirmed_selling_points, manifest.selling_points, URL/product-title language, and the product title to identify the buyer's main reason to care. Then use product_brief.step_by_step_usage / confirmed_use_cases only to keep the demo mechanically correct.
+1. Start from the HIGH-PRIORITY COMMERCIAL PROMISE SIGNALS, product_brief.confirmed_selling_points, manifest.selling_points, URL/product-title language, and the product title to identify the buyer's main reason to care. Write the benefit_ladder first. Then use product_brief.step_by_step_usage / confirmed_use_cases only to keep the demo mechanically correct.
 2. Do not invent unsupported functions, but do not bury the commercial promise. If a claim is hard to prove visually, translate it into a safe buyer-perceived result/routine instead of deleting it.
 3. Every variant must pass this commercial test: could a shopper understand the product's benefit with the sound on and again with the sound off? If not, rewrite the storyboard before returning JSON.
 4. Every image_prompt and video_prompt must contain a product-fidelity block requiring exact preservation of the original product appearance.
 5. The selected reference image must be the best true full-product reference: full silhouette, correct SKU/style, real proportions, visible key functional zones. Do not select alternate SKU images, accessory-only images, packaging-only images, loose parts, isolated cables, or detail images as canonical.
 6. Put concise native-audio voiceover lines into VEO video_prompt, and ensure the full spoken copy can naturally finish inside 8 seconds at normal creator pace: target 14-18 English words, hard max 20 words, no unfinished trailing phrase.
-7. Voiceover must be benefit-led: mention the buyer problem/desire and the result after using the product. Avoid scripts that only say "snap it", "soft fabric", "white buckle", "easy setup", or other part/setup descriptions unless those words are tied to the main buyer outcome.
+7. Voiceover must be benefit-led and sales-forward: in 14-18 words, it should make the product feel worth buying by naming the buyer problem/desire, the product's role, and the final result. Avoid scripts that only say "snap it", "soft fabric", "white buckle", "easy setup", "here is how it works", or other part/setup descriptions unless those words are tied to the main buyer outcome.
 8. Keep every shot_plan, voiceover_script_8s, image-to-video prompt, and action arc designed for exactly 8 seconds. Do not write 9-12s, 10-12s, 12s, or 15s plans.
 9. Allow only 1-2 tiny sparse VEO overlay labels from on_screen_callouts as feature tags, e.g. "100 speeds" or "Tilt airflow"; render them as stylish short-form creator typography (bold rounded pill badges, warm vibrant accent tints, compact pop-up labels), plain-English only, no emoji. If clean stylish text is uncertain, skip overlay rather than render ugly/garbled words. Do not ask for subtitles, transcript captions, lower-thirds, karaoke text, social media icons, platform logos, camera/reel icons, app UI, or watermarks. Never use positive platform-branded style phrases; say stylish short-form creator-ad energy instead.
 10. Build the video from a single storyboard: video_prompt must include every beat's time, visual content, spoken line, and optional sparse feature overlay; start_frame_prompt must depict the first beat's problem/setup; end_frame_prompt must depict the final beat's improved result/payoff. Overlay must not repeat the spoken line as subtitles.
@@ -1177,7 +1277,7 @@ Critical:
 13. Start/end keyframes should be meaningfully different enough for an 8-second action arc while preserving the same exact product. Generate the end frame as the same shoot a few seconds later: same room, wall socket/table, person, wardrobe, lighting, product identity, and camera geometry; only the action result changes.
 14. Read the historical variants listed above as actual prior creative work for this product. Do not paraphrase them. Avoid reusing the same scene setup, same use action, same proof moment, same buyer context, or same selling angle unless you materially transform at least 3 of those dimensions.
 15. When function overlap is unavoidable, deliberately choose a different buyer problem, a different visible result, a different camera idea, and a different proof framing instead of repeating the same demo in new words.
-16. Before writing the variants, allocate one primary_function_focus per variant from the high-priority commercial promise, confirmed_selling_points, manifest selling_points, confirmed_use_cases, step_by_step_usage, and proof_moments. Do not let minor hardware details or materials become the lead selling angle when the product title/page/URL clearly sells a higher-level benefit. For this situation, hardware details such as buckle, slider, material, color, or pattern should support the main promise rather than replace it. For multifunction wearables such as smart rings, do not default every variant to photo-taking/remote shutter; split confirmed functions across health/app checks, charging, status display, touch control, activity tracking, waterproof daily wear, or fit/detail as supported by the brief.
+16. Before writing the variants, allocate one primary_function_focus per variant from the high-priority commercial promise, confirmed_selling_points, manifest selling_points, confirmed_use_cases, step_by_step_usage, and proof_moments. Do not let minor hardware details or materials become the lead selling angle when the product title/page/URL clearly sells a higher-level benefit. Hardware details such as buckle, slider, material, color, pattern, button, cable, LED, or case should support the main promise rather than replace it. For multifunction wearables such as smart rings, do not default every variant to photo-taking/remote shutter; split confirmed functions across health/app checks, charging, status display, touch control, activity tracking, waterproof daily wear, or fit/detail as supported by the brief.
 17. If a phone appears, make its orientation physically possible. For selfie/timer/remote-shutter demos, the phone screen faces the creator and the lens points toward the creator; the viewer sees phone back/side, mirror, or over-shoulder composition. For app-screen proof, use over-shoulder/tabletop/second-device geometry. For wireless charging, the phone lies flat screen-up on the charger unless the real product is a stand.
 """.strip()
     payload = {
