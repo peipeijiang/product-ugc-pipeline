@@ -202,7 +202,7 @@ def main() -> None:
         return
 
     video_model = args.video_model or "veo3.1"
-    video_base_url = args.video_base_url or "https://api.lk888.ai/api"
+    video_base_url = args.video_base_url or "https://api.lk888.ai"
     for product_dir in selected_product_dirs(args.output_dir, args.products):
         variants = prompts_snapshot_variants.get(product_dir.name, [])
         if not variants:
@@ -224,7 +224,7 @@ def main() -> None:
             "--audio-style",
             args.audio_style,
         ]
-        if video_model == "omni-flash":
+        if video_model in {"omni-flash", "omni-fast"}:
             command.extend(["--duration", "8", "--base-url", "https://api.lk888.ai", "--status-endpoint", "/v1/media/status"])
         if args.light_overlay:
             command.append("--light-overlay")

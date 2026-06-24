@@ -19,8 +19,8 @@ Product references lock the product, not the whole source photo. Use source imag
 4. Run `scripts/build_product_brief.py` to synthesize product usage cognition from `product_manifest.json` + `image_analysis.json`.
 5. Run `scripts/generate_ugc_prompts.py` to create 10 UGC prompt variants grounded in the product brief.
 6. Run `scripts/generate_images.py` to create image-to-image “pad images” or start/end keyframes using GPT-Image-2 and the selected product references.
-7. Run `scripts/generate_videos.py` to send generated pad images or start/end keyframes to VEO 3.1 async video generation.
-8. If LaoZhang VEO channels are unavailable, run `scripts/generate_videos_lk888.py` to send public start/end keyframe URLs to LK888/updrama VEO.
+7. Run `scripts/generate_videos_lk888.py` to send public start/end keyframe URLs to LK888/updrama VEO. Production default video generation is LK888 `veo3.1`.
+8. Use `scripts/generate_videos.py` for LaoZhang VEO only when the user explicitly asks for LaoZhang or LK888 is not the requested provider.
 9. When the user asks for “two new versions”, “再来两个新版本”, or any fresh reroll, prefer `scripts/run_fresh_batch.py` so the skill first extends the canonical prompt file, then keyframes, then videos, instead of accidentally rerunning an old prompt batch.
 
 Default output structure:
@@ -55,15 +55,17 @@ LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/analyze_materials.py
 LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/build_product_brief.py product-ugc-output
 LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_ugc_prompts.py product-ugc-output --count 10
 LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_images.py product-ugc-output --variants 1-10 --model gpt-image-2-vip --size 1024x1536 --keyframes
-LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_videos.py product-ugc-output --variants 1-10 --model veo-3.1-fast-fl
 LK888_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_videos_lk888.py product-ugc-output --variants 1-10 --model veo3.1 --generation-mode fast
 LK888_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_videos_lk888.py product-ugc-output --variants 1-10 --model omni-flash --base-url https://api.lk888.ai --status-endpoint /v1/media/status --duration 8
+LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_videos.py product-ugc-output --variants 1-10 --model veo-3.1-fast-fl
 LAOZHANG_API_KEY=sk-... LK888_API_KEY=sk-... python product-ugc-pipeline/scripts/run_fresh_batch.py product-ugc-output --products 01,02 --count 2 --batch-label 20260520-dual-refresh
 ```
 
 This skill does not use a local dry-run fallback for prompt/image/video generation. Generation steps should run through the real model/API path so outputs stay consistent with production behavior.
 
 This skill must fail fast when the cognition pipeline is incomplete. Do not manually invent `image_analysis.json`, `product_brief.json`, `ugc_prompts.json`, or generated keyframes to keep a batch moving. If vision analysis, product-brief synthesis, prompt generation, or Image2 keyframe generation fails, stop and report the failing provider/model/error. Continue only after switching to a working model/provider or after the user explicitly asks for a non-production experiment.
+
+Video generation is VEO-first on LK888 by default. Do not silently switch production videos from LK888 `veo3.1` to Seedance, Kling, Omni, LaoZhang VEO, or any non-VEO model. If LK888 VEO fails, times out, has no channel, or returns insufficient balance, stop and report the exact status/cost/error. Use non-VEO models such as `omni-flash`, Seedance, or Kling only when the user explicitly asks for that model or approves the fallback.
 
 ## Product Folder Requirements
 
@@ -217,8 +219,8 @@ Key defaults:
 - Capability refresh endpoints: `GET /v1/skills`, `GET /v1/skills/guide`, and `GET /v1/skills/models/{model_name}`.
 - Balance endpoint: `GET /v1/skills/balance`; query it before paid batches when practical.
 - Media creation endpoint: `POST /v1/media/generate`; poll `GET /v1/skills/task-status?task_id={task_id}` until `is_final=true`.
-- VEO 3.1 model name: `veo3.1`; common params are `generation_mode=fast`, `aspect_ratio=9:16`, `images=[start_url,end_url]`, and `enhance_prompt=false`.
-- Gemini Omni Flash video model name: `omni-flash`; use the updrama media endpoint with `base_url=https://api.lk888.ai`, create path `/v1/media/generate`, status path `/v1/media/status`, `duration=8`, `aspect_ratio=9:16`, `images=[start_url,end_url]`, and `enhance_prompt=false`. It is a video/media model, not a chat prompt-writing model.
+- VEO 3.1 production default model name: `veo3.1`; common params are `generation_mode=fast`, `aspect_ratio=9:16`, `images=[start_url,end_url]`, and `enhance_prompt=false`.
+- Gemini Omni Flash video model name: `omni-flash`; user shorthand `omni-fast` should be treated as `omni-flash` unless LK888 exposes a separate exact model. Use the updrama media endpoint with `base_url=https://api.lk888.ai`, create path `/v1/media/generate`, status path `/v1/media/status`, `duration=8`, `aspect_ratio=9:16`, `images=[start_url,end_url]`, and `enhance_prompt=false`. It is a video/media model, not a chat prompt-writing model, and it is a non-VEO model that requires explicit user approval.
 - `veo3.1-lite` uses `quality=sd|4k` instead of `generation_mode`, but may have inactive channels; verify pricing/status before relying on it.
 - Upload params require publicly reachable URLs. The API does not accept local file paths or multipart image uploads for `images`.
 - The adapter writes LK888 outputs to `videos_lk888/` so LaoZhang outputs in `videos/` remain untouched.
