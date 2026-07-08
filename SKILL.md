@@ -67,6 +67,77 @@ This skill must fail fast when the cognition pipeline is incomplete. Do not manu
 
 Video generation is VEO-first on LK888 by default. Do not silently switch production videos from LK888 `veo3.1` to Seedance, Kling, Omni, LaoZhang VEO, or any non-VEO model. If LK888 VEO fails, times out, has no channel, or returns insufficient balance, stop and report the exact status/cost/error. Use non-VEO models such as `omni-flash`, Seedance, or Kling only when the user explicitly asks for that model or approves the fallback.
 
+## Parallel Pipeline (Fire-and-Forget + Auto-Cascade)
+
+The image-to-video pipeline is I/O-bound on third-party APIs. Instead of serial "submit one → wait → submit next", the pipeline should submit all tasks in parallel, then poll and cascade.
+
+### Architecture
+
+```
+Submit all N start-frame tasks  ──►  Poll all concurrently
+                                        │
+                          ┌─ start-01 done ──► submit end-01 (with start-01 as ref)
+                          │   start-02 done ──► submit end-02
+                          │   ...
+                          │   start-N done ──► submit end-N
+                          │
+                          └─ Poll all end-frame tasks concurrently
+                                        │
+                          ┌─ (start-01 + end-01) done ──► submit video-01
+                          │   (start-02 + end-02) done ──► submit video-02
+                          │   ...
+                          └─ Poll all video tasks concurrently
+```
+
+### Key Principles
+
+1. **Submit all at once.** Never wait for one task to finish before submitting the next independent task. All N start frames should be submitted within seconds of each other.
+2. **Cascade on completion.** When a start frame finishes, immediately submit its corresponding end frame (using the start frame as reference image for scene/person/lighting continuity). Do not wait for other start frames.
+3. **Video auto-trigger.** When both start and end frames for a variant are downloaded, immediately submit the video generation task.
+4. **Polling pool.** Use a single polling loop that checks all pending tasks (images + videos) with short intervals (3-5 seconds). Each task is tracked by its `task_id` and `variant_id`.
+5. **Resume safety.** Track submitted task IDs in a state file (`pipeline_state.json`) so interrupted runs can resume without re-submitting completed tasks.
+
+### Usage
+
+```bash
+python product-ugc-pipeline/scripts/parallel_pipeline.py product-ugc-output \
+  --product 01 \
+  --variants 1-10 \
+  --image-model gpt-image-2 \
+  --video-model veo3.1 \
+  --duration 8 \
+  --image-base-url https://api.laozhang.ai \
+  --video-base-url https://api.lk888.ai
+```
+
+### State File (`pipeline_state.json`)
+
+```json
+{
+  "product": "01-smart-sleep-wristband",
+  "started_at": "2026-07-08T12:00:00Z",
+  "phases": {
+    "start_frames": {
+      "variant-01": {"status": "completed", "task_id": "img_abc", "path": "generated_images/variant-01-start.png"},
+      "variant-02": {"status": "running", "task_id": "img_def"}
+    },
+    "end_frames": {
+      "variant-01": {"status": "completed", "task_id": "img_ghi", "path": "generated_images/variant-01-end.png"}
+    },
+    "videos": {
+      "variant-01": {"status": "submitted", "task_id": "vid_jkl"}
+    }
+  }
+}
+```
+
+### Constraints
+
+- End frames must use the completed start frame as a reference image to maintain scene/person/lighting continuity.
+- Video tasks only submit after both start and end frames are downloaded to disk.
+- If a task fails (state=failed), retry once with a different prompt seed before reporting the error.
+- The pipeline must handle partial completion gracefully: already-completed tasks should be detected and skipped.
+
 ## Product Folder Requirements
 
 For each product folder:
@@ -142,6 +213,23 @@ Before generating image/video prompts, separate cognition into five layers:
 
 Every batch should deliberately vary the variants by buyer problem, selling angle, scenario, action, proof moment, and final effect. Avoid making all prompts the same “place product on counter/table, show result” pattern.
 For rerolls, always treat older `ugc_prompts*.json` files as history to avoid, not as the default video source, unless the user explicitly asks to rerun that exact batch.
+
+### Creative Matrix: Same Core Promise, Different Ads
+
+When one product has a dominant commercial promise (for example “sleepy faster”, “cooler anywhere”, “less mess”, “pet feels safer”, or “prep is faster”), keep that promise consistent across variants but force the creative executions to diverge.
+
+`generate_ugc_prompts.py` must pass a `creative_matrix` into prompt generation and each variant must include a `creative_matrix_slot`. Each slot varies at least these dimensions:
+
+- `hook_archetype`: timestamp pain, bad-habit interruption, skeptic-to-believer, challenge/timed test, social comparison, travel problem, messy real-life chaos, ASMR/sensory payoff, gift angle, or niche confession.
+- `buyer_context`: the specific moment creating demand, such as doomscrolling, hotel bed, partner asleep, work-brain overload, one-more-episode trap, busy-parent chaos, or travel routine.
+- `creator_persona`: different creator identity or energy, such as tired relatable creator, skeptical reviewer, travel creator, busy everyday creator, soft-spoken ASMR creator, or gift-guide creator.
+- `scene_type`: bedroom, desk-to-bed transition, hotel, vanity/unboxing, partner scene, travel bag, kitchen counter, car console, dorm, bathroom, outdoor routine, or other product-valid setting.
+- `story_shape`: not always “problem → product → happy result”; use confession, reversal, timed test, comparison, habit break, unbox-to-real-use, sensory routine, or chaos-to-calm.
+- `proof_style`: before/after emotional contrast, object left behind, reaction shot, timer/checklist prop, undisturbed partner, simplified scene, tactile micro-proof, or packaging-to-use contrast.
+- `camera_idea`: pillow-height handheld, macro hands, over-shoulder, bag pull-out, two-person depth composition, wide chaos-to-close product, talk-to-camera then product detail, etc.
+- `pace`: snappy social pacing, slow sensory pacing, review-style pacing, challenge pacing, comedic contrast, or calm premium lifestyle pacing.
+
+The batch fails quality review if all variants merely paraphrase the same story arc. A valid batch can repeat the same `core_selling_claim`, but it must make each video look like a different ad concept. Hardware details should support the dominant promise; they should not replace the buyer-facing reason to buy.
 
 Before writing multiple variants, allocate a distinct `primary_function_focus` from `product_brief.confirmed_selling_points`, product-page `selling_points`, `confirmed_use_cases`, `step_by_step_usage`, and `proof_moments`. Do not let minor hardware details, materials, or setup steps become the lead angle when the product title/page clearly sells a higher-level benefit. If overlap is unavoidable, materially change at least four dimensions: buyer problem, buyer-visible effect, scene geometry, proof moment, camera idea, pace, and creator style. For multifunction wearables such as smart rings, do not default every clip to remote photo control; split variants across confirmed functions such as app/health check, display/status glance, charging dock, touch gesture, activity tracking, waterproof daily wear, or fit/detail as supported by the product brief.
 
@@ -253,7 +341,8 @@ Before delivering outputs, inspect `materials.md`, `image_analysis.json`, and `u
 - Reject prompts that imply social media/platform icons, logos, app UI, story stickers, like/comment/share chrome, camera/reel icons, watermark overlays, subtitles, captions, transcript text, lower thirds, karaoke text, or VEO-rendered emoji text. Allow only sparse stylish feature-tag overlay words (bold pill labels, warm vibrant tints) that evoke short-form creator energy without platform branding.
 - Reject prompts that use a weak reference image when a cleaner product image exists.
 - Prefer close-up product photos as image references over lifestyle images.
-- Reject batches where the variants only differ cosmetically but repeat the same scene, camera angle, action, and proof moment.
+- Reject batches where the variants only differ cosmetically but repeat the same hook archetype, buyer context, scene type, story shape, camera idea, action, and proof moment.
+- Reject same-promise batches that do not include a visible `creative_matrix` / `creative_matrix_slot` plan or where the generated prompts ignore those slots.
 - Reject keyframes that copy the original source-photo environment without a functional reason; scene design should come from buyer context and selling angle.
 - Reject start/end keyframes that are too similar to produce a meaningful 8-second product-use video, unless the variant is explicitly stable b-roll.
 - Before calling Image 2, manually or programmatically verify the selected reference images are the correct product, not another SKU on the same page.
