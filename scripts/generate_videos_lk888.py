@@ -20,6 +20,7 @@ BASE_URL = "https://api.lk888.ai/api"
 CONTINUE_STATES = {"pending", "running", "queued", "processing", "submitted"}
 SUCCESS_STATES = {"success", "completed", "succeeded"}
 FAILED_STATES = {"failed", "error", "cancelled", "canceled", "expired"}
+DEFAULT_ASPECT_RATIO = "9:16"
 
 
 def require_lk888_api_key() -> str:
@@ -45,6 +46,17 @@ def generated_keyframe_paths(product_dir: Path, variant_id: int) -> list[Path]:
     if single.exists():
         return [single]
     return []
+
+
+def generated_start_end_paths(product_dir: Path, variant_id: int) -> tuple[Path, Path]:
+    return (
+        product_dir / "generated_images" / f"variant-{variant_id:02d}-start.png",
+        product_dir / "generated_images" / f"variant-{variant_id:02d}-end.png",
+    )
+
+
+def is_veo_model(model: str) -> bool:
+    return model.lower().startswith("veo")
 
 
 def existing_video_dir(product_dir: Path) -> Path:
@@ -369,13 +381,14 @@ def build_model_params(args: argparse.Namespace, image_urls: list[str]) -> dict[
             "images": image_urls,
             "enhance_prompt": args.enhance_prompt,
         }
-    if args.model == "omni-flash":
+    if args.model in {"omni-flash", "omni_flash-10s"}:
         params = {
-            "duration": str(args.duration),
             "aspect_ratio": args.aspect_ratio,
-            "images": image_urls[:3],
-            "enhance_prompt": args.enhance_prompt,
+            "images": image_urls[:7] if args.model == "omni_flash-10s" else image_urls[:3],
         }
+        if args.model == "omni-flash":
+            params["duration"] = str(args.duration)
+            params["enhance_prompt"] = args.enhance_prompt
         if args.enable_upsample is not None:
             params["enable_upsample"] = args.enable_upsample
         return params
@@ -441,7 +454,22 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
     output_path = output_dir / f"variant-{variant_id:02d}.mp4"
     if output_path.exists() and not args.force:
         return {"variant_id": variant_id, "status": "skipped_existing", "output_path": str(output_path.relative_to(product_dir))}
-    reference_images = generated_keyframe_paths(product_dir, variant_id)
+    if is_veo_model(args.model):
+        if args.single_reference:
+            raise RuntimeError(
+                f"{product_dir.name} variant {variant_id:02d}: VEO must use both start and end keyframes. "
+                "Remove --single-reference and generate the missing keyframe first."
+            )
+        start_frame, end_frame = generated_start_end_paths(product_dir, variant_id)
+        missing = [path.name for path in (start_frame, end_frame) if not path.exists()]
+        if missing:
+            raise RuntimeError(
+                f"{product_dir.name} variant {variant_id:02d}: VEO requires start+end keyframes; missing {', '.join(missing)}. "
+                "Run generate_images.py with --keyframes for this variant before submitting VEO."
+            )
+        reference_images = [start_frame, end_frame]
+    else:
+        reference_images = generated_keyframe_paths(product_dir, variant_id)
     if not reference_images:
         raise RuntimeError(f"Missing generated reference image(s) for variant {variant_id}")
     if args.single_reference:
@@ -543,13 +571,13 @@ def main() -> None:
     parser.add_argument("--products", default="")
     parser.add_argument("--variants", default="1-10")
     parser.add_argument("--prompts-file", default="ugc_prompts.json")
-    parser.add_argument("--model", default="veo3.1-lite")
+    parser.add_argument("--model", default="veo3.1")
     parser.add_argument("--base-url", default=BASE_URL)
     parser.add_argument("--status-endpoint", default="/v1/skills/task-status")
     parser.add_argument("--generation-mode", default="fast")
     parser.add_argument("--version", default="快速")
     parser.add_argument("--quality", default="sd")
-    parser.add_argument("--aspect-ratio", default="9:16")
+    parser.add_argument("--aspect-ratio", default=DEFAULT_ASPECT_RATIO)
     parser.add_argument("--duration", default="8")
     parser.add_argument("--audio-duration", default="8")
     parser.add_argument("--resolution", default="720p")
@@ -568,9 +596,15 @@ def main() -> None:
     parser.add_argument("--light-overlay", action="store_true")
     parser.add_argument("--safe-audio-test", action="store_true")
     parser.add_argument("--single-reference", action="store_true", help="Use only the first generated reference image instead of first/last keyframes.")
+    parser.add_argument("--allow-landscape", action="store_true", help="Allow non-9:16 aspect ratios for explicit landscape-only jobs.")
     parser.add_argument("--continue-on-error", action="store_true", help="Record failed variants and continue processing the batch.")
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
+    if args.aspect_ratio != DEFAULT_ASPECT_RATIO and not args.allow_landscape:
+        raise SystemExit(
+            f"Refusing aspect_ratio={args.aspect_ratio}. Product UGC videos default to vertical {DEFAULT_ASPECT_RATIO}; "
+            "pass --allow-landscape only when the user explicitly requests landscape."
+        )
     api_key = require_lk888_api_key()
     selected_variants = parse_variants(args.variants)
     for product_dir in selected_product_dirs(args.output_dir, args.products):

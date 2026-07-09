@@ -149,6 +149,10 @@ def submit_video_veo(prompt: str, ref_urls: list[str], duration: str = "8") -> s
     return str(task_ids[0])
 
 
+def is_veo_model(model: str) -> bool:
+    return model.lower().startswith("veo")
+
+
 def download_result(result_url: str, output_path: Path) -> bool:
     """Download result to output_path."""
     try:
@@ -251,16 +255,28 @@ def run_video_batch(
         single_path = gen_dir / f"variant-{vid:02d}.png"
 
         refs = []
-        if start_path.exists():
-            refs.append(start_path)
-        if end_path.exists():
-            refs.append(end_path)
-        if not refs and single_path.exists():
-            refs.append(single_path)
-
-        if not refs:
-            log(f"variant-{vid:02d}: no keyframes found, skipping")
-            continue
+        if is_veo_model(video_model):
+            missing = [p.name for p in (start_path, end_path) if not p.exists()]
+            if missing:
+                log(
+                    f"variant-{vid:02d}: VEO requires generated start+end keyframes; "
+                    f"missing {', '.join(missing)}, skipping video submission"
+                )
+                continue
+            refs = [start_path, end_path]
+        else:
+            if start_path.exists():
+                refs.append(start_path)
+            if end_path.exists():
+                refs.append(end_path)
+            if not refs and single_path.exists():
+                refs.append(single_path)
+            if not refs:
+                log(
+                    f"variant-{vid:02d}: no Image2-generated reference frame in generated_images/, "
+                    "skipping video submission"
+                )
+                continue
 
         output_path = video_dir / f"variant-{vid:02d}.mp4"
         if output_path.exists() and output_path.stat().st_size > 10000:
