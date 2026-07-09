@@ -1,6 +1,6 @@
 # Product UGC Pipeline
 
-![Product UGC Pipeline](assets/logo/banner-v2.png)
+![Product UGC Pipeline](assets/logo/banner-slim.png)
 
 [简体中文](README.md) | [English](README_EN.md)
 
