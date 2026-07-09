@@ -1,6 +1,5 @@
-# Product UGC Pipeline
 
-<img src="assets/logo/banner-slim.png" alt="Product UGC Pipeline" height="80" />
+<img src="assets/logo/banner-strip.png" alt="Product UGC Pipeline" height="60" />
 
 [简体中文](README.md) | [English](README_EN.md)
 
