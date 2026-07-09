@@ -25,6 +25,109 @@ SHOT_TIME_SLOTS = {
     6: ["0.0-1.0s", "1.0-2.3s", "2.3-3.8s", "3.8-5.4s", "5.4-6.8s", "6.8-8.0s"],
 }
 
+CREATIVE_MATRIX_ARCHETYPES = [
+    {
+        "hook_archetype": "timestamp pain hook",
+        "buyer_context": "wide awake at an oddly specific late-night time",
+        "creator_persona": "relatable tired creator speaking directly to camera",
+        "scene_type": "bedroom problem-first scene",
+        "story_shape": "problem confession -> product intervention -> visible relief",
+        "proof_style": "before/after emotional contrast",
+        "camera_idea": "handheld close-up from pillow or nightstand height",
+        "pace": "fast hook, soft payoff",
+    },
+    {
+        "hook_archetype": "bad habit interruption",
+        "buyer_context": "phone scrolling, binge watching, snacking, procrastinating, or repeated failed setup",
+        "creator_persona": "self-aware creator with light humor",
+        "scene_type": "habit loop broken by product action",
+        "story_shape": "caught in habit -> decisive cut -> product routine -> result",
+        "proof_style": "object left behind while product stays in use",
+        "camera_idea": "quick cut from bad habit prop to product close-up",
+        "pace": "snappy social-ad pacing",
+    },
+    {
+        "hook_archetype": "skeptic-to-believer reversal",
+        "buyer_context": "creator doubts the product, then notices the buyer-visible result",
+        "creator_persona": "skeptical reviewer or friend-recommendation tester",
+        "scene_type": "mini test/review in a real home setting",
+        "story_shape": "skeptical line -> try one supported action -> surprised payoff",
+        "proof_style": "reaction shot plus product proof shot",
+        "camera_idea": "talk-to-camera opener, then macro product detail",
+        "pace": "review-style with a twist",
+    },
+    {
+        "hook_archetype": "challenge or timed test",
+        "buyer_context": "creator runs a simple one-night, one-minute, or seven-night test",
+        "creator_persona": "curious experimenter",
+        "scene_type": "timer/checklist/challenge setup without platform UI",
+        "story_shape": "challenge setup -> product use -> measurable-feeling payoff",
+        "proof_style": "timer/checklist prop or next-moment contrast",
+        "camera_idea": "timer prop, over-shoulder setup, then final close-up",
+        "pace": "structured test pacing",
+    },
+    {
+        "hook_archetype": "social comparison hook",
+        "buyer_context": "partner, roommate, friend, pet, parent, or coworker has the opposite experience",
+        "creator_persona": "creator reacting to someone else already succeeding",
+        "scene_type": "two-person or social-context scene",
+        "story_shape": "comparison frustration -> product routine -> creator catches up",
+        "proof_style": "other person remains undisturbed while creator improves",
+        "camera_idea": "split-depth composition with second person in background",
+        "pace": "comedic contrast into calm proof",
+    },
+    {
+        "hook_archetype": "travel or unfamiliar-place problem",
+        "buyer_context": "hotel, trip, car console, airport bag, guest room, dorm, or new apartment",
+        "creator_persona": "travel/lifestyle creator",
+        "scene_type": "portable problem-solving scene",
+        "story_shape": "new place problem -> product from bag -> use -> settled payoff",
+        "proof_style": "packed bag or unfamiliar room turns into comfortable routine",
+        "camera_idea": "bag pull-out hero shot, then same-location final proof",
+        "pace": "travel hack pacing",
+    },
+    {
+        "hook_archetype": "messy real-life chaos",
+        "buyer_context": "after work, busy parent night, rushed morning, cluttered kitchen, laundry pile, or desk chaos",
+        "creator_persona": "busy everyday creator",
+        "scene_type": "chaotic environment made simpler by one product action",
+        "story_shape": "chaos -> one practical action -> calmer or cleaner outcome",
+        "proof_style": "same scene visibly simplified or calmer",
+        "camera_idea": "wide chaos establishing shot into tight product action",
+        "pace": "high-energy opening, satisfying finish",
+    },
+    {
+        "hook_archetype": "ASMR/sensory payoff",
+        "buyer_context": "quiet tactile routine where sound, texture, movement, or light is satisfying",
+        "creator_persona": "soft-spoken sensory creator",
+        "scene_type": "close tactile product-use scene",
+        "story_shape": "sensory hook -> precise product action -> satisfying final state",
+        "proof_style": "audible/tactile/visual micro-proof",
+        "camera_idea": "macro hands, shallow depth of field, minimal props",
+        "pace": "slow satisfying cadence",
+    },
+    {
+        "hook_archetype": "gift or impulse-buy angle",
+        "buyer_context": "unboxing, gift table, vanity, entryway, or friend recommendation",
+        "creator_persona": "gift-guide or 'things I actually use' creator",
+        "scene_type": "unbox-to-real-use scene",
+        "story_shape": "cute object reveal -> practical use -> kept using it payoff",
+        "proof_style": "packaging/first impression contrasted with real result",
+        "camera_idea": "unboxing hand shot, then lifestyle final frame",
+        "pace": "polished gift-guide pacing",
+    },
+    {
+        "hook_archetype": "problem nobody talks about",
+        "buyer_context": "specific overlooked pain point tied to the product category",
+        "creator_persona": "confessional creator naming a niche but relatable issue",
+        "scene_type": "intimate confession plus practical demo",
+        "story_shape": "niche confession -> product solves one small friction -> emotional payoff",
+        "proof_style": "creator reaction shows relief more than technical specs",
+        "camera_idea": "close face hook, then product action in same scene",
+        "pace": "quiet but emotionally sticky",
+    },
+]
+
 
 def discover_history_files(product_dir: Path, history_glob: str) -> list[Path]:
     files = [path for path in sorted(product_dir.glob(history_glob)) if path.is_file()]
@@ -136,6 +239,47 @@ def infer_pace_tag(variant: dict[str, Any]) -> str:
         ],
         "medium",
     )
+
+
+def creative_matrix_plan(count: int, existing_history: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    """Return a creative distribution plan for a batch.
+
+    This is intentionally not a keyword-extraction fallback. It is a creative
+    contract passed into the prompt model: keep the core selling promise fixed,
+    but force each variant to vary story shape, buyer context, persona, scene,
+    proof style, camera idea, and pacing.
+    """
+    history = existing_history or []
+    history_tags = [
+        {
+            "scene": infer_scene_tag(item),
+            "action": infer_action_tag(item),
+            "angle": infer_angle_tag(item),
+            "style": infer_style_tag(item),
+            "pace": infer_pace_tag(item),
+        }
+        for item in history[:24]
+        if isinstance(item, dict)
+    ]
+    plan: list[dict[str, Any]] = []
+    for index in range(count):
+        archetype = dict(CREATIVE_MATRIX_ARCHETYPES[index % len(CREATIVE_MATRIX_ARCHETYPES)])
+        archetype["slot_id"] = index + 1
+        archetype["must_share_core_selling_claim"] = True
+        archetype["must_differ_from_other_slots_on"] = [
+            "hook_archetype",
+            "buyer_context",
+            "creator_persona",
+            "scene_type",
+            "story_shape",
+            "proof_style",
+            "camera_idea",
+            "pace",
+        ]
+        if history_tags:
+            archetype["avoid_history_tags"] = history_tags[:12]
+        plan.append(archetype)
+    return plan
 
 
 def _clean_spoken_text(text: str) -> str:
@@ -454,7 +598,14 @@ def best_reference_images(image_analysis: dict[str, Any], product_brief: dict[st
     return selected
 
 
-def normalize_variants(output: dict[str, Any], manifest: dict[str, Any], references: list[str], count: int, product_brief: dict[str, Any] | None = None) -> dict[str, Any]:
+def normalize_variants(
+    output: dict[str, Any],
+    manifest: dict[str, Any],
+    references: list[str],
+    count: int,
+    product_brief: dict[str, Any] | None = None,
+    creative_matrix: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     product_name = manifest["product_name"]
     feature_summary = product_function_summary(manifest, product_brief)
     variants = output.get("variants")
@@ -469,6 +620,9 @@ def normalize_variants(output: dict[str, Any], manifest: dict[str, Any], referen
             raise RuntimeError(f"Variant {index} for {product_name} was not a JSON object")
         clean_variant = dict(variant)
         clean_variant["variant_id"] = index
+        matrix_index = len(normalized)
+        if creative_matrix and matrix_index < len(creative_matrix):
+            clean_variant.setdefault("creative_matrix_slot", creative_matrix[matrix_index])
         clean_variant["selected_reference_images"] = references[:2]
         clean_variant.setdefault("reference_scope", reference_scope_note(references))
         clean_variant.setdefault("scene_imagination", build_scene_imagination(clean_variant, product_brief))
@@ -507,6 +661,8 @@ def normalize_variants(output: dict[str, Any], manifest: dict[str, Any], referen
         normalized.append(clean_variant)
     output["product_name"] = output.get("product_name") or product_name
     output["variants"] = normalized
+    if creative_matrix:
+        output["creative_matrix"] = creative_matrix
     output["variant_count_requested"] = count
     output["variant_count_returned_by_model"] = len(variants)
     output["variant_count_final"] = len(normalized)
@@ -1206,6 +1362,7 @@ def generate_with_model(
     timeout: int,
 ) -> dict[str, Any]:
     commercial_promise = commercial_promise_summary(manifest, product_brief)
+    creative_matrix = creative_matrix_plan(count, existing_history)
     prompt = f"""
 Create {count} distinct UGC prompt variants for short-form ecommerce product ads.
 
@@ -1213,6 +1370,11 @@ HIGH-PRIORITY COMMERCIAL PROMISE SIGNALS:
 {commercial_promise}
 
 Use these signals to decide the lead selling idea before reading mechanical details. If a page title or URL sells a high-level benefit but source images cannot visually prove the literal claim, translate it into a safe buyer-perceived routine, concern, or after-state. Do not delete that commercial promise and retreat into minor hardware/material details.
+
+CREATIVE MATRIX CONTRACT:
+{json.dumps(creative_matrix, ensure_ascii=False, indent=2)}
+
+The commercial promise should stay consistent across the batch, but the creative execution must not collapse into the same formula. Assign one matrix slot to each variant in order. The variants must materially differ by hook archetype, buyer context, creator persona, scene type, story shape, proof style, camera idea, and pace. Do not write ten versions of “problem -> pick up product -> use product -> happy result” with only minor wording changes. Keep the same core selling claim, but make each video feel like a different ad concept.
 
 Product manifest:
 {json.dumps(manifest, ensure_ascii=False)[:8000]}
@@ -1234,6 +1396,7 @@ Return JSON with:
 - variants: array of {count} objects
 Each variant must include:
 - variant_id
+- creative_matrix_slot: copy the assigned slot from the CREATIVE MATRIX CONTRACT and adapt it only if the product cannot support one detail
 - title
 - core_selling_claim: the single highest-priority buyer reason to care, chosen from product title/page selling points/confirmed selling points before scene writing
 - buyer_problem: the shopper or creator pain/desire that makes the product feel worth buying
@@ -1274,9 +1437,11 @@ Critical:
 10. Build the video from a single storyboard: video_prompt must include every beat's time, visual content, spoken line, and optional sparse feature overlay; start_frame_prompt must depict the first beat's problem/setup; end_frame_prompt must depict the final beat's improved result/payoff. Overlay must not repeat the spoken line as subtitles.
 11. Product reference images lock the product itself, not the entire source photo. Preserve product identity and usage mechanics, but freely imagine realistic buyer scenes, backgrounds, camera angles, and contextual props that clarify the benefit.
 12. Each variant should focus on one small selling point or function. Vary buyer problem, scene, action, proof/result moment, and emotional payoff across the batch; do not produce ten versions of the same tabletop placement.
+12b. If the core selling claim is the same for every variant, the story must vary even more aggressively: use different hook archetypes, different people or social contexts, different before-state problems, different scene geometry, different proof/payoff visuals, different camera grammar, and different pacing. The product can solve the same buyer desire, but the ads must not look like clones.
 13. Start/end keyframes should be meaningfully different enough for an 8-second action arc while preserving the same exact product. Generate the end frame as the same shoot a few seconds later: same room, wall socket/table, person, wardrobe, lighting, product identity, and camera geometry; only the action result changes.
 14. Read the historical variants listed above as actual prior creative work for this product. Do not paraphrase them. Avoid reusing the same scene setup, same use action, same proof moment, same buyer context, or same selling angle unless you materially transform at least 3 of those dimensions.
 15. When function overlap is unavoidable, deliberately choose a different buyer problem, a different visible result, a different camera idea, and a different proof framing instead of repeating the same demo in new words.
+15b. Use the CREATIVE MATRIX CONTRACT as the diversity source of truth. A variant fails if its creative_matrix_slot is not reflected in its hook, shot_plan, storyboard_8s, start_frame_prompt, end_frame_prompt, and video_prompt.
 16. Before writing the variants, allocate one primary_function_focus per variant from the high-priority commercial promise, confirmed_selling_points, manifest selling_points, confirmed_use_cases, step_by_step_usage, and proof_moments. Do not let minor hardware details or materials become the lead selling angle when the product title/page/URL clearly sells a higher-level benefit. Hardware details such as buckle, slider, material, color, pattern, button, cable, LED, or case should support the main promise rather than replace it. For multifunction wearables such as smart rings, do not default every variant to photo-taking/remote shutter; split confirmed functions across health/app checks, charging, status display, touch control, activity tracking, waterproof daily wear, or fit/detail as supported by the brief.
 17. If a phone appears, make its orientation physically possible. For selfie/timer/remote-shutter demos, the phone screen faces the creator and the lens points toward the creator; the viewer sees phone back/side, mirror, or over-shoulder composition. For app-screen proof, use over-shoulder/tabletop/second-device geometry. For wireless charging, the phone lies flat screen-up on the charger unless the real product is a stand.
 """.strip()
@@ -1307,6 +1472,7 @@ def process_product(product_dir: Path, api_key: str, args: argparse.Namespace) -
     history_glob = "ugc_prompts.json" if args.output_file == "ugc_prompts.json" and canonical_prompt_path.exists() else args.history_glob
     existing_history, history_files = collect_existing_variant_history(product_dir, history_glob) if not args.ignore_history else ([], [])
     print(f"[prompts] {product_dir.name} refs={references} history={len(existing_history)}")
+    creative_matrix = creative_matrix_plan(args.count, existing_history)
     output = generate_with_model(
         api_key,
         manifest,
@@ -1319,7 +1485,7 @@ def process_product(product_dir: Path, api_key: str, args: argparse.Namespace) -
         args.base_url,
         args.timeout,
     )
-    output = normalize_variants(output, manifest, references, args.count, product_brief)
+    output = normalize_variants(output, manifest, references, args.count, product_brief, creative_matrix)
     output["selected_reference_images"] = references
     output["start_variant_id"] = args.start_variant_id
     output["source_manifest"] = "product_manifest.json"
@@ -1335,7 +1501,22 @@ def process_product(product_dir: Path, api_key: str, args: argparse.Namespace) -
         "history_enabled": not args.ignore_history,
         "history_glob": args.history_glob,
         "model_reads_full_history": True,
-        "required_difference_dimensions": ["scene", "action", "selling_angle", "proof_moment", "pace", "style", "buyer_context", "camera_idea"],
+        "creative_matrix_enforced": True,
+        "core_selling_claim_should_remain_consistent": True,
+        "required_difference_dimensions": [
+            "hook_archetype",
+            "buyer_context",
+            "creator_persona",
+            "scene_type",
+            "story_shape",
+            "proof_style",
+            "camera_idea",
+            "pace",
+            "scene",
+            "action",
+            "proof_moment",
+        ],
+        "creative_matrix": creative_matrix,
     }
     if args.output_file == "ugc_prompts.json" and canonical_prompt_path.exists():
         existing_output = load_json(canonical_prompt_path, {})
