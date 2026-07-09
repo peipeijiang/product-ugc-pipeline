@@ -1,5 +1,5 @@
 
-![Product UGC Pipeline](assets/logo/banner-wide.png)
+![Product UGC Pipeline](assets/logo/banner-github.png)
 
 [简体中文](README.md) | [English](README_EN.md)
 
