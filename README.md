@@ -1,5 +1,7 @@
 # Product UGC Pipeline
 
+![Product UGC Pipeline](assets/logo/banner-v2.png)
+
 [简体中文](README.md) | [English](README_EN.md)
 
 把商品链接转化为**商品认知文档、差异化 UGC 脚本、产品一致的首尾帧和可追溯短视频**的 AI 生产流水线。

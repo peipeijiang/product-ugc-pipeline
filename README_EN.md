@@ -1,5 +1,7 @@
 # Product UGC Pipeline
 
+![Product UGC Pipeline](assets/logo/banner-v2.png)
+
 [简体中文](README.md) | [English](README_EN.md)
 
 An AI production pipeline that turns ecommerce product URLs into **structured product intelligence, differentiated UGC scripts, product-faithful keyframes, and traceable short-form videos**.
