@@ -23,7 +23,7 @@ _logs/
 **/*.webm
 **/*.jpg
 **/*.jpeg
-**/*.png
+
 **/*.webp
 **/*.gif
 **/*.zip
