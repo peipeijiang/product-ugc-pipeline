@@ -1,32 +1,59 @@
-# macOS
-.DS_Store
-
-# Python/runtime
+# Python
 __pycache__/
 *.py[cod]
-.venv/
+*$py.class
+*.so
+.Python
+env/
 venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# API Keys
 .env
-.env.*
+*.key
+secrets/
 
-# Generated local outputs if someone runs the skill from inside this folder
+# Output
 product-ugc-output/
-*-ugc-output/
-outputs/
-exports/
-_logs/
+output/
+generated/
+*.mp4
+*.mov
+
+# Logs
 *.log
+logs/
 
-# Large media/artifacts
-**/*.mp4
-**/*.mov
-**/*.webm
-**/*.jpg
-**/*.jpeg
+# Test outputs
+tests/*/images/*.jpg
+tests/*/images/*.png
+tests/*/identity_lock/
+tests/*/usage_poses/
+tests/*/videos/
 
-**/*.webp
-**/*.gif
-**/*.zip
-
-# Local codegraph index
-.codegraph/
