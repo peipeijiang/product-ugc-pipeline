@@ -48,6 +48,36 @@ def generated_keyframe_paths(product_dir: Path, variant_id: int) -> list[Path]:
     return []
 
 
+def variant_reference_paths(product_dir: Path, variant: dict[str, Any]) -> list[Path]:
+    raw_paths = variant.get("reference_images") or []
+    if isinstance(raw_paths, str):
+        raw_paths = [raw_paths]
+    if not isinstance(raw_paths, list):
+        raise RuntimeError("reference_images must be a path string or a list of path strings")
+
+    paths: list[Path] = []
+    for raw_path in raw_paths:
+        path = Path(str(raw_path))
+        if not path.is_absolute():
+            path = product_dir / path
+        if not path.exists():
+            raise RuntimeError(f"Missing variant reference image: {path}")
+        paths.append(path)
+    return paths
+
+
+def unique_paths(paths: list[Path]) -> list[Path]:
+    seen: set[str] = set()
+    unique: list[Path] = []
+    for path in paths:
+        key = str(path.resolve())
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(path)
+    return unique
+
+
 def generated_start_end_paths(product_dir: Path, variant_id: int) -> tuple[Path, Path]:
     return (
         product_dir / "generated_images" / f"variant-{variant_id:02d}-start.png",
@@ -469,14 +499,18 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
             )
         reference_images = [start_frame, end_frame]
     else:
-        reference_images = generated_keyframe_paths(product_dir, variant_id)
+        reference_images = unique_paths(
+            generated_keyframe_paths(product_dir, variant_id)
+            + variant_reference_paths(product_dir, variant)
+        )
     if not reference_images:
         raise RuntimeError(f"Missing generated reference image(s) for variant {variant_id}")
     if args.single_reference:
         reference_images = reference_images[:1]
+    reference_limit = 7 if args.model == "omni_flash-10s" else 3 if args.model == "omni-flash" else 2
     uploads = upload_references(
         product_dir,
-        reference_images[:2],
+        reference_images[:reference_limit],
         args.upload_lifetime,
         args.upload_host,
         args.upload_retries,
