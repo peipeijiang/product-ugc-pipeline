@@ -44,18 +44,39 @@
 
 **Screen/LED content rule:** ONLY show screen content or LED colors that are visible in the source photo OR explicitly confirmed by user. Do NOT invent app UI, notification icons, battery percentage, time displays, or decorative graphics.
 
-## Character Sheet 适配（6视图参考 Higgsfield）
+## Reference Sheet 适配（单张 2×3 宫格）
 
-Electronics 需要更多视图覆盖所有接口和按键：
+Electronics 用**一张** 2×3 宫格参考图覆盖全部 6 个角度。单张生成的好处：宫格内各格产品身份天然一致（同一次生成不会画成 6 个不同产品），且视频模型一次就能读到全部角度。
 
-| View | Angle | Purpose |
-|---|---|---|
-| **Front view** | Product facing camera, primary functional surface visible | Main identity lock (silhouette, size, material) |
-| **45° angle** | Three-quarter view, showing thickness and contour | Depth perception, side buttons/ports |
-| **Side profile** | 90° side view, showing ports/buttons on edge | Port count + position verification |
-| **Top view** | Overhead, showing control surface | Button layout, LED indicator positions |
-| **In-use close-up** | Product in hand, correct grip, scale reference | Hand-to-product scale lock, interaction zone |
-| **Scale reference** | Product beside AA battery / credit card / phone | Absolute size anchor (prevent distortion) |
+规格：1024×1536（2:3 竖版），6 格等分，20px 白色分隔线，顶部横幅写产品名，底部标注尺寸锁定值。
+
+| Panel | 位置 | Angle | Purpose |
+|---|---|---|---|
+| 1 | 上左 | Front view | 主身份锁（轮廓、尺寸、材质） |
+| 2 | 上中 | 45° angle | 厚度与曲面，侧面按键/接口 |
+| 3 | 上右 | Side profile 90° | 接口数量 + 位置验证 |
+| 4 | 下左 | Top view | 按键布局，LED 指示灯位置 |
+| 5 | 下中 | In-use close-up | 手持比例锁，交互区 |
+| 6 | 下右 | Scale reference | 绝对尺寸锚（AA 电池 / 信用卡 / 手机） |
+
+**Prompt 骨架：**
+
+```
+Create a 2×3 product reference sheet (1024×1536, portrait) of {product}:
+Panel 1 (top-left): front view, primary functional surface
+Panel 2 (top-center): 45° angle, thickness and contour
+Panel 3 (top-right): side profile 90°, all ports/buttons on edge
+Panel 4 (bottom-left): top view, button layout + LED positions
+Panel 5 (bottom-center): in-use close-up, correct hand grip
+Panel 6 (bottom-right): beside {AA battery / credit card} for scale
+
+Dimensions locked: {exact mm} — scale authority 1.0
+Ports/buttons: {exact count and positions}
+Style: clean product grid, white background, studio light, 6 equal panels,
+20px white borders, header = product name, footer = dimension lock
+Negative: panel-to-panel distortion, different products across panels,
+text inside panels, phantom ports/buttons
+```
 
 **Dual-consistency check:**
 - [ ] Product identity matches 8维审图 (silhouette / size / material / function zones)
@@ -63,4 +84,3 @@ Electronics 需要更多视图覆盖所有接口和按键：
 - [ ] Port/button count + position correct
 - [ ] Interaction type correct (touch not press, plug orientation correct)
 - [ ] No phantom parts (cables/wires/buttons/text not in source)
-

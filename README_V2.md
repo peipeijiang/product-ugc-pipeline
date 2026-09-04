@@ -6,11 +6,11 @@
 
 | 类目 | 子类示例 | 审图维度 | 身份锁定视图 | 核心检查项 |
 |------|---------|---------|-------------|-----------|
-| **Apparel** (服装) | T恤、连衣裙、牛仔裤、外套 | 7要素 | 4视图 Character Sheet | 布料动态、版型、人脸8维 |
-| **Jewelry** (首饰) | 戒指、项链、耳环、手链 | 6维 | 3视图 + 特写 | 金属反光、佩戴位置精度 |
-| **Electronics** (电子产品) | 耳机、音箱、键盘、积木 | 8维 | 6视图 | 功能状态、交互类型、无幻觉零件 |
-| **Home Tools** (厨房工具) 🆕 | 菜刀、削皮刀、锅铲、滤网 | 7维 Tools | 5视图 | 食材交互物理、安全握持 |
-| **Pet Tools** (宠物工具) 🆕 | 宠物梳、牵引绳、宠物碗 | 7维 Tools | 5视图 + 宠物参考 | 宠物舒适度、物种匹配 |
+| **Apparel** (服装) | T恤、连衣裙、牛仔裤、外套 | 7要素 | 单张 2×2 宫格 | 布料动态、版型、人脸8维 |
+| **Jewelry** (首饰) | 戒指、项链、耳环、手链 | 6维 | 单张 1×3 宫格 | 金属反光、佩戴位置精度 |
+| **Electronics** (电子产品) | 耳机、音箱、键盘、积木 | 8维 | 单张 2×3 宫格 | 功能状态、交互类型、无幻觉零件 |
+| **Home Tools** (厨房工具) 🆕 | 菜刀、削皮刀、锅铲、滤网 | 7维 Tools | 单张宫格 3+2 | 食材交互物理、安全握持 |
+| **Pet Tools** (宠物工具) 🆕 | 宠物梳、牵引绳、宠物碗 | 7维 Tools | 单张宫格 3+2 + 宠物参考 | 宠物舒适度、物种匹配 |
 
 ## 🚀 快速开始
 
@@ -49,7 +49,7 @@ LAOZHANG_API_KEY=sk-xxx python scripts/analyze_materials.py product-ugc-output
 # 4. 构建产品简报
 LAOZHANG_API_KEY=sk-xxx python scripts/build_product_brief.py product-ugc-output
 
-# 5. 🆕 生成产品身份锁定（根据类目生成 4/3/6/5 视图）
+# 5. 🆕 生成产品身份锁定（每类目生成 1 张多宫格参考图）
 LAOZHANG_API_KEY=sk-xxx python scripts/generate_product_identity_lock.py product-ugc-output
 
 # 6. 🆕 生成使用姿态库（从类目 Detail Actions 生成）
@@ -83,13 +83,7 @@ product-ugc-output/
 │   ├── identity_lock/                   # 🆕 产品身份锁定（类目特定视图数）
 │   │   ├── manifest.json
 │   │   ├── category_spec.json           # 类目专属规格
-│   │   ├── view_0_front.png
-│   │   ├── view_1_45deg.png
-│   │   ├── view_2_side.png
-│   │   ├── view_3_top.png              # Electronics 专用
-│   │   ├── view_4_inuse.png
-│   │   └── view_5_scale.png             # Electronics 专用
-│   │
+│   │   ├── reference_sheet.png          # 单张多宫格（替代原多张单图）
 │   ├── usage_poses/                     # 🆕 使用姿态库（从 Detail Actions 生成）
 │   │   ├── manifest.json
 │   │   ├── panel_0_grip.png
@@ -122,11 +116,11 @@ python scripts/classify_product_category.py product-ugc-output
 
 不同类目生成不同数量的视图：
 
-- **Apparel**: 4视图 Character Sheet（Virtual Try-On 标准）
-- **Jewelry**: 3视图 + 1特写（改造 Accessories）
-- **Electronics**: 6视图（Higgsfield 风格，覆盖所有接口）
-- **Home Tools**: 5视图（平铺/侧面/45度/握持/尺寸参考）
-- **Pet Tools**: 5视图 + 宠物舒适度参考
+- **Apparel**: 单张 2×2 宫格（Virtual Try-On Character Sheet 标准）
+- **Jewelry**: 单张 1×3 宫格（正面/45°/微距，改造 Accessories）
+- **Electronics**: 单张 2×3 宫格（Higgsfield 风格，6 格覆盖所有接口）
+- **Home Tools**: 单张宫格 3+2（平铺/侧面/45度/握持/尺寸参考）
+- **Pet Tools**: 单张宫格 3+2 + 可选宠物舒适度宫格
 
 ### 3. 类目特定的 QC 检查
 
@@ -342,7 +336,7 @@ python scripts/qc_dual_consistency.py product-ugc-output --report qc_report.json
 | 维度 | v1 | v2 |
 |-----|----|----|
 | 覆盖类目 | 不明确 | 5大类明确定义 |
-| 身份锁定 | 无 | 多视图 Character Sheet |
+| 身份锁定 | 无 | 单张多宫格参考图 |
 | QC 检查 | 通用 | 类目专项检查 |
 | 翻车率 | ~40% | ~10% (预估) |
 

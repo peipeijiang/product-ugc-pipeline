@@ -11,7 +11,7 @@ Generate high-quality product UGC videos from e-commerce URLs with **5-category 
 ## ✨ What's New in v2
 
 - 🎯 **5 Product Categories**: Apparel, Jewelry, Electronics, Home Tools, Pet Tools
-- 🔒 **Category-Specific Identity Lock**: 4/3/6/5 reference views per category
+- 🔒 **Category-Specific Identity Lock**: one multi-panel grid reference sheet per category
 - 📊 **Dual-Consistency QC**: Product identity + usage correctness verification
 - 🤖 **Auto Classification**: Keyword + vision-based product categorization
 - 📐 **Custom Inspection Frameworks**: 7要素/6维/8维/7维Tools per category
@@ -54,11 +54,11 @@ bash run_pipeline.sh output
 
 | Category | Examples | Inspection | Views | Key Checks |
 |----------|----------|------------|-------|------------|
-| **Apparel** | T-shirts, dresses, jeans | 7要素 | 4-view | Fabric behavior, fit, face consistency |
-| **Jewelry** | Rings, necklaces, earrings | 6维 | 3-view + macro | Metal sheen, placement precision |
-| **Electronics** | Earbuds, speakers, keyboards | 8维 | 6-view | Function state, interaction type |
-| **Home Tools** 🆕 | Knives, peelers, spatulas | 7维 Tools | 5-view | Food interaction physics |
-| **Pet Tools** 🆕 | Brushes, leashes, bowls | 7维 Tools | 5-view | Pet comfort, species match |
+| **Apparel** | T-shirts, dresses, jeans | 7要素 | 1 sheet · 2×2 | Fabric behavior, fit, face consistency |
+| **Jewelry** | Rings, necklaces, earrings | 6维 | 1 sheet · 1×3 | Metal sheen, placement precision |
+| **Electronics** | Earbuds, speakers, keyboards | 8维 | 1 sheet · 2×3 | Function state, interaction type |
+| **Home Tools** 🆕 | Knives, peelers, spatulas | 7维 Tools | 1 sheet · 3+2 | Food interaction physics |
+| **Pet Tools** 🆕 | Brushes, leashes, bowls | 7维 Tools | 1 sheet · 3+2 | Pet comfort, species match |
 
 ## 🏗️ Architecture
 
@@ -71,7 +71,7 @@ Auto Classifier → Category (5 types)
     ↓
 Vision Analyzer → Material + Structure
     ↓
-Identity Lock Generator → Reference Views (4/3/6/5)
+Identity Lock Generator → Single Grid Reference Sheet
     ↓
 Usage Pose Generator → Action Panels
     ↓
@@ -130,10 +130,10 @@ python scripts/classify_product_category.py <output_folder> --force
 # Generate category-specific reference views
 LAOZHANG_API_KEY=sk-xxx python scripts/generate_product_identity_lock.py <output_folder>
 
-# Apparel → 4 views (Character Sheet)
-# Jewelry → 3 views + macro
-# Electronics → 6 views (all ports)
-# Home/Pet Tools → 5 views
+# Apparel → one 2×2 grid sheet
+# Jewelry → one 1×3 grid sheet
+# Electronics → one 2×3 grid sheet (all ports)
+# Home/Pet Tools → one grid sheet (3 top + 2 bottom)
 ```
 
 ### Quality Control
@@ -207,27 +207,27 @@ Each category has detailed specifications in `references/`:
 
 ### Apparel (7要素)
 - Primary color, neckline, shoulder line, sleeve type, waistline, length, fabric
-- 4-view Character Sheet
+- One 2×2 grid reference sheet (4 panels)
 - Fabric behavior validation
 
 ### Jewelry (6维)
 - Material, design, size, placement, closure, function
-- 3-view + macro detail
+- One 1×3 grid reference sheet (front / 45° / macro)
 - Metal sheen + placement precision
 
 ### Electronics (8维)
 - Identity, silhouette, size, material, function zones, state, interaction, accessories
-- 6-view (all interfaces)
+- One 2×3 grid reference sheet (all interfaces in 6 panels)
 - Interaction type + no-phantom-parts
 
 ### Home Tools (7维 Tools)
 - Type, material, functional parts, size, handle, features, mechanics
-- 5-view + scale reference
+- One grid reference sheet (5 panels incl. scale)
 - Food interaction physics
 
 ### Pet Tools (7维 Tools)
 - Type, material, functional parts, size, handle, safety features, mechanics
-- 5-view + pet reference
+- One grid reference sheet (5 panels) + optional pet-comfort sheet
 - Pet comfort check (body language)
 
 ## 🤝 Contributing

@@ -53,19 +53,35 @@ impossible clasp position (back of neck visible from front angle)
 | **Bracelet** | Wrist position (loose slide / snug fit / above wrist bone) | Inner circumference vs wrist diameter |
 | **Brooch** | Garment placement (lapel / collar / chest pocket) | Brooch size vs garment scale |
 
-## Character Sheet 适配（4视图 → 3视图 + 1特写）
+## Reference Sheet 适配（单张 1×3 宫格）
 
-Jewelry 不需要 90° 侧面全身图，改为：
+Jewelry 不需要 90° 侧面全身图，用**一张** 1×3 横向宫格覆盖 3 个角度即可。单张生成保证三格首饰身份、金属色调一致。
 
-| View | Pose | Purpose |
-|---|---|---|
-| **Front close-up** | Jewelry on body, face visible for scale | Overall placement + scale verification |
-| **45° detail** | Three-quarter angle, jewelry + skin interaction | Depth, drape (necklace), weight distribution |
-| **Extreme macro** | Jewelry only, no body | Material finish, stone setting, clasp detail, hallmark |
+规格：1536×512（3:1 横版），3 格等分，20px 白色分隔线，底部标注佩戴位置锁定。
+
+| Panel | 位置 | Pose | Purpose |
+|---|---|---|---|
+| 1 | 左 | Front close-up | 佩戴位置 + 与身体的比例验证 |
+| 2 | 中 | 45° detail | 景深、垂坠（项链）、重量分布 |
+| 3 | 右 | Extreme macro | 材质表面、镶嵌、扣合细节 |
+
+**Prompt 骨架：**
+
+```
+Create a 1×3 horizontal reference sheet (1536×512) of {jewelry}:
+Panel 1 (left): front close-up, worn on body, placement + scale visible
+Panel 2 (center): 45° detail, jewelry + skin interaction, drape/weight
+Panel 3 (right): extreme macro, jewelry only, material finish + clasp
+
+Size locked: {ring inner diameter mm / chain length cm} — scale authority 1.0
+Placement locked: {which finger + above/below knuckle | chest position}
+Style: clean jewelry grid, neutral background, 3 equal panels, 20px white borders
+Negative: floating jewelry, plastic-looking metal, cross-panel color drift,
+wrong size, invented hallmarks
+```
 
 **Dual-consistency check:**
 - [ ] Jewelry matches 6维审图 (material / structure / size / placement / closure / function)
 - [ ] Scale accurate (ring fits finger / necklace length correct / earring proportional)
 - [ ] Metal sheen realistic (follows light source, not plastic-looking)
 - [ ] No floating (jewelry touches skin at all contact points)
-

@@ -380,33 +380,33 @@ Product UGC Pipeline v2 extends support to **5 product categories**:
 
 1. **Apparel** (服装) - tops, pants, dresses, outerwear, skirts, swimwear, lingerie, bridal, costume
    - Uses Virtual Try-On Video's 7要素 framework
-   - 4-view Character Sheet
+   - One 2×2 grid reference sheet (4 panels)
    - Dual-consistency check (face 8维 + garment 7要素)
 
 2. **Jewelry** (首饰) - rings, necklaces, earrings, bracelets, watches
    - Custom 6维审图 framework
-   - 3-view + macro detail
+   - One 1×3 grid reference sheet (front / 45° / macro)
    - Placement precision check (ring finger size, necklace chain length)
 
 3. **Electronics** (电子产品/玩具) - earbuds, speakers, keyboards, toy blocks
    - Custom 8维审图 framework
-   - 6-view reference (all ports/buttons coverage)
+   - One 2×3 grid reference sheet (all ports/buttons in 6 panels)
    - Interaction type check (touch vs press), functional state validation
 
 4. **Home Tools** (厨房/家居工具) 🆕 - knife, peeler, grater, spatula, scissors
    - Custom 7维 Tools framework
-   - 5-view reference (flat-lay, side, 45°, in-use grip, scale)
+   - One grid reference sheet: flat-lay, side, 45°, in-use grip, scale (5 panels)
    - Food interaction physics check (blade angle, peel behavior)
 
 5. **Pet Tools** (宠物工具) 🆕 - brush, comb, nail clipper, leash, collar, bowl
    - Custom 7维 Tools framework (pet-specialized)
-   - 5-view + pet comfort reference
+   - One grid reference sheet (5 panels) + optional pet-comfort sheet
    - Pet comfort check (body language: relaxed/enjoying/accepting vs distressed)
 
 ### New Scripts
 
 - `scripts/classify_product_category.py` - Auto-classify products into 5 categories
-- `scripts/generate_product_identity_lock.py` - Generate category-specific identity views (4/3/6/5 views)
+- `scripts/generate_product_identity_lock.py` - Generate one category-specific multi-panel grid reference sheet
 - `scripts/generate_usage_pose_sheet.py` - Generate usage pose library from Detail Actions
 - `scripts/qc_dual_consistency.py` - Category-specific QC checks
 - `scripts/create_test_cases.py` - Create 5-product test suite

@@ -38,15 +38,32 @@
 | 3 | Show key feature (flexible silicone spatula bending / measuring cup with clear marks) — proves advertised feature | ⚠️ Semi-verifiable: feature must be visible OR user-confirmed | Close-up, tool, 3s |
 | 4 | Place tool in kitchen context (on cutting board / in drawer organizer) — shows realistic use scenario | ✅ Verifiable: tool size allows placement | Mid-shot, tool + context, 2s |
 
-## Character Sheet 适配
+## Reference Sheet 适配（单张宫格）
 
-Home tools need 5 views:
+Home tools 用**一张**宫格参考图覆盖 5 个角度，上排 3 格 + 下排 2 格。单张生成保证各格工具身份一致。
 
-| View | Purpose |
-|---|---|
-| Top-down flat-lay | Full silhouette, all parts visible |
-| Side profile | Blade geometry, handle curve |
-| 45° detail | Grip zone + functional part |
-| In-use grip | Hand holding tool, scale vs hand |
-| Scale reference | Tool beside common item |
+规格：1024×1024，5 格（上 3 下 2），20px 白色分隔线，底部标注尺寸锁定。
 
+| Panel | 位置 | View | Purpose |
+|---|---|---|---|
+| 1 | 上左 | Top-down flat-lay | 完整轮廓，所有部件可见 |
+| 2 | 上中 | Side profile | 刀刃几何角度，手柄曲线 |
+| 3 | 上右 | 45° detail | 握持区 + 功能部件关系 |
+| 4 | 下左 | In-use grip | 手持工具，与手的比例 |
+| 5 | 下右 | Scale reference | 与常见物品（信用卡 / 苹果）对比 |
+
+**Prompt 骨架：**
+
+```
+Create a single reference sheet (1024×1024) of {tool}, 5 panels (3 top + 2 bottom):
+Panel 1: top-down flat-lay, full silhouette
+Panel 2: side profile, blade angle + handle curve
+Panel 3: 45° detail, grip zone + functional part
+Panel 4: hand holding tool, correct grip, scale vs hand
+Panel 5: tool beside {credit card / apple} for scale
+
+Dimensions locked: {exact cm} — scale authority 1.0
+Style: clean product grid, white background, studio light, 20px white borders
+Negative: cross-panel distortion, different tools across panels, phantom blades,
+invented brand text
+```

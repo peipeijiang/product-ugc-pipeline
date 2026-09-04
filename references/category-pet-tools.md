@@ -57,21 +57,37 @@ All pet tools must be used safely. Do not generate videos showing:
 - Unsafe human grip (pulling fur, bending limbs unnaturally)
 - Choking hazards
 
-## Character Sheet 适配
+## Reference Sheet 适配（单张宫格）
 
-Pet tools need 5 views + optional pet reference:
+Pet tools 用**一张**宫格参考图覆盖 5 个角度，上排 3 格 + 下排 2 格。单张生成保证各格工具身份一致。
 
-| View | Purpose |
-|---|---|
-| Flat-lay with scale | Full silhouette, functional parts visible |
-| Side profile | Ergonomics, bristle length, blade angle |
-| 45° detail | Grip zone + functional part |
-| In-use with pet | Hand using tool on pet (fur/paw), pet calm |
-| Scale reference with pet | Tool beside pet or in context with pet size |
+规格：1024×1024，5 格（上 3 下 2），20px 白色分隔线，底部标注尺寸与适配宠物体型。
 
-**Optional: Pet comfort reference sheet**
-If user wants to ensure pet looks comfortable:
-- 3 poses: relaxed / enjoying / accepting
-- Same pet identity across all poses
-- Use as @pet_ref{0.70} to guide pet body language
+| Panel | 位置 | View | Purpose |
+|---|---|---|---|
+| 1 | 上左 | Flat-lay with scale | 完整轮廓，功能部件可见 |
+| 2 | 上中 | Side profile | 人机工学、梳齿长度、刀刃角度 |
+| 3 | 上右 | 45° detail | 握持区 + 功能部件 |
+| 4 | 下左 | In-use with pet | 手持工具作用于宠物毛发/爪部，宠物平静 |
+| 5 | 下右 | Scale reference with pet | 与宠物体型对比 |
 
+**Prompt 骨架：**
+
+```
+Create a single reference sheet (1024×1024) of {pet tool}, 5 panels (3 top + 2 bottom):
+Panel 1: flat-lay, full silhouette + functional parts
+Panel 2: side profile, bristle length / blade angle
+Panel 3: 45° detail, grip zone
+Panel 4: hand using tool on {cat/dog} fur, pet relaxed (ears forward, eyes soft)
+Panel 5: tool beside pet for size appropriateness
+
+Dimensions locked: {exact cm} — scale authority 1.0
+Target pet: {species + size range}
+Style: clean product grid, neutral background, 20px white borders
+Negative: cross-panel distortion, pet distress (ears back, wide eyes, escaping),
+wrong species, teeth digging into skin, phantom electric features
+```
+
+**可选：宠物舒适度宫格**
+
+如需强化宠物体态控制，再出**一张** 1×3 宫格：放松 / 享受 / 接受三种体态，同一宠物身份，作为 `@pet_ref{0.70}` 使用。
