@@ -1,0 +1,47 @@
+{
+  "product_name": "陶瓷削皮刀",
+  "confidence": "high",
+  "confirmed_identity": {
+    "工具类型": "Y型削皮刀",
+    "主体材质": "蓝色ABS塑料手柄 黑色陶瓷刀片",
+    "功能部件": "Y型刀片宽4cm 刀刃锋利 两侧有削皮槽",
+    "尺寸规格": "总长17cm 手柄长11cm 刀片宽4cm",
+    "手柄设计": "人体工学弧形 表面磨砂防滑",
+    "功能特征": "陶瓷刀片不生锈 削皮薄而均匀",
+    "机械结构": "一体成型 无活动部件"
+  },
+  "step_by_step_usage": [
+    {
+      "step": 1,
+      "action": "手握削皮刀手柄，刀片朝前",
+      "evidence": "page_text"
+    },
+    {
+      "step": 2,
+      "action": "另一手固定苹果，削皮刀刀片贴近苹果表面",
+      "evidence": "image_analysis"
+    },
+    {
+      "step": 3,
+      "action": "刀片角度20度左右，向下缓慢拉动，苹果皮呈带状脱落",
+      "evidence": "inference"
+    },
+    {
+      "step": 4,
+      "action": "削皮完成，展示光滑苹果表面",
+      "evidence": "inference"
+    }
+  ],
+  "hallucination_defense": {
+    "phantom_parts": [
+      "无额外刀片",
+      "无品牌文字",
+      "无折叠结构"
+    ],
+    "shape_preservation": "Y型结构 手柄直 刀片Y型开叉",
+    "material_texture_lock": "蓝色塑料哑光 黑色陶瓷有轻微反光",
+    "action_bounds": "可以削皮、展示、清洗；不能切硬物、不能弯曲刀片",
+    "context_contamination": "不能出现金属菜刀、砧板上的切菜动作",
+    "scale_anchor": "总长17cm 相当于成人手掌宽度+1个手指"
+  }
+}

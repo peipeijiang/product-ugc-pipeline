@@ -373,3 +373,65 @@ Before delivering outputs, inspect `materials.md`, `image_analysis.json`, and `u
 - Prompt generation: do not use LK888 media/video models as prompt writers. For small ad-hoc rerolls where Codex has enough product context, Codex may directly author and append/rewrite variants in `ugc_prompts.json`; record this in `prompt_history` with a manual rewrite note.
 - Prompt generation: prefer direct Codex-authored prompts instead of calling an external chat model when any of these are true: the user has given a clear creative direction, the product has already been analyzed in this thread, previous model prompts missed the selling point, the task is a small reroll for one known product, or external prompt models are timing out / returning malformed JSON. This is not a dry-run fallback; it is the canonical creative-planning path. Codex must still ground the prompts in `product_manifest.json`, `image_analysis.json`, `product_brief.json`, and prior `ugc_prompts.json`, then append a `prompt_history` entry describing why direct authoring was used.
 - Prompt generation: use history-aware mode by default. `generate_ugc_prompts.py` passes the full prior `ugc_prompts*.json` history into the model context so the model can directly avoid repeating older scenes, actions, proof moments, buyer contexts, and selling angles.
+
+## v2 New Features (2026-09-04)
+
+Product UGC Pipeline v2 extends support to **5 product categories**:
+
+1. **Apparel** (服装) - tops, pants, dresses, outerwear, skirts, swimwear, lingerie, bridal, costume
+   - Uses Virtual Try-On Video's 7要素 framework
+   - 4-view Character Sheet
+   - Dual-consistency check (face 8维 + garment 7要素)
+
+2. **Jewelry** (首饰) - rings, necklaces, earrings, bracelets, watches
+   - Custom 6维审图 framework
+   - 3-view + macro detail
+   - Placement precision check (ring finger size, necklace chain length)
+
+3. **Electronics** (电子产品/玩具) - earbuds, speakers, keyboards, toy blocks
+   - Custom 8维审图 framework
+   - 6-view reference (all ports/buttons coverage)
+   - Interaction type check (touch vs press), functional state validation
+
+4. **Home Tools** (厨房/家居工具) 🆕 - knife, peeler, grater, spatula, scissors
+   - Custom 7维 Tools framework
+   - 5-view reference (flat-lay, side, 45°, in-use grip, scale)
+   - Food interaction physics check (blade angle, peel behavior)
+
+5. **Pet Tools** (宠物工具) 🆕 - brush, comb, nail clipper, leash, collar, bowl
+   - Custom 7维 Tools framework (pet-specialized)
+   - 5-view + pet comfort reference
+   - Pet comfort check (body language: relaxed/enjoying/accepting vs distressed)
+
+### New Scripts
+
+- `scripts/classify_product_category.py` - Auto-classify products into 5 categories
+- `scripts/generate_product_identity_lock.py` - Generate category-specific identity views (4/3/6/5 views)
+- `scripts/generate_usage_pose_sheet.py` - Generate usage pose library from Detail Actions
+- `scripts/qc_dual_consistency.py` - Category-specific QC checks
+- `scripts/create_test_cases.py` - Create 5-product test suite
+
+### New Category Definition Files
+
+- `references/category-home-tools.md` - Kitchen/home tools complete spec
+- `references/category-pet-tools.md` - Pet tools complete spec
+- `references/category-jewelry.md` - Jewelry independent spec
+- `references/category-electronics.md` - Electronics complete spec
+
+### Usage Example
+
+```bash
+# 1. Auto-classify products
+python scripts/classify_product_category.py product-ugc-output
+
+# 2. Analyze with category-specific dimensions
+LAOZHANG_API_KEY=sk-xxx python scripts/analyze_materials.py product-ugc-output
+
+# 3. Generate category-specific identity lock
+LAOZHANG_API_KEY=sk-xxx python scripts/generate_product_identity_lock.py product-ugc-output
+
+# 4-10. Continue with standard pipeline...
+```
+
+See `README_V2.md` for complete documentation.
+

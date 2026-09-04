@@ -1,0 +1,42 @@
+{
+  "product_name": "纯黑色圆领短袖T恤",
+  "confidence": "high",
+  "confirmed_identity": {
+    "主色": "纯黑色",
+    "领口": "圆领",
+    "肩线": "落肩设计",
+    "袖型": "短袖 袖长至上臂中部",
+    "腰线": "直筒",
+    "衣长": "中长款 覆盖腰部",
+    "面料": "纯棉针织 表面光滑无起球"
+  },
+  "step_by_step_usage": [
+    {
+      "step": 1,
+      "action": "展开T恤，展示正面版型",
+      "evidence": "page_text"
+    },
+    {
+      "step": 2,
+      "action": "穿上T恤，展示肩线和袖长",
+      "evidence": "image_analysis"
+    },
+    {
+      "step": 3,
+      "action": "转身展示背面和衣长",
+      "evidence": "inference"
+    }
+  ],
+  "hallucination_defense": {
+    "phantom_parts": [
+      "无口袋",
+      "无图案",
+      "无拉链",
+      "无帽子"
+    ],
+    "shape_preservation": "直筒版型 不能变成修身或oversize",
+    "material_texture_lock": "纯棉针织 不能变成丝绸或牛仔",
+    "action_bounds": "可以穿脱、展示、叠放；不能淋湿、剪裁、染色",
+    "scale_anchor": "成人T恤 肩宽45-50cm"
+  }
+}

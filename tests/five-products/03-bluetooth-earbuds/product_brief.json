@@ -1,0 +1,49 @@
+{
+  "product_name": "无线蓝牙耳机",
+  "confidence": "high",
+  "confirmed_identity": {
+    "产品身份": "无线蓝牙耳机 半入耳式 左右独立",
+    "外观轮廓": "卵形耳机头 细长柄 充电盒椭圆形",
+    "尺寸规格": "耳机31mm×17mm×20mm 充电盒60mm×45mm×25mm",
+    "材质表面": "哑光白色塑料外壳 硅胶耳帽",
+    "功能区域": "触控面板在柄部上方 充电盒顶部有LED指示灯",
+    "功能状态": "LED指示灯（白色=充满 红色=充电中）",
+    "交互类型": "触控操作（轻触1次=播放/暂停 触2次=下一曲）",
+    "配件组件": "充电盒 USB-C充电线"
+  },
+  "step_by_step_usage": [
+    {
+      "step": 1,
+      "action": "打开充电盒盖，耳机在盒内",
+      "evidence": "page_text"
+    },
+    {
+      "step": 2,
+      "action": "手指取出右耳机，握住耳机柄",
+      "evidence": "image_analysis"
+    },
+    {
+      "step": 3,
+      "action": "轻触柄部触控区（平面无凹陷）",
+      "evidence": "page_text"
+    },
+    {
+      "step": 4,
+      "action": "将耳机戴入耳朵，半入耳状态",
+      "evidence": "inference"
+    }
+  ],
+  "hallucination_defense": {
+    "phantom_parts": [
+      "无物理按键",
+      "无电线",
+      "无麦克风孔（内置）",
+      "无品牌LOGO"
+    ],
+    "shape_preservation": "卵形+细柄 充电盒椭圆形 不能变圆形或方形",
+    "material_texture_lock": "哑光白色塑料 不能变金属或透明",
+    "action_bounds": "可以取出、戴入、触控；不能按压（触控区是平面）",
+    "context_contamination": "不能出现有线耳机线、头戴式耳机头梁",
+    "scale_anchor": "耳机长31mm 相当于成人食指第一节长度"
+  }
+}

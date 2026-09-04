@@ -33,7 +33,7 @@ def classify_by_keywords(title: str) -> tuple[str | None, float]:
     apparel_keywords = [
         "shirt", "dress", "pants", "jacket", "coat", "skirt", "sweater", "hoodie",
         "t-shirt", "jeans", "blazer", "vest", "shorts", "leggings", "swimsuit",
-        "衬衫", "连衣裙", "裤子", "外套", "裙子", "毛衣", "卫衣", "牛仔裤"
+        "衬衫", "连衣裙", "裤子", "外套", "裙子", "毛衣", "卫衣", "牛仔裤", "tshirt", "t恤"
     ]
     
     # 首饰关键词
@@ -46,7 +46,7 @@ def classify_by_keywords(title: str) -> tuple[str | None, float]:
     electronics_keywords = [
         "earbuds", "speaker", "charger", "mouse", "keyboard", "power bank",
         "headphone", "airpods", "smartwatch", "cable", "adapter", "usb",
-        "耳机", "音箱", "充电", "键盘", "鼠标", "充电宝", "数据线"
+        "耳机", "音箱", "充电", "键盘", "鼠标", "充电宝", "数据线", "蓝牙"
     ]
     
     # 积木玩具关键词（归入 electronics）
@@ -58,14 +58,14 @@ def classify_by_keywords(title: str) -> tuple[str | None, float]:
     home_tools_keywords = [
         "knife", "peeler", "grater", "strainer", "spatula", "whisk", 
         "measuring cup", "scissors", "opener", "cutting board", "utensil",
-        "菜刀", "削皮刀", "刨丝器", "滤网", "锅铲", "打蛋器", "量杯", "剪刀", "厨具"
+        "菜刀", "削皮刀", "刨丝器", "滤网", "锅铲", "打蛋器", "量杯", "剪刀", "厨具", "削皮"
     ]
     
     # 宠物工具关键词
     pet_tools_keywords = [
         "pet brush", "pet comb", "nail clipper", "dog leash", "cat collar",
         "pet bowl", "pet toy", "grooming", "de-shedding", "cat", "dog",
-        "宠物梳", "宠物指甲剪", "牵引绳", "宠物项圈", "宠物碗", "宠物玩具", "猫", "狗"
+        "宠物梳", "宠物指甲剪", "牵引绳", "宠物项圈", "宠物碗", "宠物玩具", "猫", "狗", "猫咪", "脱毛"
     ]
     
     # 检查匹配
@@ -178,7 +178,7 @@ def main():
     
     print(f"\n开始分类 {len(product_folders)} 个产品...\n")
     
-    results = 
+    results = {}
     for folder in product_folders:
         print(f"处理: {folder.name}")
         try:

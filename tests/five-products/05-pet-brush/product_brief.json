@@ -1,0 +1,63 @@
+{
+  "product_name": "猫咪脱毛梳",
+  "confidence": "high",
+  "confirmed_identity": {
+    "工具类型": "脱毛梳 针对长毛猫",
+    "主体材质": "蓝色ABS塑料手柄 不锈钢梳齿",
+    "功能部件": "梳齿密度中等 齿长15mm 梳头宽6cm",
+    "尺寸规格": "总长15cm 梳头宽6cm 厚度2cm",
+    "手柄设计": "人体工学握柄 防滑纹理",
+    "宠物安全特征": "梳齿圆头 不刮伤皮肤",
+    "机械结构": "一键清理按钮 可弹出收集的毛发"
+  },
+  "step_by_step_usage": [
+    {
+      "step": 1,
+      "action": "猫咪坐在沙发上，身体放松",
+      "evidence": "page_text"
+    },
+    {
+      "step": 2,
+      "action": "手握脱毛梳，梳齿朝下",
+      "evidence": "image_analysis"
+    },
+    {
+      "step": 3,
+      "action": "从猫咪头部向尾部方向缓慢梳理，顺毛方向",
+      "evidence": "inference"
+    },
+    {
+      "step": 4,
+      "action": "梳齿收集浮毛，按清理按钮弹出毛团",
+      "evidence": "page_text"
+    }
+  ],
+  "hallucination_defense": {
+    "phantom_parts": [
+      "无电动马达",
+      "无品牌LOGO",
+      "无额外刷头"
+    ],
+    "shape_preservation": "长方形梳头 直柄 梳齿垂直向下",
+    "material_texture_lock": "蓝色塑料哑光 不锈钢梳齿有金属光泽",
+    "action_bounds": "可以梳毛、清理浮毛、按按钮；不能逆毛梳、不能戳猫",
+    "context_contamination": "不能出现狗、小型宠物（仓鼠）、人类用的梳子",
+    "scale_anchor": "总长15cm 适合单手握持"
+  },
+  "pet_comfort_requirements": {
+    "target_pet": "长毛猫（橘猫/布偶/波斯等）",
+    "acceptable_body_language": [
+      "坐姿放松，耳朵自然朝前",
+      "眼睛半闭或温和注视",
+      "身体微微前倾（享受）或保持静止（接受）",
+      "尾巴平放或缓慢摆动"
+    ],
+    "forbidden_body_language": [
+      "耳朵后贴",
+      "瞳孔放大、眼睛瞪圆",
+      "身体紧绷、试图逃跑",
+      "尾巴炸毛或快速甩动",
+      "发出嘶嘶声或低吼"
+    ]
+  }
+}

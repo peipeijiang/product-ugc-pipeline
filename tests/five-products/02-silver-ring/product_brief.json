@@ -1,0 +1,46 @@
+{
+  "product_name": "925纯银戒指",
+  "confidence": "high",
+  "confirmed_identity": {
+    "材质色调": "925纯银 抛光光面 银白色",
+    "款式结构": "简约素圈 开口可调节设计",
+    "尺寸规格": "内径17mm 宽度3mm 厚度1.5mm",
+    "佩戴位置": "无名指或中指 戒圈位于指节上方",
+    "扣合机制": "开口设计 可微调松紧",
+    "功能细节": "可调节大小 适合16-18号指围"
+  },
+  "step_by_step_usage": [
+    {
+      "step": 1,
+      "action": "展示戒指平铺状态，可见开口",
+      "evidence": "page_text"
+    },
+    {
+      "step": 2,
+      "action": "慢慢戴入无名指，停在指节上方",
+      "evidence": "image_analysis"
+    },
+    {
+      "step": 3,
+      "action": "旋转手部，展示金属反光",
+      "evidence": "inference"
+    },
+    {
+      "step": 4,
+      "action": "特写开口处，展示可调节设计",
+      "evidence": "page_text"
+    }
+  ],
+  "hallucination_defense": {
+    "phantom_parts": [
+      "无宝石",
+      "无雕刻",
+      "无链条",
+      "无品牌LOGO"
+    ],
+    "shape_preservation": "圆环形 开口约2mm 不能闭合成完整圆",
+    "material_texture_lock": "银白色金属 镜面抛光 有金属反光",
+    "action_bounds": "可以戴上、取下、旋转；不能弯曲过度、不能变形",
+    "scale_anchor": "内径17mm 相当于成人女性无名指尺寸"
+  }
+}
