@@ -57,3 +57,6 @@ tests/*/identity_lock/
 tests/*/usage_poses/
 tests/*/videos/
 
+
+# CodeGraph local index
+.codegraph/
