@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from common import load_json, multipart_request, request_json, require_api_key_for_base_url, save_response_image, selected_product_dirs, write_json
+import v2_contract as v2
 
 
 def parse_variants(value: str) -> set[int]:
@@ -41,6 +42,8 @@ def first_existing_reference(product_dir: Path, variant: dict[str, Any]) -> Path
 
 
 def existing_references(product_dir: Path, variant: dict[str, Any], max_references: int = 1) -> list[Path]:
+    if v2.active(product_dir):
+        return v2.scene_references(product_dir, "start", int(variant.get("variant_id", 0)))
     references: list[Path] = []
     seen: set[Path] = set()
 
@@ -92,6 +95,8 @@ def keyframe_references(
     frame_role: str,
     max_references: int,
 ) -> list[Path]:
+    if v2.active(product_dir):
+        return v2.scene_references(product_dir, frame_role, int(variant.get("variant_id", 0)))
     base_references = existing_references(product_dir, variant, max_references=max(1, max_references))
     if frame_role != "end":
         return base_references
@@ -105,7 +110,6 @@ def keyframe_references(
             if len(chained) >= max(1, max_references):
                 break
         return chained
-    return base_references
     return base_references
 
 
@@ -168,6 +172,22 @@ def generate_image_file(
     variant_id = int(variant.get("variant_id", 0))
     references = reference_override or existing_references(product_dir, variant, max_references=max(1, args.max_reference_images))
     reference = references[0] if references else None
+    scene_v2 = v2.active(product_dir) and destination.parent.name == "generated_images"
+    provenance = destination.with_suffix(".provenance.json")
+    if scene_v2:
+        if args.compose_only:
+            raise RuntimeError("v2 usage scenes require model-generated frames")
+        prompt += "\n" + v2.guidance(product_dir)
+        prompt += "\nOutput ONE undivided vertical 9:16 scene photograph. Never reproduce reference panel borders, labels or layout."
+        if destination.name.endswith("-end.png"):
+            prompt += "\nImage 1 is the generated start scene: person/room continuity only. Image 2 is the REAL canonical product; later images are secondary guidance."
+        else:
+            prompt += "\nImage 1 is the REAL canonical product; later images are secondary guidance."
+        expected = {"references": v2.hashes(product_dir, references), "prompt": prompt, "model": args.model, "base_url": args.base_url}
+        if destination.exists() and not args.force:
+            previous = load_json(provenance, {})
+            if any(previous.get(k) != value for k, value in expected.items()) or previous.get("sha256") != v2.digest(destination):
+                raise RuntimeError(f"Stale or v1 frame {destination.name}; regenerate with --force for the v2 chain")
     if destination.exists() and not args.force:
         return {
             "variant_id": variant_id,
@@ -239,6 +259,10 @@ def generate_image_file(
             payload["quality"] = args.quality
         response = request_json("/images/generations", api_key, payload, base_url=args.base_url, timeout=args.timeout)
     saved_path = save_response_image(response, destination)
+    if scene_v2:
+        if not saved_path:
+            raise RuntimeError("Image2 response did not contain a saved scene frame")
+        write_json(provenance, {**expected, "sha256": v2.digest(destination)})
     return {
         "variant_id": variant_id,
         "status": "saved" if saved_path else "response_without_saved_image",
@@ -320,7 +344,7 @@ def main() -> None:
     args = parser.parse_args()
     selected_variants = parse_variants(args.variants)
     api_key = "local-compose" if args.compose_only else require_api_key_for_base_url(args.base_url)
-    for product_dir in selected_product_dirs(args.output_dir, args.products):
+    for product_dir in v2.products(args.output_dir, args.products):
         process_product(product_dir, api_key, selected_variants, args)
 
 

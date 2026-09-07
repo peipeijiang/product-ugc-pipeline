@@ -5,6 +5,8 @@
 
 An AI production pipeline that turns ecommerce product URLs into **structured product intelligence, differentiated UGC scripts, product-faithful keyframes, and traceable short-form videos**.
 
+> v2 is implemented on branch `v2-five-categories`. It adds one multi-panel identity sheet per product, a source-backed ordered action ledger, category-aware visual QC, and provenance gates before video submission. The default usage ledger reuses the same sheet; it does not create separate panel images. See [the Chinese README](README.md) and [v2 implementation notes](README_V2.md) for current commands and limitations.
+
 `product-ugc-pipeline` is a Codex Skill for cross-border ecommerce and creator-style product ads. Instead of guessing from a product title, it first establishes the product's real appearance, usage mechanics, and commercial promise. It then designs buyer-centered ad concepts and generates reference images with Image2 and production videos with VEO.
 
 ## Why This Exists
@@ -241,6 +243,10 @@ product-ugc-output/
 | `scripts/analyze_materials.py` | Analyze appearance, structure, and reference value |
 | `scripts/build_product_brief.py` | Build identity, usage, claims, and risk controls |
 | `scripts/generate_ugc_prompts.py` | Generate benefit-led, history-aware UGC prompts |
+| `scripts/classify_product_category.py` | Classify the five supported product categories |
+| `scripts/generate_product_identity_lock.py` | Generate one category-specific multi-panel sheet |
+| `scripts/generate_usage_pose_sheet.py` | Build the ordered action ledger; reuse the identity sheet by default |
+| `scripts/qc_dual_consistency.py` | Run evidence-grounded visual QC for sheets, frames, or sampled video frames |
 | `scripts/generate_images.py` | Create product-faithful start and end frames with Image2 |
 | `scripts/generate_videos_lk888.py` | Generate videos through LK888/updrama VEO |
 | `scripts/parallel_pipeline.py` | Poll and cascade start frames, end frames, and videos |
@@ -259,9 +265,9 @@ The production workflow follows a fail-fast contract:
 - Apply separate voiceover word budgets for 8-second and 10-second videos.
 - No subtitles, platform icons, or social-media UI; only sparse non-caption feature tags are allowed.
 
-## Audited Production Snapshot
+## Historical v1 Production Snapshot
 
-Snapshot dated `2026-06-29`:
+Snapshot dated `2026-06-29`. These figures describe historical v1 production activity; they are not a v2 five-category quality benchmark and do not prove a failure-rate reduction:
 
 | Metric | Count |
 |---|---:|
@@ -295,4 +301,4 @@ Evidence:
 
 ## License
 
-This repository currently documents an internal AI product-UGC production workflow. Add an explicit open-source license before public distribution or commercial reuse.
+Repository code is licensed under [LICENSE](LICENSE). External referenced projects retain their own licenses; Virtual Try-On Video's personal non-commercial terms still apply to material derived from it.

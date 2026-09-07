@@ -479,10 +479,12 @@ def poll_task(api_key: str, task_id: str, base_url: str, poll_seconds: int, stat
 
 
 def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, args: argparse.Namespace) -> dict[str, Any]:
+    from v2_contract import active, check_existing_video, record_video, require_qc, validate_scene_chain, video_contract
     variant_id = int(variant.get("variant_id", 0))
     output_dir = existing_video_dir(product_dir)
     output_path = output_dir / f"variant-{variant_id:02d}.mp4"
-    if output_path.exists() and not args.force:
+    v2_active = active(product_dir)
+    if output_path.exists() and not args.force and not v2_active:
         return {"variant_id": variant_id, "status": "skipped_existing", "output_path": str(output_path.relative_to(product_dir))}
     if is_veo_model(args.model):
         if args.single_reference:
@@ -507,7 +509,27 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
         raise RuntimeError(f"Missing generated reference image(s) for variant {variant_id}")
     if args.single_reference:
         reference_images = reference_images[:1]
+    if v2_active:
+        scene_refs = [p for p in reference_images if p.parent.name == "generated_images"]
+        if not scene_refs:
+            raise RuntimeError("v2 video requires generated scene frames")
+        validate_scene_chain(product_dir, scene_refs)
+        require_qc(product_dir, scene_refs, "keyframes")
     reference_limit = 7 if args.model == "omni_flash-10s" else 3 if args.model == "omni-flash" else 2
+    base_prompt = variant.get("video_prompt") or "Create a product UGC video."
+    expected = video_contract(product_dir, reference_images[:reference_limit], args.model, base_prompt, {
+        "aspect_ratio": args.aspect_ratio, "duration": str(args.duration),
+        "audio_duration": str(args.audio_duration), "resolution": args.resolution,
+        "generate_audio": bool(args.generate_audio), "generation_mode": args.generation_mode,
+        "version": args.version, "quality": args.quality, "enhance_prompt": args.enhance_prompt,
+        "audio_style": args.audio_style, "light_overlay": bool(args.light_overlay),
+        "safe_audio_test": bool(args.safe_audio_test), "enable_upsample": args.enable_upsample,
+        "base_url": args.base_url, "status_endpoint": args.status_endpoint,
+    }) if v2_active else {}
+    if output_path.exists() and not args.force:
+        check_existing_video(product_dir, output_path, expected)
+        return {"variant_id": variant_id, "status": "skipped_existing_verified_v2",
+                "output_path": str(output_path.relative_to(product_dir))}
     uploads = upload_references(
         product_dir,
         reference_images[:reference_limit],
@@ -516,7 +538,6 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
         args.upload_retries,
         args.retry_backoff_seconds,
     )
-    base_prompt = variant.get("video_prompt") or "Create a product UGC video."
     callouts = overlay_callouts(variant, args.light_overlay)
     if args.audio_style == "none" or prompt_has_native_audio(base_prompt):
         prompt = base_prompt
@@ -558,6 +579,10 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
     )
     if not downloaded:
         raise RuntimeError(f"Download failed: {result_url}")
+    if v2_active:
+        recorded_params = {key: value for key, value in params.items() if key != "images"}
+        record_video(product_dir, output_path, expected, prompt,
+                     {"task_id": task_id, "base_url": args.base_url, "params": recorded_params})
     return {
         "variant_id": variant_id,
         "task_id": task_id,

@@ -227,6 +227,10 @@ def run_video_batch(
     duration: str,
 ) -> None:
     """Run parallel video generation for given variants."""
+    from v2_contract import active, record_video, require_qc, validate_scene_chain, video_contract
+    product_dir = product_dir.resolve()
+    if video_model != "veo3.1":
+        raise RuntimeError("This batch adapter submits veo3.1 only; use generate_videos_lk888.py for Omni Flash")
     prompts_path = product_dir / "ugc_prompts.json"
     if not prompts_path.exists():
         log(f"No prompts file: {prompts_path}")
@@ -279,11 +283,21 @@ def run_video_batch(
                 continue
 
         output_path = video_dir / f"variant-{vid:02d}.mp4"
-        if output_path.exists() and output_path.stat().st_size > 10000:
+        if output_path.exists() and output_path.stat().st_size > 10000 and not active(product_dir):
             log(f"variant-{vid:02d}: output exists ({output_path.stat().st_size} bytes), skipping")
             continue
 
         video_prompt = v.get("video_prompt", v.get("prompt", ""))
+        if active(product_dir):
+            validate_scene_chain(product_dir, refs)
+            require_qc(product_dir, refs, "keyframes")
+            from v2_contract import check_existing_video
+            expected = video_contract(product_dir, refs, video_model, video_prompt,
+                                      {"duration": str(duration), "aspect_ratio": "9:16"})
+            if output_path.exists() and output_path.stat().st_size > 10000:
+                check_existing_video(product_dir, output_path, expected)
+                log(f"variant-{vid:02d}: verified current v2 output exists, skipping")
+                continue
         tasks.append({
             "variant_id": vid,
             "ref_paths": refs,
@@ -327,7 +341,7 @@ def run_video_batch(
                 url = ref_url_cache.get(p)
                 if url:
                     ref_urls.append(url)
-            if not ref_urls:
+            if len(ref_urls) != len(t["ref_paths"]):
                 log(f"variant-{t['variant_id']:02d}: no ref URLs, skipping")
                 continue
             
@@ -366,6 +380,11 @@ def run_video_batch(
                     if url:
                         ok = download_result(url, t["output_path"])
                         if ok:
+                            if active(product_dir):
+                                expected = video_contract(product_dir, t["ref_paths"], video_model,
+                                    t["video_prompt"], {"duration": str(duration), "aspect_ratio": "9:16"})
+                                record_video(product_dir, t["output_path"], expected, t["video_prompt"],
+                                             {"task_id": tid, "adapter": "parallel_pipeline"})
                             log(f"  ✓ variant-{t['variant_id']:02d}: downloaded ({t['output_path'].stat().st_size} bytes) cost=${cost}")
                             completed += 1
                         else:

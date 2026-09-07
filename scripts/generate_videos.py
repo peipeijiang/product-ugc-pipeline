@@ -196,13 +196,15 @@ def process_variant(
     video_dir: Path,
 ) -> dict[str, Any]:
     variant_id = int(variant.get("variant_id", 0))
+    from v2_contract import active, check_existing_video, record_video, require_qc, validate_scene_chain, video_contract
     reference_images = generated_keyframe_paths(product_dir, variant_id)
     if not reference_images:
         reference_image = generated_image_path(product_dir, variant_id) or fallback_reference_path(product_dir, variant)
         reference_images = [reference_image] if reference_image else []
     prompt = variant.get("video_prompt") or variant.get("image_prompt") or f"Create a UGC product video for {product_dir.name}."
     output_path = video_dir / f"variant-{variant_id:02d}.mp4"
-    if output_path.exists() and not args.force:
+    v2_active = active(product_dir)
+    if output_path.exists() and not args.force and not v2_active:
         return {
             "variant_id": variant_id,
             "status": "skipped_existing",
@@ -211,6 +213,19 @@ def process_variant(
             "output_path": str(output_path.relative_to(product_dir)),
             "prompt": prompt,
         }
+    expected = {}
+    if v2_active:
+        required = [product_dir / "generated_images" / f"variant-{variant_id:02d}-{role}.png" for role in ("start", "end")]
+        if reference_images != required or not all(p.is_file() for p in required):
+            raise RuntimeError("v2 VEO requires both generated start and end frames")
+        validate_scene_chain(product_dir, reference_images)
+        require_qc(product_dir, reference_images, "keyframes")
+        expected = video_contract(product_dir, reference_images[:2], args.model, prompt, {
+            "base_url": args.base_url, "safe_no_audio_retry": bool(args.safe_no_audio_retry)})
+        if output_path.exists() and not args.force:
+            check_existing_video(product_dir, output_path, expected)
+            return {"variant_id": variant_id, "status": "skipped_existing_verified_v2",
+                    "output_path": str(output_path.relative_to(product_dir))}
     print(f"[video] {product_dir.name} variant {variant_id:02d}", flush=True)
     create_response = create_video_task_with_retry(
         api_key,
@@ -274,6 +289,9 @@ def process_variant(
             args.base_url,
             args.poll_seconds,
         )
+    if v2_active:
+        record_video(product_dir, output_path, expected, prompt,
+                     {"video_id": video_id, "base_url": args.base_url})
     return {
         "variant_id": variant_id,
         "video_id": video_id,

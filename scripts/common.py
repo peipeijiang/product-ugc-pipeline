@@ -58,7 +58,8 @@ def product_dirs(output_dir: Path) -> list[Path]:
 
 
 def selected_product_dirs(output_dir: Path, products: str = "") -> list[Path]:
-    folders = product_dirs(output_dir)
+    output_dir = output_dir.resolve()
+    folders = [output_dir] if (output_dir / "product_manifest.json").is_file() else product_dirs(output_dir)
     if not products.strip():
         return folders
     selectors = [selector.strip().lower() for selector in products.split(",") if selector.strip()]

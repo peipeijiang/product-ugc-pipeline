@@ -1,5 +1,7 @@
 # Product UGC Pipeline Skill 介绍
 
+> v2 已实现单商品一张多宫格参考图、来源明确的动作顺序账本、五类专项视觉 QC 和参考链追踪。默认使用姿态账本复用同一张宫格，不再生成多张 `panel_*.png`。当前运行命令与限制以 [README.md](README.md) 和 [README_V2.md](README_V2.md) 为准；本文后续内容主要解释原有产品认知与创意流程。
+
 ## 这是什么
 
 `product-ugc-pipeline` 是一个面向电商商品链接的 UGC 视频生产 Skill。

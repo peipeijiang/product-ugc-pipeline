@@ -275,7 +275,7 @@ TEST_PRODUCTS = {
 
 
 def create_test_structure(output_root: Path):
-    """创建测试目录结构"""
+    """创建仅用于分类和字段结构检查的合成夹具。"""
     output_root.mkdir(parents=True, exist_ok=True)
     
     for folder_name, data in TEST_PRODUCTS.items():
@@ -285,6 +285,10 @@ def create_test_structure(output_root: Path):
         # 创建 images 子目录
         (folder / "images").mkdir(exist_ok=True)
         
+        # 标记为合成夹具，生产脚本会拒绝把它当成真实商品资料。
+        data["mock_manifest"]["fixture_only"] = True
+        data["mock_manifest"]["images"] = []
+        data["mock_manifest"]["fixture_notice"] = "No real product images; do not run paid generation."
         # 保存 product_manifest.json
         manifest_path = folder / "product_manifest.json"
         with open(manifest_path, "w", encoding="utf-8") as f:
@@ -294,19 +298,26 @@ def create_test_structure(output_root: Path):
         brief_path = folder / "product_brief.json"
         with open(brief_path, "w", encoding="utf-8") as f:
             json.dump(data["mock_brief"], f, ensure_ascii=False, indent=2)
+
+        category_path = folder / "category.json"
+        with open(category_path, "w", encoding="utf-8") as f:
+            json.dump({"category": data["category"], "confidence": 1.0,
+                       "detected_from": "declared_test_fixture"}, f, ensure_ascii=False, indent=2)
         
         print(f"✅ 创建测试用例: {folder_name} ({data['category']})")
 
 
 def generate_test_readme(output_root: Path):
     """生成测试说明文档"""
-    readme_content = """# 五类产品完整测试用例
+    readme_content = """# 五类产品测试夹具
+
+这些 JSON 用例验证五类字段结构和分类结果，不含真实商品图片，不能用于生图、视频生成或质量/成本评测。生产脚本会读取 `fixture_only` 并停止付费生成。
 
 ## 测试产品清单
 
 | # | 产品名称 | 类目 | 测试重点 |
 |---|---------|------|---------|
-| 1 | 纯黑色圆领T恤 | apparel | 7要素审图、布料行为、Character Sheet 4视图 |
+| 1 | 纯黑色圆领T恤 | apparel | 7要素、单张 2行×2列宫格 |
 | 2 | 925纯银戒指 | jewelry | 6维审图、金属反光、佩戴位置精度 |
 | 3 | 无线蓝牙耳机 | electronics | 8维审图、触控 vs 按压、无幻觉零件 |
 | 4 | 陶瓷削皮刀 | home-tools | 7维Tools、食材交互物理、安全握持 |
@@ -327,37 +338,15 @@ python scripts/classify_product_category.py tests/five-products
 - 04-ceramic-peeler → home-tools
 - 05-pet-brush → pet-tools
 
-### 2. 视觉分析测试（需要 API Key）
+### 2. 离线契约测试
 
 ```bash
-# 注意：这需要真实图片，测试用例中只有占位符
-# 如果要完整测试，需要先爬取真实产品或手动准备图片
-
-LAOZHANG_API_KEY=sk-xxx python scripts/analyze_materials.py tests/five-products --category apparel
-LAOZHANG_API_KEY=sk-xxx python scripts/analyze_materials.py tests/five-products --category jewelry
-# ... 依此类推
+python3 -m unittest discover -s tests -p 'test_v2*.py' -v
 ```
 
-### 3. 生成身份锁定测试（需要 API Key）
+真实端到端测试需要为每类另建产品目录，放入真实原图并依次运行视觉分析、简报、单张宫格、质检、首尾帧和视频。不要移除 fixture_only 后继续使用这里的虚构规格。
 
-```bash
-# Apparel: 4视图 Character Sheet
-LAOZHANG_API_KEY=sk-xxx python scripts/generate_product_identity_lock.py tests/five-products/01-black-tshirt
-
-# Jewelry: 3视图 + 特写
-LAOZHANG_API_KEY=sk-xxx python scripts/generate_product_identity_lock.py tests/five-products/02-silver-ring
-
-# Electronics: 6视图
-LAOZHANG_API_KEY=sk-xxx python scripts/generate_product_identity_lock.py tests/five-products/03-bluetooth-earbuds
-
-# Home Tools: 5视图
-LAOZHANG_API_KEY=sk-xxx python scripts/generate_product_identity_lock.py tests/five-products/04-ceramic-peeler
-
-# Pet Tools: 5视图 + 宠物参考
-LAOZHANG_API_KEY=sk-xxx python scripts/generate_product_identity_lock.py tests/five-products/05-pet-brush
-```
-
-### 4. QC 检查测试
+### 3. QC 检查维度
 
 每个类目有专属的检查项：
 
@@ -401,44 +390,20 @@ LAOZHANG_API_KEY=sk-xxx python scripts/generate_product_identity_lock.py tests/f
 - [ ] 5视图 + 宠物参考
 - [ ] 禁止表现列表（耳朵后贴、试图逃跑）
 
-## 预期输出文件
-
-每个产品文件夹应包含：
-
-```
-01-black-tshirt/
-├── product_manifest.json
-├── category.json              # category: apparel
-├── product_brief.json
-├── identity_lock/             # 4视图
-│   ├── manifest.json
-│   ├── view_0_front.png
-│   ├── view_1_45deg.png
-│   ├── view_2_side.png
-│   └── view_3_detail.png
-├── usage_poses/               # 3个 Detail Actions
-│   ├── manifest.json
-│   ├── panel_0_unfold.png
-│   ├── panel_1_wear.png
-│   └── panel_2_turn.png
-└── ugc_prompts.json
-```
-
 ## 注意事项
 
 1. **真实图片缺失：** 当前测试用例只包含JSON数据，没有真实产品图片。要运行完整流程，需要：
    - 从真实电商网站爬取这五类产品
    - 或手动准备对应类型的产品图片放入 images/ 目录
 
-2. **API Key 需求：** 视觉分析和身份锁定生成需要 LaoZhang API Key
+2. **不调用 API：** 这些夹具只用于分类和结构检查。
 
 3. **类目定义文件：** 确保以下文件存在：
    - references/category-home-tools.md
    - references/category-pet-tools.md
    - references/category-jewelry.md
    - references/category-electronics.md
-
-4. **Virtual Try-On 依赖：** Apparel 类目依赖 Virtual Try-On Video skill 的服装类目文件
+   - references/category-apparel.md
 """
     
     readme_path = output_root / "README.md"
@@ -471,4 +436,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

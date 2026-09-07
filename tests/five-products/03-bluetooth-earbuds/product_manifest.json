@@ -2,11 +2,9 @@
   "product_name": "无线蓝牙耳机 半入耳式 触控操作",
   "source_url": "https://example.com/earbuds",
   "scraped_at": "2026-09-04T10:10:00Z",
-  "images": [
-    "earbuds_0.jpg",
-    "earbuds_1.jpg",
-    "earbuds_2.jpg"
-  ],
+  "images": [],
   "price": "¥299",
-  "description": "蓝牙5.3 触控操作 充电盒续航30小时 IPX4防水"
+  "description": "蓝牙5.3 触控操作 充电盒续航30小时 IPX4防水",
+  "fixture_only": true,
+  "fixture_notice": "No real product images; do not run paid generation."
 }

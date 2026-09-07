@@ -1460,6 +1460,7 @@ Critical:
 
 
 def process_product(product_dir: Path, api_key: str, args: argparse.Namespace) -> None:
+    from v2_contract import active, guidance, load_usage
     manifest = load_json(product_dir / "product_manifest.json")
     image_analysis = load_json(product_dir / "image_analysis.json", {"images": []})
     product_brief = load_json(product_dir / "product_brief.json", {})
@@ -1467,6 +1468,9 @@ def process_product(product_dir: Path, api_key: str, args: argparse.Namespace) -
         print(f"[skip] missing manifest: {product_dir}")
         return
     assert_clean_generation_inputs(product_dir, image_analysis, product_brief)
+    if active(product_dir):
+        product_brief = {**product_brief, "v2_reference_contract": guidance(product_dir),
+                         "v2_action_ledger": load_usage(product_dir)["actions"]}
     references = best_reference_images(image_analysis, product_brief, limit=4)
     canonical_prompt_path = product_dir / "ugc_prompts.json"
     history_glob = "ugc_prompts.json" if args.output_file == "ugc_prompts.json" and canonical_prompt_path.exists() else args.history_glob

@@ -2,10 +2,9 @@
   "product_name": "陶瓷削皮刀 蓝色手柄 锋利耐用",
   "source_url": "https://example.com/peeler",
   "scraped_at": "2026-09-04T10:15:00Z",
-  "images": [
-    "peeler_0.jpg",
-    "peeler_1.jpg"
-  ],
+  "images": [],
   "price": "¥39",
-  "description": "黑色陶瓷刀片 人体工学手柄 适合削苹果土豆胡萝卜"
+  "description": "黑色陶瓷刀片 人体工学手柄 适合削苹果土豆胡萝卜",
+  "fixture_only": true,
+  "fixture_notice": "No real product images; do not run paid generation."
 }

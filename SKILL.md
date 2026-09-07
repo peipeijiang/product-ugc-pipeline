@@ -5,6 +5,32 @@ description: Build product UGC ad-production pipelines from ecommerce product UR
 
 # Product UGC Pipeline
 
+## v2 implementation contract (2026-09-07)
+
+For v2 products, read `README_V2.md` and the matching `references/category-*.md`.
+After successful product cognition: generate ONE identity sheet, build the usage
+ledger (reuse that sheet by default), run identity QC, generate prompts and scene
+start/end frames, run keyframe QC, then submit the existing video adapter. Finally
+run sampled-video QC and watch the full video. Commands are in `README.md`.
+
+The three new scripts are implemented. `generate_usage_pose_sheet.py` adds no image
+by default; `--separate-sheet` explicitly adds one usage grid. Do not create separate
+panel images. The generated identity sheet is secondary guidance, not product truth;
+real source photos and source-backed facts remain authoritative. No numeric reference
+weights are sent to VEO or Omni Flash. Unknown dimensions/functions must remain unknown.
+
+V2 activates when `identity_lock/` exists. The image adapter then sends the real primary
+product photo plus the QC-passed grid; end frames also receive the start scene. Never
+truncate these references to the legacy default of one. Scene outputs remain single
+undivided vertical photographs. Every scene gets `.provenance.json`; video submission
+checks current references and QC. Old v1 frames require regeneration with `--force`.
+Existing product folders without an identity lock remain compatible with the v1 path.
+
+QC uses a configurable vision model and returns pass/fail/needs_review/error with evidence.
+No automatic paid regeneration is implemented. Missing evidence or uncertain visual checks
+must not be reported as passed. Video QC is sampled-frame review, not exhaustive motion
+or audio validation. Offline tests are not real product/video quality benchmarks.
+
 ## Core Rule
 
 Preserve the original product appearance above all else. The pad image is the visual identity lock for VEO, but default videos should still show practical product use. Describe supported actions and scene flow, not a competing redesign of the product.
@@ -112,14 +138,10 @@ Submit all N start-frame tasks  ──►  Poll all concurrently
 ### Usage
 
 ```bash
-python product-ugc-pipeline/scripts/parallel_pipeline.py product-ugc-output \
-  --product 01 \
+python product-ugc-pipeline/scripts/parallel_pipeline.py product-ugc-output/01-product \
   --variants 1-10 \
-  --image-model gpt-image-2 \
   --video-model veo3.1 \
-  --duration 8 \
-  --image-base-url https://api.laozhang.ai \
-  --video-base-url https://api.lk888.ai
+  --duration 8
 ```
 
 ### State File (`pipeline_state.json`)
@@ -407,7 +429,7 @@ Product UGC Pipeline v2 extends support to **5 product categories**:
 
 - `scripts/classify_product_category.py` - Auto-classify products into 5 categories
 - `scripts/generate_product_identity_lock.py` - Generate one category-specific multi-panel grid reference sheet
-- `scripts/generate_usage_pose_sheet.py` - Generate usage pose library from Detail Actions
+- `scripts/generate_usage_pose_sheet.py` - Source-backed ordered action ledger, reuses the single identity sheet by default
 - `scripts/qc_dual_consistency.py` - Category-specific QC checks
 - `scripts/create_test_cases.py` - Create 5-product test suite
 
@@ -427,11 +449,13 @@ python scripts/classify_product_category.py product-ugc-output
 # 2. Analyze with category-specific dimensions
 LAOZHANG_API_KEY=sk-xxx python scripts/analyze_materials.py product-ugc-output
 
-# 3. Generate category-specific identity lock
+# 3. Build source-backed cognition before generating identity lock
+LAOZHANG_API_KEY=sk-xxx python scripts/build_product_brief.py product-ugc-output
 LAOZHANG_API_KEY=sk-xxx python scripts/generate_product_identity_lock.py product-ugc-output
+python scripts/generate_usage_pose_sheet.py product-ugc-output
+LAOZHANG_API_KEY=sk-xxx python scripts/qc_dual_consistency.py product-ugc-output --stage identity
 
-# 4-10. Continue with standard pipeline...
+# Continue with prompts, --keyframes, keyframe QC, video, sampled-video QC (README.md).
 ```
 
 See `README_V2.md` for complete documentation.
-

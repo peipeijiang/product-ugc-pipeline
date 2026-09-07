@@ -40,7 +40,7 @@
 
 ## Reference Sheet 适配（单张宫格）
 
-Home tools 用**一张**宫格参考图覆盖 5 个角度，上排 3 格 + 下排 2 格。单张生成保证各格工具身份一致。
+Home tools 用**一张**宫格参考图表达 5 个角度，上排 3 格 + 下排 2 格；生成后仍须与原图逐格质检。
 
 规格：1024×1024，5 格（上 3 下 2），20px 白色分隔线，底部标注尺寸锁定。
 
@@ -62,7 +62,7 @@ Panel 3: 45° detail, grip zone + functional part
 Panel 4: hand holding tool, correct grip, scale vs hand
 Panel 5: tool beside {credit card / apple} for scale
 
-Dimensions locked: {exact cm} — scale authority 1.0
+Dimensions: {source-backed measurements, otherwise unknown}; match verified relative scale
 Style: clean product grid, white background, studio light, 20px white borders
 Negative: cross-panel distortion, different tools across panels, phantom blades,
 invented brand text

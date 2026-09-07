@@ -1,290 +1,92 @@
 # Product UGC Pipeline v2
 
-> **AI-powered product video generation pipeline with category-specific identity lock and quality control**
+从商品资料到带货视频：先用真实产品图生成**一张多宫格参考图**，再生成正常单画面的场景首尾帧，最后交给原有 VEO 3.1 / Omni Flash 视频接口。
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![GitHub Stars](https://img.shields.io/github/stars/peipeijiang/product-ugc-pipeline?style=social)](https://github.com/peipeijiang/product-ugc-pipeline)
+三个 v2 核心脚本现已实现并接入现有流程。软件回归测试使用模拟 API；尚未完成五类商品的真实付费视频质量评测，不能据此宣称降低多少翻车率。
 
-Generate high-quality product UGC videos from e-commerce URLs with **5-category support** and **dual-consistency QC**.
+## 核心流程
 
-## ✨ What's New in v2
+| 环节 | 做什么 | 实际输出 / 模型 |
+|---|---|---|
+| 产品认知 | 分析原图、核对外观和操作依据 | image_analysis.json、product_brief.json；沿用原视觉/文本模型 |
+| 身份参考 | 将同一商品多个角度和使用关系放入一张图 | identity_lock/reference_sheet.png；GPT-Image-2 |
+| 使用账本 | 记录有依据的动作顺序，默认复用身份宫格 | usage_poses/manifest.json；默认无额外模型调用 |
+| 宫格质检 | 对比真实原图检查身份、比例、接触位置 | qc/identity.json；可配置视觉模型，默认 gpt-5.2 |
+| 场景首尾帧 | 原图和宫格指导单画面生图；尾帧另参考首帧 | generated_images/variant-XX-start/end.png；GPT-Image-2 |
+| 帧质检与视频 | 检查当前参考链和首尾帧，通过后提交视频 | 原有 VEO 3.1 / Omni Flash |
+| 成片质检 | 抽帧检查外观、比例、动作顺序和类目细节 | qc/videos.json；视觉模型，需 ffmpeg/ffprobe |
 
-- 🎯 **5 Product Categories**: Apparel, Jewelry, Electronics, Home Tools, Pet Tools
-- 🔒 **Category-Specific Identity Lock**: one multi-panel grid reference sheet per category
-- 📊 **Dual-Consistency QC**: Product identity + usage correctness verification
-- 🤖 **Auto Classification**: Keyword + vision-based product categorization
-- 📐 **Custom Inspection Frameworks**: 7要素/6维/8维/7维Tools per category
+“权威分离”是明确说明各类资料负责什么：真实商品图负责外观，有依据的说明负责尺寸/功能，场景首帧负责人物/环境连续性。它不是视频接口的数值权重。生成宫格仍可能画错，必须与原图对照质检。
 
-## 🚀 Quick Start
+## 五类产品与图片数量
 
-### Prerequisites
+| 类目 | 默认新增参考图 | 专项检查 |
+|---|---|---|
+| 服装 apparel | 1 张，2 行 × 2 列 | 颜色、领口、肩线、袖型、腰线、衣长、面料和穿着贴合 |
+| 首饰 jewelry | 1 张，1 行 × 3 列 | 材质、款式、尺寸关系、佩戴位置、扣合、细节 |
+| 电子产品 electronics | 1 张，2 行 × 3 列 | 外形、接口/按键、交互方式、支撑位置、功能状态 |
+| 厨房/家居工具 home-tools | 1 张，上 3 下 2 | 握持、刃口/工作部件、食材接触、重力和比例 |
+| 宠物工具 pet-tools | 1 张，上 3 下 2 | 接触位置、毛发/皮肤关系、宠物体型、姿态 |
+
+默认每个商品只新增 1 张宫格，三个广告共用；每个视频仍需要自己的场景首尾帧。仅显式传入 `--separate-sheet` 时再新增 1 张使用姿态宫格。首饰使用 1536×1024 画布内三格布局，避免旧文档中未经适配的 1536×512 请求尺寸。
+
+## 安装与运行
+
+Python 3.10+；成片抽帧另需 ffmpeg 和 ffprobe。生图与视频通过云 API，运行脚本不要求本地 GPU。
 
 ```bash
-# Required: Python 3.8+
-python --version
-
-# Install dependencies (create requirements.txt based on your scripts)
-pip install -r requirements.txt
-
-# Set API keys
-export LAOZHANG_API_KEY=sk-xxx
-export LK888_API_KEY=sk-xxx
-```
-
-### Basic Usage
-
-```bash
-# Clone the repository
-git clone https://github.com/peipeijiang/product-ugc-pipeline.git
+git clone --branch v2-five-categories https://github.com/peipeijiang/product-ugc-pipeline.git
 cd product-ugc-pipeline
-git checkout v2-five-categories
+pip install -r requirements.txt
+export LAOZHANG_API_KEY="your-key"
+export LK888_API_KEY="your-key"
+```
 
-# 1. Scrape product
-python scripts/scrape_products.py urls.txt --out output
+先按 [SKILL.md](SKILL.md) 完成爬取、视觉分析和产品简报。需要真实原图以及每个动作的 evidence；来源不明或写着 inference 的动作会停止生成。脚本不能自动保证资料本身真实，请核对商品型号、规格和使用方式。
 
-# 2. Auto-classify (NEW in v2)
+```bash
 python scripts/classify_product_category.py output
+python scripts/analyze_materials.py output
+python scripts/build_product_brief.py output
 
-# 3. Run full pipeline
-bash run_pipeline.sh output
+python scripts/generate_product_identity_lock.py output
+python scripts/generate_usage_pose_sheet.py output
+python scripts/qc_dual_consistency.py output --stage identity
+
+python scripts/generate_ugc_prompts.py output --count 3
+python scripts/generate_images.py output --variants 1-3 --keyframes
+python scripts/qc_dual_consistency.py output --stage keyframes --variants 1-3
+
+python scripts/generate_videos_lk888.py output --variants 1-3 --model veo3.1
+python scripts/qc_dual_consistency.py output --stage videos --variants 1-3
 ```
 
-## 📦 Supported Categories
-
-| Category | Examples | Inspection | Views | Key Checks |
-|----------|----------|------------|-------|------------|
-| **Apparel** | T-shirts, dresses, jeans | 7要素 | 1 sheet · 2×2 | Fabric behavior, fit, face consistency |
-| **Jewelry** | Rings, necklaces, earrings | 6维 | 1 sheet · 1×3 | Metal sheen, placement precision |
-| **Electronics** | Earbuds, speakers, keyboards | 8维 | 1 sheet · 2×3 | Function state, interaction type |
-| **Home Tools** 🆕 | Knives, peelers, spatulas | 7维 Tools | 1 sheet · 3+2 | Food interaction physics |
-| **Pet Tools** 🆕 | Brushes, leashes, bowls | 7维 Tools | 1 sheet · 3+2 | Pet comfort, species match |
-
-## 🏗️ Architecture
-
-```
-Input: E-commerce URL
-    ↓
-Scraper → Images + Metadata
-    ↓
-Auto Classifier → Category (5 types)
-    ↓
-Vision Analyzer → Material + Structure
-    ↓
-Identity Lock Generator → Single Grid Reference Sheet
-    ↓
-Usage Pose Generator → Action Panels
-    ↓
-Prompt Generator → Category-Specific Templates
-    ↓
-Image Generator → Key Frames (LaoZhang GPT-Image-2)
-    ↓
-Video Generator → UGC Videos (VEO 3.1 / Omni Flash)
-    ↓
-QC Checker → Dual-Consistency Validation
-    ↓
-Output: High-Quality UGC Videos
-```
-
-## 📊 Performance
-
-### Classification Accuracy
-
-Tested on 5-product suite:
-
-| Product | Category | Confidence | Method |
-|---------|----------|------------|--------|
-| Black T-shirt | apparel | 0.95 | keywords |
-| Silver ring | jewelry | 0.95 | keywords |
-| Bluetooth earbuds | electronics | 0.95 | keywords |
-| Ceramic peeler | home-tools | 0.95 | keywords |
-| Pet brush | pet-tools | 0.95 | keywords |
-
-**Accuracy: 100% (5/5)**
-
-### Quality Improvement
-
-| Metric | v1 | v2 | Improvement |
-|--------|----|----|-------------|
-| Category Support | Unclear | 5 defined | +5 categories |
-| Inspection Framework | Generic | Category-specific | Specialized |
-| Identity Lock | None | Multi-view | +Character Sheet |
-| QC Checks | Generic | Dual-layer | +Category checks |
-| **Estimated Failure Rate** | ~40% | ~10% | **-75%** |
-
-## 🛠️ Core Scripts
-
-### Classification
+Omni Flash 是显式选择，沿用原接口：
 
 ```bash
-# Auto-classify products into 5 categories
-python scripts/classify_product_category.py <output_folder>
-
-# Force re-classify
-python scripts/classify_product_category.py <output_folder> --force
+python scripts/generate_videos_lk888.py output --variants 1-3 --model omni-flash --base-url https://api.lk888.ai --status-endpoint /v1/media/status --duration 8
 ```
 
-### Identity Lock Generation
+新脚本均可传入批次目录或单个商品目录；`--products 01,03` 选择批次内商品。新身份脚本支持 `--category electronics` 显式指定类目。旧分类器是关键词/启发式规则，confidence 不是统计准确率。
+
+## 失败如何处理
+
+质检输出 pass / fail / needs_review / error；任意必需检查失败或看不清都不会作为通过。修正资料或提示词后，用对应生图脚本的 `--force` 重生成，再重新质检。没有实现自动付费重拍；旧文档的 `--auto-retry-failed`、`--max-retries` 说明已撤回。
+
+原始资料、宫格、场景参考或质检上下文发生变化时，文件摘要会使旧结果失效。没有 v2 宫格目录的旧项目继续使用原流程；启用 v2 后，旧版无引用记录的帧须重新生成。
+
+抽帧 QC 不是完整视频理解，也不检查音频；它可能漏掉帧间短暂错误。未知尺寸不能靠手掌或提示词变成精确毫米。最终成片仍需要人工观看。
+
+## 验证与文档
 
 ```bash
-# Generate category-specific reference views
-LAOZHANG_API_KEY=sk-xxx python scripts/generate_product_identity_lock.py <output_folder>
-
-# Apparel → one 2×2 grid sheet
-# Jewelry → one 1×3 grid sheet
-# Electronics → one 2×3 grid sheet (all ports)
-# Home/Pet Tools → one grid sheet (3 top + 2 bottom)
+python3 -m unittest discover -s tests -p 'test_v2*.py' -v
 ```
 
-### Quality Control
+[实现与字段说明](README_V2.md) · [五类产品测试用例](tests/five-products/README.md) · [Skill 规范](SKILL.md)
 
-```bash
-# Run dual-consistency QC with auto-retry
-python scripts/qc_dual_consistency.py <output_folder> --auto-retry-failed --max-retries 3
+## 来源与许可
 
-# Generate QC report
-python scripts/qc_dual_consistency.py <output_folder> --report qc_report.json
-```
+方案参考 [Higgsfield AI Prompt Skill](https://github.com/OSideMedia/higgsfield-ai-prompt-skill)、[蓝书 AI Video Kit](https://github.com/cclank/lanshu-awesome-ai-video-kit) 和 [Virtual Try-On Video](https://github.com/fsn021920-prog/virtual-try-on-video) 的提示词、参考图和质检思路。这些不是三个自动运行的后端；本仓库使用自己的脚本与已有供应商接口，未新增模型服务。
 
-## 📁 Project Structure
-
-```
-product-ugc-pipeline/
-├── scripts/
-│   ├── classify_product_category.py      # Auto-classifier (NEW)
-│   ├── generate_product_identity_lock.py # Identity lock generator (NEW)
-│   ├── generate_usage_pose_sheet.py      # Usage pose generator (NEW)
-│   ├── qc_dual_consistency.py            # Dual-consistency QC (NEW)
-│   ├── scrape_products.py
-│   ├── analyze_materials.py
-│   └── ...
-├── references/
-│   ├── category-home-tools.md            # Home tools spec (NEW)
-│   ├── category-pet-tools.md             # Pet tools spec (NEW)
-│   ├── category-jewelry.md               # Jewelry spec (NEW)
-│   └── category-electronics.md           # Electronics spec (NEW)
-├── tests/
-│   └── five-products/                    # 5-product test suite (NEW)
-│       ├── 01-black-tshirt/
-│       ├── 02-silver-ring/
-│       ├── 03-bluetooth-earbuds/
-│       ├── 04-ceramic-peeler/
-│       ├── 05-pet-brush/
-│       └── README.md
-├── README.md                             # This file
-└── SKILL.md                              # Codex skill definition
-```
-
-## 🧪 Testing
-
-### Run Test Suite
-
-```bash
-# Create test cases
-python scripts/create_test_cases.py tests/five-products
-
-# Test classification
-python scripts/classify_product_category.py tests/five-products
-
-# View results
-cat tests/five-products/*/category.json
-```
-
-### Expected Output
-
-```json
-{
-  "category": "apparel",
-  "detected_from": "title_keywords",
-  "confidence": 0.95,
-  "product_name": "纯黑色圆领短袖T恤 男女同款"
-}
-```
-
-## 📚 Category Specifications
-
-Each category has detailed specifications in `references/`:
-
-### Apparel (7要素)
-- Primary color, neckline, shoulder line, sleeve type, waistline, length, fabric
-- One 2×2 grid reference sheet (4 panels)
-- Fabric behavior validation
-
-### Jewelry (6维)
-- Material, design, size, placement, closure, function
-- One 1×3 grid reference sheet (front / 45° / macro)
-- Metal sheen + placement precision
-
-### Electronics (8维)
-- Identity, silhouette, size, material, function zones, state, interaction, accessories
-- One 2×3 grid reference sheet (all interfaces in 6 panels)
-- Interaction type + no-phantom-parts
-
-### Home Tools (7维 Tools)
-- Type, material, functional parts, size, handle, features, mechanics
-- One grid reference sheet (5 panels incl. scale)
-- Food interaction physics
-
-### Pet Tools (7维 Tools)
-- Type, material, functional parts, size, handle, safety features, mechanics
-- One grid reference sheet (5 panels) + optional pet-comfort sheet
-- Pet comfort check (body language)
-
-## 🤝 Contributing
-
-We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-### Roadmap
-
-- [ ] Implement `generate_product_identity_lock.py`
-- [ ] Implement `generate_usage_pose_sheet.py`
-- [ ] Implement `qc_dual_consistency.py`
-- [ ] Integrate with existing v1 scripts
-- [ ] Add more categories (sports, cosmetics, food)
-- [ ] Multi-language support
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-### Dependencies
-
-This project builds upon:
-
-1. **[Higgsfield AI Prompt Skill](https://github.com/OSideMedia/higgsfield-ai-prompt-skill)** (MIT)
-   - MCSLA formula, Recipe 3 template, authority separation
-
-2. **[Lanshu AI Video Kit](https://github.com/cclank/lanshu-awesome-ai-video-kit)** (MIT)
-   - 543 prompt references, model-selector, methodology SOP
-
-3. **[Virtual Try-On Video](https://github.com/fsn021920-prog/virtual-try-on-video)** (Source-available EULA)
-   - Apparel 7要素, Character Sheet, Dual-Consistency QC
-   - ⚠️ **Personal non-commercial use only**. Contact author for commercial license.
-
-**For commercial use**: Only use Higgsfield + Lanshu (both MIT), or obtain Virtual Try-On license.
-
-## 🔗 Links
-
-- **Documentation**: [Full Docs](./docs/)
-- **Test Suite**: [Five Products](./tests/five-products/README.md)
-- **API Reference**: [API Docs](./docs/API.md)
-- **FAQ**: [Common Questions](./docs/FAQ.md)
-
-## 📧 Contact
-
-- GitHub Issues: [Report a bug](https://github.com/peipeijiang/product-ugc-pipeline/issues)
-- Discussions: [Ask questions](https://github.com/peipeijiang/product-ugc-pipeline/discussions)
-
-## ⭐ Acknowledgments
-
-Special thanks to:
-- Higgsfield team for MCSLA framework
-- Lanshu team for comprehensive prompt library
-- Virtual Try-On Video contributors for apparel methodology
-
----
-
-**Version:** v2.0.0  
-**Released:** 2026-09-04  
-**Status:** Beta (core scripts in progress)
-
+本仓库代码见 [LICENSE](LICENSE)。外部项目的文件与使用条款由各自仓库管理；Virtual Try-On 的个人非商业限制不因本仓库许可证而改变。

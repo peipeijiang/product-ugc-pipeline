@@ -1,410 +1,110 @@
-# Product UGC Pipeline v2
+# v2 实现说明
 
-基于 Higgsfield、蓝书 Lanshu、Virtual Try-On Video 三个开源 skill 构建的**五类产品 UGC 视频生成流程**。
+v2 保留原视频模型和提交参数，在视频前增加单张宫格、来源明确的动作账本、类目质检和引用追踪。完整命令见 [README](README.md)。
 
-## 🎯 覆盖产品类型
+## 单张多宫格契约
 
-| 类目 | 子类示例 | 审图维度 | 身份锁定视图 | 核心检查项 |
-|------|---------|---------|-------------|-----------|
-| **Apparel** (服装) | T恤、连衣裙、牛仔裤、外套 | 7要素 | 单张 2×2 宫格 | 布料动态、版型、人脸8维 |
-| **Jewelry** (首饰) | 戒指、项链、耳环、手链 | 6维 | 单张 1×3 宫格 | 金属反光、佩戴位置精度 |
-| **Electronics** (电子产品) | 耳机、音箱、键盘、积木 | 8维 | 单张 2×3 宫格 | 功能状态、交互类型、无幻觉零件 |
-| **Home Tools** (厨房工具) 🆕 | 菜刀、削皮刀、锅铲、滤网 | 7维 Tools | 单张宫格 3+2 | 食材交互物理、安全握持 |
-| **Pet Tools** (宠物工具) 🆕 | 宠物梳、牵引绳、宠物碗 | 7维 Tools | 单张宫格 3+2 + 宠物参考 | 宠物舒适度、物种匹配 |
+默认每个商品仅生成 identity_lock/reference_sheet.png 一张参考图，全部广告版本复用。usage_poses/manifest.json 引用同一张图，不生成分散的动作图片。它记录完整动作顺序；一张静态宫格不等于逐帧动作视频。
 
-## 🚀 快速开始
+`generate_product_identity_lock.py` 复用 `generate_images.generate_image_file` 的 GPT-Image-2 `/images/edits` 路径。类目布局定义在 `scripts/v2_contract.py`，专项检查读取 `references/category-*.md`。优先使用产品简报选中的完整商品原图，拒绝缺少原图、认知失败和无依据的动作。
 
-### 前置依赖
+| 类目 | 布局（按行读） | 请求画布 |
+|---|---|---|
+| apparel | 2 行 × 2 列 | 1024×1024 |
+| jewelry | 1 行 × 3 列 | 1536×1024 |
+| electronics | 2 行 × 3 列 | 1024×1536 |
+| home-tools / pet-tools | 上 3 下 2 | 1024×1024 |
 
-```bash
-# 1. 安装三个核心 skill（如果尚未安装）
-cd ~/.agents/skills
+同一次生成有助于集中表达参考，但不保证所有格一致。没有背面证据时复用有证据的角度，不能强行补出背面接口。具体布局和视觉一致性交给视觉 QC 检查；代码不宣称能像 CAD 一样锁死几何。
 
-# Higgsfield (MIT)
-git clone https://github.com/OSideMedia/higgsfield-ai-prompt-skill.git
-
-# 蓝书 Lanshu (MIT)
-git clone https://github.com/cclank/lanshu-awesome-ai-video-kit.git
-
-# Virtual Try-On Video (source-available, 个人非商业可用)
-git clone https://github.com/fsn021920-prog/virtual-try-on-video.git
-
-# 2. 确认当前 pipeline 已包含 v2 类目文件
-ls ~/.agents/skills/product-ugc-pipeline/references/category-*.md
-# 应看到: category-home-tools.md, category-pet-tools.md, category-jewelry.md, category-electronics.md
-```
-
-### 基础流程
+需要另一个操作图时显式执行：
 
 ```bash
-# 1. 爬取产品（支持淘宝/京东/1688）
-python scripts/scrape_products.py urls.txt --out product-ugc-output
-
-# 2. 🆕 自动分类（识别五大类目）
-python scripts/classify_product_category.py product-ugc-output
-
-# 3. 视觉分析（根据类目加载对应审图维度）
-LAOZHANG_API_KEY=sk-xxx python scripts/analyze_materials.py product-ugc-output
-
-# 4. 构建产品简报
-LAOZHANG_API_KEY=sk-xxx python scripts/build_product_brief.py product-ugc-output
-
-# 5. 🆕 生成产品身份锁定（每类目生成 1 张多宫格参考图）
-LAOZHANG_API_KEY=sk-xxx python scripts/generate_product_identity_lock.py product-ugc-output
-
-# 6. 🆕 生成使用姿态库（从类目 Detail Actions 生成）
-LAOZHANG_API_KEY=sk-xxx python scripts/generate_usage_pose_sheet.py product-ugc-output
-
-# 7. 生成 UGC 提示词（使用类目对应模板）
-LAOZHANG_API_KEY=sk-xxx python scripts/generate_ugc_prompts.py product-ugc-output --count 10
-
-# 8. 生成关键帧
-LAOZHANG_API_KEY=sk-xxx python scripts/generate_images.py product-ugc-output
-
-# 9. 生成视频（VEO 3.1 / Omni Flash）
-LK888_API_KEY=sk-xxx python scripts/generate_videos_lk888.py product-ugc-output --model veo3.1
-
-# 10. 🆕 双重一致性 QC（根据类目加载专项检查）
-python scripts/qc_dual_consistency.py product-ugc-output --auto-retry-failed
+python scripts/generate_usage_pose_sheet.py output --separate-sheet
+python scripts/qc_dual_consistency.py output --stage usage
 ```
 
-## 📂 目录结构（v2）
+该选项再生成一张三格使用图；默认不启用。
 
-```
-product-ugc-output/
-├── 01-product-name/
-│   ├── product_manifest.json
-│   ├── category.json                    # 🆕 类目标识 (apparel/jewelry/electronics/home-tools/pet-tools)
-│   ├── materials.md
-│   ├── images/
-│   ├── image_analysis.json
-│   ├── product_brief.json
-│   │
-│   ├── identity_lock/                   # 🆕 产品身份锁定（类目特定视图数）
-│   │   ├── manifest.json
-│   │   ├── category_spec.json           # 类目专属规格
-│   │   ├── reference_sheet.png          # 单张多宫格（替代原多张单图）
-│   ├── usage_poses/                     # 🆕 使用姿态库（从 Detail Actions 生成）
-│   │   ├── manifest.json
-│   │   ├── panel_0_grip.png
-│   │   ├── panel_1_interaction.png
-│   │   ├── panel_2_function_active.png
-│   │   └── panel_3_context.png
-│   │
-│   ├── ugc_prompts.json
-│   ├── runs/
-│   ├── generated_images/
-│   └── videos/
+## 来源、动作与比例
+
+产品简报至少包含 confirmed_identity、confirmed_use_cases、step_by_step_usage、misuse_risks_to_avoid，视觉分析必须有成功的 images 记录。原始产品图应在 canonical_reference_images 中明确指定，或被分析为完整商品。
+
+每个动作要带来源，示例仅表示字段结构：
+
+```json
+{
+  "step_by_step_usage": [
+    {"step": 1, "action": "将手机放入已证实的支撑位置", "evidence": "商品说明第2张图；需换成实际来源"}
+  ]
+}
 ```
 
-## 🆕 v2 新增功能
+字符串动作、缺失 evidence、标注 inference/推断的动作会报错。代码检查结构与明显的未知标记，不能自动验证某个来源描述是否真实；人工/视觉分析仍须核对原资料。尺寸、接口数量、功能状态未知时应明确未知，不能用类别常识补成确定规格。
 
-### 1. 自动类目识别
+“权威分离”可理解为选择规则，而非加权平均：
+
+`外观 ← 真实商品图；功能/尺寸 ← 有依据的说明；人物/房间 ← 场景首帧；宫格 ← 次级指导`
+
+原图和生成宫格冲突时以原图为准并修正宫格。`@ref{1.0}` 或 `scale authority 1.0` 不是本项目传给视频模型的参数。
+
+已知实物长度和同平面标尺时，比例可辅助检查：`产品像素长度 / 标尺像素长度 ≈ 产品实际长度 / 标尺实际长度`。透视、角度和遮挡会影响比较；本项目没有自动标定或毫米级测量模块。默认 QC 评估可见相对比例，不声称精确测量。
+
+## 接入现有流程
+
+生成首帧时传入：真实主商品图 + 已质检宫格。生成尾帧时传入：场景首帧 + 真实主商品图 + 已质检宫格。若启用独立姿态宫格，再加入该图。v2 的必要引用不受旧 `--max-reference-images 1` 默认值裁掉。
+
+每张场景图输出对应的 `.provenance.json`，保存实际参考文件摘要、完整提示词、图片模型和供应商。图片提示词明确只输出一张正常的竖版照片，不复制宫格布局。
+
+VEO 继续接收场景首尾帧；Omni Flash 继续使用原多参考输入规则。三个视频入口在 v2 中都先检查参考来源和首尾帧 QC。parallel_pipeline.py 当前是已有关键帧的 VEO 批量提交器，不会自动生成宫格或首尾帧；Omni 请用 generate_videos_lk888.py。
+
+## 双重一致性质检
+
+`qc_dual_consistency.py` 将真实原图与待检图发给可配置的视觉聊天模型，默认 gpt-5.2。六个必需检查字段为 identity、scale、placement、operation、continuity、category_specific，分别涵盖外观、比例、位置、操作、连续性和类目细节。
+
+没有人为捏造的总分公式。判定规则：
+
+- 任一检查 fail → fail。
+- 任一检查 unknown，或产品身份没有明确通过 → needs_review。
+- 所有必需检查通过，且不适用项给出理由 → pass。
+- 模型调用失败或结构不合法 → error。
+
+命令退出码 0 表示所选检查全部通过，2 表示出现不通过/待复核/API 错误；输入、依赖缺失也会非零退出。失败不自动触发付费重拍。报告包含具体观察依据和 corrections，修正后显式重生成、重检。
 
 ```bash
-python scripts/classify_product_category.py product-ugc-output
-
-# 输出示例:
-# 处理: 01-black-tshirt
-#   分类为: apparel (confidence: 0.95, from: title_keywords)
-# 处理: 02-silver-ring
-#   分类为: jewelry (confidence: 0.95, from: title_keywords)
-# ...
+python scripts/qc_dual_consistency.py output --stage identity
+python scripts/qc_dual_consistency.py output --stage keyframes --variants 1-3
+python scripts/qc_dual_consistency.py output --stage videos --variants 1-3 --samples 8 --report qc_report.json
 ```
 
-### 2. 类目特定的身份锁定
+视频阶段使用 ffprobe 读取时长，ffmpeg 等距抽帧，并记录时间戳。它不是完整运动/音频审查；有需要可增加 --samples（2–32），仍需观看完整视频。报告按 stage 保存；检查某个新的变体集合会替换该 stage 的报告，提交时应包含要生成的全部变体。
 
-不同类目生成不同数量的视图：
+## 文件结构
 
-- **Apparel**: 单张 2×2 宫格（Virtual Try-On Character Sheet 标准）
-- **Jewelry**: 单张 1×3 宫格（正面/45°/微距，改造 Accessories）
-- **Electronics**: 单张 2×3 宫格（Higgsfield 风格，6 格覆盖所有接口）
-- **Home Tools**: 单张宫格 3+2（平铺/侧面/45度/握持/尺寸参考）
-- **Pet Tools**: 单张宫格 3+2 + 可选宠物舒适度宫格
-
-### 3. 类目特定的 QC 检查
-
-每个类目有专属的检查项：
-
-**Apparel (服装):**
-- 7要素审图（主色/领口/肩线/袖型/腰线/衣长/面料）
-- 布料动态行为
-- 人脸8维一致性
-
-**Jewelry (首饰):**
-- 6维审图（材质色调/款式/尺寸/佩戴位置/扣合/功能）
-- 金属反光真实性
-- 佩戴位置精度（戒指指围、项链链长）
-
-**Electronics (电子产品):**
-- 8维审图（身份/轮廓/尺寸/材质/功能区/状态/交互/配件）
-- 功能状态验证（LED颜色、屏幕内容）
-- 交互类型正确性（触控 vs 按压）
-- 无幻觉零件
-
-**Home Tools (厨房工具):**
-- 7维 Tools审图
-- 食材交互物理正确性（刀片角度、削皮方向）
-- 功能几何验证
-- 安全握持检查
-
-**Pet Tools (宠物工具):**
-- 7维 Tools审图（宠物特化）
-- 宠物舒适度检查（耳朵/眼睛/姿态）
-- 物种匹配（猫工具用在猫身上）
-- 安全使用验证
-
-## 📋 五类产品测试用例
-
-仓库包含完整的五类产品测试用例：
-
-```bash
-# 创建测试用例
-python scripts/create_test_cases.py tests/five-products
-
-# 测试产品：
-# 1. 纯黑色圆领T恤 (apparel)
-# 2. 925纯银戒指 (jewelry)
-# 3. 无线蓝牙耳机 (electronics)
-# 4. 陶瓷削皮刀 (home-tools)
-# 5. 猫咪脱毛梳 (pet-tools)
-
-# 运行分类测试
-python scripts/classify_product_category.py tests/five-products
-
-# 查看结果
-cat tests/five-products/*/category.json
+```text
+01-product/
+├── product_manifest.json
+├── category.json
+├── image_analysis.json
+├── product_brief.json
+├── images/
+├── identity_lock/
+│   ├── category_spec.json
+│   ├── manifest.json
+│   └── reference_sheet.png
+├── usage_poses/
+│   └── manifest.json
+├── ugc_prompts.json
+├── generated_images/
+│   ├── variant-01-start.png
+│   ├── variant-01-start.provenance.json
+│   ├── variant-01-end.png
+│   └── variant-01-end.provenance.json
+├── qc/
+│   ├── identity.json
+│   ├── keyframes.json
+│   └── videos.json
+└── videos/
 ```
 
-详细测试说明见: `tests/five-products/README.md`
-
-## 🔧 类目配置文件
-
-v2 新增的类目定义文件位于 `references/` 目录：
-
-- `category-home-tools.md` - 厨房/家居工具完整规范
-- `category-pet-tools.md` - 宠物工具完整规范
-- `category-jewelry.md` - 首饰独立规范（改造自 Accessories）
-- `category-electronics.md` - 电子产品完整规范
-
-每个文件包含：
-- 审图维度定义
-- 场景预设
-- 负向增量词表
-- Detail Actions 表格
-- Character Sheet 适配说明
-- 类目特定的交互规则
-
-## 🎨 类目特定的提示词模板
-
-### Apparel (服装)
-
-使用 Virtual Try-On Video 的服装模板：
-
-```
-[Scene setup: casual indoor / cafe / street]
-[Character: model wearing {product}]
-[Camera: static medium shot → dolly in → detail close-up]
-[Feature showcase: fabric texture, fit, movement]
-
-7要素锁定: {主色/领口/肩线/袖型/腰线/衣长/面料}
-Negative: phantom pockets, wrong color, material mismatch
-```
-
-### Jewelry (首饰)
-
-使用改造后的首饰模板：
-
-```
-[Scene: jewelry on model, lifestyle context]
-[Camera: close-up → extreme macro → rotation under light]
-[Feature showcase: metal sheen, stone setting, clasp detail]
-
-6维锁定: {材质色调/款式/尺寸/佩戴位置/扣合/功能}
-佩戴位置锁定: ring on {finger} {above/below} knuckle
-Negative: floating jewelry, plastic-looking metal, wrong finger size
-```
-
-### Electronics (电子产品)
-
-使用 Higgsfield Recipe 3 改造版：
-
-```
-Camera: Dolly In from desk setup → close-up on product interaction zone
-
-[Hero moment — {touch sensor lights up} OR {screen wakes} OR {LED pulses} — macro 0.5x slow motion]
-
-8维锁定: {身份/轮廓/尺寸/材质/功能区/状态/交互/配件}
-交互类型锁定: touchpad = flat surface (NO depression)
-Negative: phantom cables, wrong port count, impossible button position
-```
-
-### Home Tools (厨房工具)
-
-使用新建的工具模板：
-
-```
-Camera: Dolly In from kitchen counter → close-up on tool + food interaction
-
-[Hero moment — {knife cutting through carrot with clean slice} OR {peeler removing apple ribbon} — macro 0.5x slow motion, physics-accurate]
-
-7维Tools锁定: {类型/材质/功能部件/尺寸/手柄/功能/机械}
-食材交互规则: peeler blade 15-30°, peel comes off in ribbon
-Negative: impossible food physics, blade phasing through food
-```
-
-### Pet Tools (宠物工具)
-
-使用新建的宠物工具模板：
-
-```
-Camera: Dolly In from pet setup → close-up on tool + pet interaction
-
-[Hero moment — {brush gliding through fur removing loose hair} — pet calm, macro 0.5x slow motion]
-
-7维Tools锁定 + 宠物舒适度
-Pet comfort check: ears forward, eyes soft, body relaxed, NOT (ears back, trying to escape)
-Negative: pet distress, unsafe grip, wrong species
-```
-
-## ⚙️ 高级用法
-
-### 指定类目运行
-
-如果自动分类不准确，可以手动指定类目：
-
-```bash
-# 强制指定为厨房工具
-python scripts/analyze_materials.py product-ugc-output/01-product --category home-tools
-
-# 强制指定为宠物工具
-python scripts/generate_product_identity_lock.py product-ugc-output/02-product --category pet-tools
-```
-
-### 只处理特定类目
-
-```bash
-# 只处理服装类产品
-python scripts/generate_ugc_prompts.py product-ugc-output --category apparel --count 10
-
-# 只处理电子产品
-python scripts/generate_videos_lk888.py product-ugc-output --category electronics --model veo3.1
-```
-
-### 批量处理多类目
-
-```bash
-# 对所有类目生成提示词
-for cat in apparel jewelry electronics home-tools pet-tools; do
-  python scripts/generate_ugc_prompts.py product-ugc-output --category $cat --count 5
-done
-```
-
-## 🔍 QC 检查详解
-
-### 双重一致性检查
-
-v2 的 QC 检查分为两层：
-
-**Layer 1: 产品身份一致性**
-- 产品轮廓/尺寸/材质与 identity_lock 匹配
-- 功能部件数量/位置正确
-- 无幻觉零件
-
-**Layer 2: 使用正确性**
-- 交互类型匹配（触控/按压/削/梳等）
-- 物理规律正确（食材/宠物/物体行为）
-- 安全/舒适度达标（握持/宠物状态）
-
-### 自动重试机制
-
-```bash
-# QC 失败自动重新生成
-python scripts/qc_dual_consistency.py product-ugc-output --auto-retry-failed --max-retries 3
-
-# 只检查不重试
-python scripts/qc_dual_consistency.py product-ugc-output --no-retry
-
-# 生成 QC 报告
-python scripts/qc_dual_consistency.py product-ugc-output --report qc_report.json
-```
-
-## 📊 性能对比
-
-### 与 v1 对比
-
-| 维度 | v1 | v2 |
-|-----|----|----|
-| 覆盖类目 | 不明确 | 5大类明确定义 |
-| 身份锁定 | 无 | 单张多宫格参考图 |
-| QC 检查 | 通用 | 类目专项检查 |
-| 翻车率 | ~40% | ~10% (预估) |
-
-### 成本估算（每个产品）
-
-| 阶段 | API 调用 | 预估成本 |
-|------|---------|---------|
-| 分类 | 0 | $0 |
-| 视觉分析 | 1-3 | ~$0.20 |
-| 身份锁定 | 3-6 | ~$0.60 |
-| 姿态库 | 3-5 | ~$0.50 |
-| 关键帧 | 2 | ~$0.40 |
-| 视频生成 | 1-10 | ~$5-50 (视频模型) |
-| **总计** | | **~$7-52/产品** |
-
-## 🤝 贡献与反馈
-
-### 依赖的开源 Skill
-
-1. **Higgsfield AI Prompt Skill** (MIT)
-   - GitHub: https://github.com/OSideMedia/higgsfield-ai-prompt-skill
-   - 贡献: MCSLA 公式、Recipe 3 模板、权威分离语法
-
-2. **蓝书 AI Video Kit** (MIT)
-   - GitHub: https://github.com/cclank/lanshu-awesome-ai-video-kit
-   - 贡献: 543 条 prompt 参考、model-selector、方法论 SOP
-
-3. **Virtual Try-On Video** (Source-available EULA, 个人非商业)
-   - GitHub: https://github.com/fsn021920-prog/virtual-try-on-video
-   - 贡献: 服装 7要素、Character Sheet、Dual-Consistency QC
-
-### 许可证
-
-本项目 (Product UGC Pipeline v2) 采用 **MIT License**。
-
-依赖的三个 skill 有各自的许可证：
-- Higgsfield: MIT ✅ 可商用
-- 蓝书: MIT ✅ 可商用
-- Virtual Try-On: Source-available EULA ⚠️ 仅个人非商业使用
-
-**如需商用，请：**
-1. 只使用 Higgsfield + 蓝书（MIT）
-2. 或联系 Virtual Try-On 作者获取商用授权
-
-### 反馈与改进
-
-欢迎提交 Issue 或 PR：
-- 新增产品类目支持
-- 改进类目定义规范
-- 优化 QC 检查逻辑
-- 补充测试用例
-
-## 📚 相关文档
-
-- [类目定义规范](./references/)
-- [五类产品测试用例](./tests/five-products/README.md)
-- [API 接口文档](./docs/API.md)
-- [常见问题 FAQ](./docs/FAQ.md)
-
-## 🔗 相关链接
-
-- Seedance 2.0 官方: https://github.com/Emily2040/seedance-2.0
-- Higgsfield 官网: https://higgsfield.ai
-- 蓝书 Demo: https://lanshu-awesome-ai-video-kit.lank.workers.dev
-
----
-
-**版本:** v2.0.0  
-**更新日期:** 2026-09-04  
-**作者:** Product UGC Pipeline Team
-
+没有调用商业 API 的本地模拟测试仅验证代码契约与异常处理。五类实物的质量和成本尚未实测；旧文档“40%→10%”及每产品固定美元估算不再作为性能说明。

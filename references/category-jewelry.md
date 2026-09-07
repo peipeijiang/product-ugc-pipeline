@@ -55,9 +55,9 @@ impossible clasp position (back of neck visible from front angle)
 
 ## Reference Sheet 适配（单张 1×3 宫格）
 
-Jewelry 不需要 90° 侧面全身图，用**一张** 1×3 横向宫格覆盖 3 个角度即可。单张生成保证三格首饰身份、金属色调一致。
+Jewelry 用**一张** 1 行 × 3 列宫格表达 3 个角度。三格身份和金属色调仍需与原图逐格质检。
 
-规格：1536×512（3:1 横版），3 格等分，20px 白色分隔线，底部标注佩戴位置锁定。
+规格：1536×1024 画布内横向 3 格等分，细白色分隔线；尺寸/佩戴位置以来源依据为准。避免向原 Image2 适配器提交未确认支持的 1536×512 尺寸。
 
 | Panel | 位置 | Pose | Purpose |
 |---|---|---|---|
@@ -68,12 +68,12 @@ Jewelry 不需要 90° 侧面全身图，用**一张** 1×3 横向宫格覆盖 3
 **Prompt 骨架：**
 
 ```
-Create a 1×3 horizontal reference sheet (1536×512) of {jewelry}:
+Create a 1-row, 3-column reference sheet (1536×1024 canvas) of {jewelry}:
 Panel 1 (left): front close-up, worn on body, placement + scale visible
 Panel 2 (center): 45° detail, jewelry + skin interaction, drape/weight
 Panel 3 (right): extreme macro, jewelry only, material finish + clasp
 
-Size locked: {ring inner diameter mm / chain length cm} — scale authority 1.0
+Size: {source-backed ring diameter / chain length, otherwise unknown}; match verified relative scale
 Placement locked: {which finger + above/below knuckle | chest position}
 Style: clean jewelry grid, neutral background, 3 equal panels, 20px white borders
 Negative: floating jewelry, plastic-looking metal, cross-panel color drift,

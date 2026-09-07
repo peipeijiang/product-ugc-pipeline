@@ -59,7 +59,7 @@ All pet tools must be used safely. Do not generate videos showing:
 
 ## Reference Sheet 适配（单张宫格）
 
-Pet tools 用**一张**宫格参考图覆盖 5 个角度，上排 3 格 + 下排 2 格。单张生成保证各格工具身份一致。
+Pet tools 用**一张**宫格参考图表达 5 个角度，上排 3 格 + 下排 2 格；生成后仍须与原图逐格质检。
 
 规格：1024×1024，5 格（上 3 下 2），20px 白色分隔线，底部标注尺寸与适配宠物体型。
 
@@ -81,7 +81,7 @@ Panel 3: 45° detail, grip zone
 Panel 4: hand using tool on {cat/dog} fur, pet relaxed (ears forward, eyes soft)
 Panel 5: tool beside pet for size appropriateness
 
-Dimensions locked: {exact cm} — scale authority 1.0
+Dimensions: {source-backed measurements, otherwise unknown}; match verified relative scale
 Target pet: {species + size range}
 Style: clean product grid, neutral background, 20px white borders
 Negative: cross-panel distortion, pet distress (ears back, wide eyes, escaping),
@@ -90,4 +90,4 @@ wrong species, teeth digging into skin, phantom electric features
 
 **可选：宠物舒适度宫格**
 
-如需强化宠物体态控制，再出**一张** 1×3 宫格：放松 / 享受 / 接受三种体态，同一宠物身份，作为 `@pet_ref{0.70}` 使用。
+默认把宠物接触与比例放进同一张产品宫格。显式使用 `--separate-sheet` 可补一张使用姿态宫格；本项目没有 `@pet_ref{0.70}` 之类的数值参考权重参数。

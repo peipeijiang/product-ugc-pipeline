@@ -2,10 +2,9 @@
   "product_name": "925纯银戒指 简约光面设计",
   "source_url": "https://example.com/ring",
   "scraped_at": "2026-09-04T10:05:00Z",
-  "images": [
-    "ring_0.jpg",
-    "ring_1.jpg"
-  ],
+  "images": [],
   "price": "¥199",
-  "description": "925纯银 光面抛光 开口可调节 内径17mm"
+  "description": "925纯银 光面抛光 开口可调节 内径17mm",
+  "fixture_only": true,
+  "fixture_notice": "No real product images; do not run paid generation."
 }

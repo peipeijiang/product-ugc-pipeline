@@ -46,7 +46,7 @@
 
 ## Reference Sheet 适配（单张 2×3 宫格）
 
-Electronics 用**一张** 2×3 宫格参考图覆盖全部 6 个角度。单张生成的好处：宫格内各格产品身份天然一致（同一次生成不会画成 6 个不同产品），且视频模型一次就能读到全部角度。
+Electronics 用**一张** 2 行 × 3 列宫格参考图表达 6 个角度/关系。生成图仍可能在格间画错，必须与原图逐格质检。宫格指导场景首尾帧，VEO 接收的是首尾帧；没有证据的角度应复用已有视角。
 
 规格：1024×1536（2:3 竖版），6 格等分，20px 白色分隔线，顶部横幅写产品名，底部标注尺寸锁定值。
 
@@ -70,7 +70,7 @@ Panel 4 (bottom-left): top view, button layout + LED positions
 Panel 5 (bottom-center): in-use close-up, correct hand grip
 Panel 6 (bottom-right): beside {AA battery / credit card} for scale
 
-Dimensions locked: {exact mm} — scale authority 1.0
+Dimensions: {source-backed measurements, otherwise unknown}; match verified relative scale
 Ports/buttons: {exact count and positions}
 Style: clean product grid, white background, studio light, 6 equal panels,
 20px white borders, header = product name, footer = dimension lock
