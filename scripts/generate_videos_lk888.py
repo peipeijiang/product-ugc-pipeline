@@ -78,6 +78,34 @@ def unique_paths(paths: list[Path]) -> list[Path]:
     return unique
 
 
+def omni_storyboard_identity_paths(product_dir: Path, variant: dict[str, Any]) -> list[Path]:
+    """Return the fixed v2 Omni pair: chronological storyboard + identity grid."""
+    from v2_contract import load_identity, local_file
+
+    identity = load_identity(product_dir)
+    identity_sheet = local_file(product_dir, identity["output_path"])
+    explicit_references = unique_paths(variant_reference_paths(product_dir, variant))
+    storyboard = next(
+        (
+            path
+            for path in explicit_references
+            if path.resolve() != identity_sheet.resolve()
+            and (
+                "storyboard" in path.name.lower()
+                or "storyboard" in str(load_json(path.with_suffix(".provenance.json"), {}).get("type", "")).lower()
+            )
+        ),
+        None,
+    )
+    if storyboard is None:
+        raise RuntimeError(
+            "Omni reference mode requires an Image2-generated chronological storyboard in variant reference_images"
+        )
+    if not storyboard.with_suffix(".provenance.json").is_file():
+        raise RuntimeError(f"Storyboard is missing provenance: {storyboard}")
+    return [storyboard, identity_sheet]
+
+
 def generated_start_end_paths(product_dir: Path, variant_id: int) -> tuple[Path, Path]:
     return (
         product_dir / "generated_images" / f"variant-{variant_id:02d}-start.png",
@@ -472,7 +500,7 @@ def compact_omni_prompt(variant: dict[str, Any], duration: str, reference_mode: 
     mode_instruction = (
         "Image 1 is the opening frame and image 2 is the final frame; interpolate a continuous action between them."
         if reference_mode == "first-last"
-        else "Use the supplied 1–3 images as all-purpose identity, subject, scene, and style references; they are not a forced first/final-frame pair."
+        else "Use exactly two all-purpose references: image 1 is the chronological storyboard and image 2 is the product identity grid; they are not a forced first/final-frame pair."
     )
     voice_items = variant.get("voiceover_script_8s") or []
     if isinstance(voice_items, list):
@@ -523,7 +551,7 @@ def poll_task(api_key: str, task_id: str, base_url: str, poll_seconds: int, stat
 
 
 def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, args: argparse.Namespace) -> dict[str, Any]:
-    from v2_contract import active, check_existing_video, record_video, require_qc, scene_references, validate_scene_chain, video_contract
+    from v2_contract import active, check_existing_video, record_video, require_qc, validate_scene_chain, video_contract
     variant_id = int(variant.get("variant_id", 0))
     output_dir = existing_video_dir(product_dir)
     output_path = output_dir / f"variant-{variant_id:02d}.mp4"
@@ -555,22 +583,11 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
         reference_images = [start_frame, end_frame]
     elif args.model in {"omni-flash", "omni_flash-10s"} and args.reference_mode == "omni-reference":
         generated = generated_keyframe_paths(product_dir, variant_id)
-        explicit_references = variant_reference_paths(product_dir, variant)
-        if not generated and not explicit_references:
-            raise RuntimeError(
-                f"{product_dir.name} variant {variant_id:02d}: Omni reference mode requires at least one Image2-generated scene frame"
-            )
         if v2_active:
-            # Storyboard-led rerolls may explicitly supply a generated storyboard,
-            # the QC-passed identity grid, and the canonical product photo. Keep
-            # the legacy start-scene chain as the default when no explicit set is
-            # provided. The generated-reference provenance and QC gates below
-            # still apply, so this cannot become a raw-product-photo-only path.
-            reference_images = (
-                unique_paths(explicit_references)[:3]
-                if explicit_references
-                else unique_paths([generated[0]] + scene_references(product_dir, "start", variant_id))[:3]
-            )
+            # V2 Omni uses one stable, explicit pair. The real product photo is
+            # upstream evidence for creating/QC'ing the identity grid, not a
+            # third video-model reference.
+            reference_images = omni_storyboard_identity_paths(product_dir, variant)
         else:
             reference_images = unique_paths(generated[:1] + variant_reference_paths(product_dir, variant))[:3]
     else:
@@ -751,7 +768,7 @@ def main() -> None:
         "--reference-mode",
         default="first-last",
         choices=["first-last", "omni-reference"],
-        help="Omni image mode: an exact generated start/end pair, or 1–3 all-purpose generated/product identity references.",
+        help="Omni image mode: an exact generated start/end pair, or the fixed v2 storyboard + identity-grid pair.",
     )
     parser.add_argument("--single-reference", action="store_true", help="Deprecated alias: use one generated scene image in omni-reference mode.")
     parser.add_argument("--allow-landscape", action="store_true", help="Allow non-9:16 aspect ratios for explicit landscape-only jobs.")

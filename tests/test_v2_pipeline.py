@@ -14,6 +14,7 @@ from common import load_json, write_json, selected_product_dirs
 from generate_product_identity_lock import generate, parser
 from generate_usage_pose_sheet import generate as usage
 from generate_images import generate_one_image, keyframe_references
+from generate_videos_lk888 import omni_storyboard_identity_paths
 from qc_dual_consistency import CHECKS, verdict, review, targets
 from v2_contract import (SPECS, action_ledger, check_existing_video, digest, hashes,
                          context, load_identity, record_video, require_qc, validate_scene_chain,
@@ -184,6 +185,23 @@ class PipelineTests(unittest.TestCase):
         frames[0].write_bytes(b"changed")
         with self.assertRaises(RuntimeError):
             validate_video_chain(folder, video)
+
+    def test_omni_reference_uses_only_storyboard_and_identity_grid(self):
+        folder, _ = self.setup_identity()
+        storyboard = folder / "runs/test/storyboard/variant-03-storyboard.png"
+        storyboard.parent.mkdir(parents=True)
+        Image.new("RGB", (64, 64), "blue").save(storyboard)
+        write_json(storyboard.with_suffix(".provenance.json"), {"type": "image2_chronological_storyboard"})
+        variant = {"reference_images": [
+            str(storyboard.relative_to(folder)),
+            "identity_lock/reference_sheet.png",
+            "images/source.png",
+        ]}
+        references = omni_storyboard_identity_paths(folder, variant)
+        self.assertEqual(references, [storyboard, folder / "identity_lock/reference_sheet.png"])
+
+        with self.assertRaisesRegex(RuntimeError, "chronological storyboard"):
+            omni_storyboard_identity_paths(folder, {"reference_images": ["identity_lock/reference_sheet.png"]})
 
 
 if __name__ == "__main__":
