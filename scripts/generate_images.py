@@ -73,19 +73,37 @@ def existing_references(product_dir: Path, variant: dict[str, Any], max_referenc
 
 
 def build_image_prompt(variant: dict[str, Any], product_name: str) -> str:
-    return (
+    prompt = (
         variant.get("image_prompt")
         or f"Create a vertical short-form ecommerce UGC product pad image for {product_name}. Preserve the referenced product exactly. No social media icons, no platform logos, no camera/reel icons, no reaction icons, no app UI, no watermarks."
     )
+    scale_lock = str(variant.get("_physical_scale_lock") or "").strip()
+    if scale_lock:
+        prompt += "\nSTRICT PHYSICAL SCALE: " + scale_lock
+    return prompt
 
 
 def build_keyframe_prompt(variant: dict[str, Any], product_name: str, frame_role: str) -> str:
     prompt_key = "start_frame_prompt" if frame_role == "start" else "end_frame_prompt"
     fallback_role = "start" if frame_role == "start" else "final"
-    return (
+    prompt = (
         variant.get(prompt_key)
         or variant.get("image_prompt")
         or f"Create a single vertical 9:16 short-form ecommerce UGC {fallback_role} keyframe photo for {product_name}. For END frames: use the start-frame reference for room/lighting/person/product continuity ONLY, create a VISIBLY DIFFERENT final moment. Preserve the referenced product exactly. Output exactly one undivided photograph. No multi-panel layouts, no split-screens, no before-after comparisons, no contact sheets, no product grids, no collages, no storyboard frames, no 2-up/3-up/4-up arrangements. No on-image text labels, captions, callouts, arrows, or graphic overlays. No social media icons, no platform logos, no camera/reel icons, no reaction icons, no app UI, no watermarks."
+    )
+    scale_lock = str(variant.get("_physical_scale_lock") or "").strip()
+    if scale_lock:
+        prompt += "\nSTRICT PHYSICAL SCALE: " + scale_lock
+    if frame_role == "end":
+        prompt += (
+            "\nSTRICT END-STATE ADVANCE: The final frame must not be a near-duplicate of the start frame. "
+            "Keep identity and room continuity, but visibly change the camera composition and the creator's pose/action so the completed payoff reads immediately."
+        )
+    return prompt + (
+        "\nSTRICT SINGLETON PRODUCT RULE: Show exactly one physical instance of the referenced product in the entire image. "
+        "Never show one product in a hand and a second product on a table. Do not create a duplicate through mirrors, reflections, screens, or background props."
+        "\nSTRICT S8 SILHOUETTE RULE: Preserve the source's low, elongated capsule body, visibly about 2.3 to 2.6 times wider than tall. "
+        "Never make the device tall, squat, square, or oversized relative to a nearby smartphone."
     )
 
 
@@ -220,11 +238,16 @@ def generate_image_file(
         last_error = None
         for attempt in range(1, args.retries + 1):
             try:
+                # LaoZhang/OpenAI-compatible Images Edits accepts one file as
+                # `image`, but multiple inputs must use the array field
+                # `image[]`. Repeating the scalar field now reaches the
+                # deprecated upstream `referenceImages` path.
+                image_field = "image[]" if len(references) > 1 else "image"
                 response = multipart_request(
                     "/images/edits",
                     api_key,
                     fields=fields,
-                    files=[("image", item) for item in references],
+                    files=[(image_field, item) for item in references],
                     base_url=args.base_url,
                     timeout=args.timeout,
                 )
@@ -290,7 +313,9 @@ def generate_one_image(
                 "Only pass --allow-compose-keyframes for explicit stable b-roll, not product-use videos."
             )
         results: list[dict[str, Any]] = []
-        for frame_role in ("start", "end"):
+        frame_role = getattr(args, "frame_role", "both")
+        frame_roles = ("start", "end") if frame_role == "both" else (frame_role,)
+        for frame_role in frame_roles:
             destination = product_dir / "generated_images" / f"variant-{variant_id:02d}-{frame_role}.png"
             prompt = build_keyframe_prompt(variant, product_name, frame_role)
             references = keyframe_references(product_dir, variant, frame_role, max(1, args.max_reference_images))
@@ -320,7 +345,9 @@ def process_product(product_dir: Path, api_key: str, selected_variants: set[int]
         if variant_id not in selected_variants:
             continue
         print(f"[image] {product_dir.name} variant {variant_id:02d}")
-        results.append(generate_one_image(api_key, product_dir, variant, args))
+        current_variant = dict(variant)
+        current_variant["_physical_scale_lock"] = prompts.get("physical_scale_lock", "")
+        results.append(generate_one_image(api_key, product_dir, current_variant, args))
     write_json(product_dir / "generated_images" / "image_generation_results.json", {"results": results})
 
 
@@ -340,6 +367,7 @@ def main() -> None:
     parser.add_argument("--compose-only", action="store_true", help="Create deterministic 9:16 pad images from the original reference without AI redraw.")
     parser.add_argument("--allow-compose-keyframes", action="store_true", help="Explicitly permit compose-only start/end keyframes for stable b-roll only; never use for functional usage demos.")
     parser.add_argument("--keyframes", action="store_true", help="Generate start/end keyframe images named variant-XX-start.png and variant-XX-end.png.")
+    parser.add_argument("--frame-role", default="both", choices=["both", "start", "end"], help="With --keyframes, generate both frames or reroll only one role.")
     parser.add_argument("--max-reference-images", type=int, default=1, help="Maximum selected reference images to send to image edit requests.")
     args = parser.parse_args()
     selected_variants = parse_variants(args.variants)

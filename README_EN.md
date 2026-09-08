@@ -188,6 +188,8 @@ python scripts/generate_videos_lk888.py product-ugc-output \
   --generation-mode fast
 ```
 
+For `omni-flash`, this skill defaults to a 10-second video (the provider supports 4/6/8/10 seconds). Choose `--reference-mode first-last` for an exact generated start/end pair, or `--reference-mode omni-reference` for 1–3 all-purpose references. The latter must include at least one generated, QC-passed scene frame and may add the identity sheet and canonical real product photo. Omni prompts are compacted to the provider's 4,000-character limit. Pass `--duration` only when overriding the 10-second default.
+
 ### 6. Run the parallel image-to-video pipeline
 
 ```bash

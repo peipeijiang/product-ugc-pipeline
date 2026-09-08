@@ -64,8 +64,10 @@ python scripts/qc_dual_consistency.py output --stage videos --variants 1-3
 Omni Flash 是显式选择，沿用原接口：
 
 ```bash
-python scripts/generate_videos_lk888.py output --variants 1-3 --model omni-flash --base-url https://api.lk888.ai --status-endpoint /v1/media/status --duration 8
+python scripts/generate_videos_lk888.py output --variants 1-3 --model omni-flash --base-url https://api.lk888.ai --status-endpoint /v1/media/status --reference-mode first-last
 ```
+
+`omni-flash` 在本技能中默认生成 10 秒视频，支持 4/6/8/10 秒。图片输入有两种明确模式：`--reference-mode first-last` 使用已生成并通过 QC 的首帧和尾帧；`--reference-mode omni-reference` 使用 1–3 张全能参考图（至少一张 Image2 场景图，可补充身份锁定图和真实主商品图）。提示词会自动压缩到 Updrama 的 4,000 字符上限内。只有需要非默认时长时才显式传 `--duration`。
 
 新脚本均可传入批次目录或单个商品目录；`--products 01,03` 选择批次内商品。新身份脚本支持 `--category electronics` 显式指定类目。旧分类器是关键词/启发式规则，confidence 不是统计准确率。
 

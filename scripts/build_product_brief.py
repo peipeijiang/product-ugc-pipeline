@@ -58,7 +58,7 @@ Return JSON with:
 - confirmed_selling_points: factual selling points from the page
 - confirmed_use_cases: use cases directly supported by page text or images
 - inferred_use_cases: cautious inferences; mark if uncertain
-- step_by_step_usage: concrete numbered usage steps; each step must say evidence_source: page_text/image_analysis/inference
+- step_by_step_usage: concrete numbered usage steps; each step must include step, action, evidence_source, and evidence. evidence must name the exact local image path(s) and/or exact product_manifest.json field supporting the action. Never use inference/guess/unknown as evidence for a confirmed action.
 - recommended_ugc_scenes: realistic scenes where the usage steps can be shown
 - proof_moments: visual moments that prove the product works
 - reference_image_strategy: which local image paths are best for full product reconstruction and why

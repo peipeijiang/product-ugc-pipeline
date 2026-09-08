@@ -7,7 +7,8 @@ Sources checked on 2026-04-27:
 
 ## Base
 
-- Base URL: `https://api.laozhang.ai/v1`
+- Base URL: `https://api2.laozhang.ai/v1` (current documentation; the legacy
+  `api.laozhang.ai` host may still route requests but is not the documented default)
 - Auth: `Authorization: Bearer $LAOZHANG_API_KEY`
 - Do not include model-specific paths in the base URL.
 
@@ -33,7 +34,9 @@ Avoid `3840x2160` and `2160x3840` on `gpt-image-2-vip`.
 Supported endpoint patterns:
 
 - Text-to-image: `POST /images/generations`
-- Image-to-image: `POST /images/edits` multipart with `image=@source.png`
+- Image-to-image: `POST /images/edits` multipart with `image=@source.png` for
+  one source. For multiple reference files, send each as `image[]=@source.png`;
+  repeating scalar `image` can hit the deprecated upstream `referenceImages` path.
 - Default-group chat image route: `POST /chat/completions`; response image is often a Markdown image URL in `choices[0].message.content`
 
 For product-fidelity pad images, prefer `/images/edits` with the cleanest downloaded product photo as `image`.

@@ -56,7 +56,9 @@ python scripts/qc_dual_consistency.py output --stage usage
 
 每张场景图输出对应的 `.provenance.json`，保存实际参考文件摘要、完整提示词、图片模型和供应商。图片提示词明确只输出一张正常的竖版照片，不复制宫格布局。
 
-VEO 继续接收场景首尾帧；Omni Flash 继续使用原多参考输入规则。三个视频入口在 v2 中都先检查参考来源和首尾帧 QC。parallel_pipeline.py 当前是已有关键帧的 VEO 批量提交器，不会自动生成宫格或首尾帧；Omni 请用 generate_videos_lk888.py。
+VEO 继续接收场景首尾帧。Omni Flash 默认 10 秒，并提供两种显式模式：`first-last` 使用场景首尾帧；`omni-reference` 使用 1–3 张全能参考图，其中至少一张必须是已生成并通过 QC 的场景图，其余可使用身份锁定图和真实主商品图。三个视频入口在 v2 中都先检查参考来源和相应 QC。`parallel_pipeline.py` 当前是已有关键帧的 VEO 批量提交器，不会自动生成宫格或首尾帧；Omni 请用 `generate_videos_lk888.py`。
+
+用户明确要求“故事板 + 全能参考”时，可在单个变体的 `reference_images` 中按顺序指定：Image2 生成的时序故事板、已通过 QC 的产品锁定宫格、真实主商品图。故事板需保存 provenance 并通过 `qc_dual_consistency.py --stage keyframes --target <path>`；每格只能出现一台实体产品，且宫格与真实主图冲突时仍以真实主图为准。
 
 ## 双重一致性质检
 

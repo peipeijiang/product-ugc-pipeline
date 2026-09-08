@@ -127,11 +127,12 @@ def upload_litterbox(path: Path, lifetime: str = "1h") -> str:
 
 def upload_uguu(path: Path) -> str:
     with path.open("rb") as file_handle:
-        response = requests.post(
+        session = requests.Session()
+        session.trust_env = False
+        response = session.post(
             "https://uguu.se/upload.php",
             files={"files[]": (path.name, file_handle, "image/png")},
             timeout=120,
-            proxies={"http": None, "https": None},
         )
     if response.status_code >= 400:
         raise RuntimeError(f"Uguu upload failed HTTP {response.status_code}: {response.text[:500]}")
@@ -452,6 +453,49 @@ def normalize_status(status_response: dict[str, Any]) -> dict[str, Any]:
     return data if isinstance(data, dict) else status_response
 
 
+def compact_omni_prompt(variant: dict[str, Any], duration: str, reference_mode: str) -> str:
+    """Keep Omni prompts inside the provider's 4,000-character hard limit."""
+    def clipped(value: Any, limit: int) -> str:
+        text = json.dumps(value, ensure_ascii=False) if isinstance(value, (list, dict)) else str(value or "")
+        text = re.sub(r"\s+", " ", text).strip()
+        return text[:limit].rstrip()
+
+    storyboard = variant.get("storyboard_8s") or variant.get("shot_plan") or []
+    beats: list[str] = []
+    if isinstance(storyboard, list):
+        for item in storyboard:
+            if isinstance(item, dict):
+                visual = str(item.get("visual") or item.get("shot") or "").strip()
+                spoken = str(item.get("spoken") or "").strip()
+                if visual:
+                    beats.append(visual + (f"; spoken: {spoken}" if spoken else ""))
+    mode_instruction = (
+        "Image 1 is the opening frame and image 2 is the final frame; interpolate a continuous action between them."
+        if reference_mode == "first-last"
+        else "Use the supplied 1–3 images as all-purpose identity, subject, scene, and style references; they are not a forced first/final-frame pair."
+    )
+    voice_items = variant.get("voiceover_script_8s") or []
+    if isinstance(voice_items, list):
+        voice = " ".join(str(item.get("line", "")) if isinstance(item, dict) else str(item) for item in voice_items)
+    else:
+        voice = str(voice_items)
+    return (
+        f"Create exactly one {duration}-second vertical 9:16 realistic creator-style product video. {mode_instruction} "
+        "Preserve the same adult creator, room, wardrobe, lighting, camera geometry, props, and the same single physical product throughout. "
+        "Show exactly ONE product in the entire video; never duplicate it in hands, on furniture, in mirrors, reflections, or screens. "
+        "PRODUCT LOCK: black S8 mirror clock Bluetooth speaker; low elongated horizontal capsule body, about 2.3–2.6 times wider than tall; matte black shell; glossy mirror front; large white seven-segment time digits with small status icons; one large front-right rotary knob; exactly seven small tactile buttons in one straight top row; circular silver-trimmed ends with thin optional ambient rings. Never morph, resize, recolor, rotate into a tall shape, add branding, or invent controls. "
+        f"CONCEPT: {clipped(variant.get('title'), 180)}. HOOK: {clipped(variant.get('hook'), 320)}. "
+        f"PRIMARY FUNCTION: {clipped(variant.get('primary_function_focus'), 320)}. "
+        f"SCENE: {clipped(variant.get('scene_imagination'), 650)}. "
+        f"SHOT PLAN: distribute these beats naturally across all {duration} seconds: {clipped(beats or storyboard, 1050)}. "
+        f"SUPPORTED ACTION: {clipped(variant.get('usage_logic'), 650)}. "
+        f"PAYOFF: {clipped(variant.get('proof_moment'), 450)}. "
+        f"NATIVE AUDIO: young American female creator voice, natural and warm. Speak exactly: {clipped(voice, 400)}. Do not add speech. Add subtle room/product sounds and low music without singing. "
+        "No subtitles, captions, labels, overlays, logos, watermarks, app UI, touchscreen, wireless charging, projector, camera lens, extra accessories, extra products, or unsupported claims. Use natural handheld motion."
+        + (" Finish exactly on image 2." if reference_mode == "first-last" else "")
+    )
+
+
 def poll_task(api_key: str, task_id: str, base_url: str, poll_seconds: int, status_endpoint: str) -> dict[str, Any]:
     transient_errors = 0
     while True:
@@ -479,7 +523,7 @@ def poll_task(api_key: str, task_id: str, base_url: str, poll_seconds: int, stat
 
 
 def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, args: argparse.Namespace) -> dict[str, Any]:
-    from v2_contract import active, check_existing_video, record_video, require_qc, validate_scene_chain, video_contract
+    from v2_contract import active, check_existing_video, record_video, require_qc, scene_references, validate_scene_chain, video_contract
     variant_id = int(variant.get("variant_id", 0))
     output_dir = existing_video_dir(product_dir)
     output_path = output_dir / f"variant-{variant_id:02d}.mp4"
@@ -500,6 +544,35 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
                 "Run generate_images.py with --keyframes for this variant before submitting VEO."
             )
         reference_images = [start_frame, end_frame]
+    elif args.model in {"omni-flash", "omni_flash-10s"} and args.reference_mode == "first-last":
+        start_frame, end_frame = generated_start_end_paths(product_dir, variant_id)
+        missing = [path.name for path in (start_frame, end_frame) if not path.exists()]
+        if missing:
+            raise RuntimeError(
+                f"{product_dir.name} variant {variant_id:02d}: Omni first-last mode requires both keyframes; "
+                f"missing {', '.join(missing)}. Generate and QC the missing frame first."
+            )
+        reference_images = [start_frame, end_frame]
+    elif args.model in {"omni-flash", "omni_flash-10s"} and args.reference_mode == "omni-reference":
+        generated = generated_keyframe_paths(product_dir, variant_id)
+        explicit_references = variant_reference_paths(product_dir, variant)
+        if not generated and not explicit_references:
+            raise RuntimeError(
+                f"{product_dir.name} variant {variant_id:02d}: Omni reference mode requires at least one Image2-generated scene frame"
+            )
+        if v2_active:
+            # Storyboard-led rerolls may explicitly supply a generated storyboard,
+            # the QC-passed identity grid, and the canonical product photo. Keep
+            # the legacy start-scene chain as the default when no explicit set is
+            # provided. The generated-reference provenance and QC gates below
+            # still apply, so this cannot become a raw-product-photo-only path.
+            reference_images = (
+                unique_paths(explicit_references)[:3]
+                if explicit_references
+                else unique_paths([generated[0]] + scene_references(product_dir, "start", variant_id))[:3]
+            )
+        else:
+            reference_images = unique_paths(generated[:1] + variant_reference_paths(product_dir, variant))[:3]
     else:
         reference_images = unique_paths(
             generated_keyframe_paths(product_dir, variant_id)
@@ -510,13 +583,22 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
     if args.single_reference:
         reference_images = reference_images[:1]
     if v2_active:
-        scene_refs = [p for p in reference_images if p.parent.name == "generated_images"]
+        # A generated storyboard can live in an append-only run folder rather
+        # than the canonical generated_images directory. Its provenance file is
+        # the durable proof that it is an Image2-generated scene reference.
+        scene_refs = [p for p in reference_images if p.with_suffix(".provenance.json").is_file()]
         if not scene_refs:
             raise RuntimeError("v2 video requires generated scene frames")
         validate_scene_chain(product_dir, scene_refs)
         require_qc(product_dir, scene_refs, "keyframes")
     reference_limit = 7 if args.model == "omni_flash-10s" else 3 if args.model == "omni-flash" else 2
     base_prompt = variant.get("video_prompt") or "Create a product UGC video."
+    if args.model in {"omni-flash", "omni_flash-10s"} and len(base_prompt) > 4000:
+        base_prompt = compact_omni_prompt(variant, str(args.duration), args.reference_mode)
+        print(f"[prompt] compacted Omni prompt to {len(base_prompt)} characters", flush=True)
+    scale_lock = str(variant.get("_physical_scale_lock") or "").strip()
+    if scale_lock:
+        base_prompt += " STRICT PHYSICAL SCALE THROUGHOUT: " + scale_lock
     expected = video_contract(product_dir, reference_images[:reference_limit], args.model, base_prompt, {
         "aspect_ratio": args.aspect_ratio, "duration": str(args.duration),
         "audio_duration": str(args.audio_duration), "resolution": args.resolution,
@@ -524,6 +606,7 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
         "version": args.version, "quality": args.quality, "enhance_prompt": args.enhance_prompt,
         "audio_style": args.audio_style, "light_overlay": bool(args.light_overlay),
         "safe_audio_test": bool(args.safe_audio_test), "enable_upsample": args.enable_upsample,
+        "reference_mode": args.reference_mode,
         "base_url": args.base_url, "status_endpoint": args.status_endpoint,
     }) if v2_active else {}
     if output_path.exists() and not args.force:
@@ -556,6 +639,11 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
         )
     params = build_model_params(args, [item["url"] for item in uploads])
     payload = {"model": args.model, "prompt": prompt, "params": params, "count": 1}
+    print(
+        f"[params] aspect_ratio={args.aspect_ratio} duration={args.duration} "
+        f"reference_mode={args.reference_mode} images={len(params.get('images') or [])}",
+        flush=True,
+    )
     print(f"[create] {product_dir.name} variant {variant_id:02d} model={args.model}", flush=True)
     create_response = with_retries(
         f"create task for {product_dir.name} variant {variant_id:02d}",
@@ -608,6 +696,7 @@ def process_product(product_dir: Path, api_key: str, selected_variants: set[int]
         if variant_id not in selected_variants:
             continue
         current_variant = dict(variant)
+        current_variant["_physical_scale_lock"] = prompts.get("physical_scale_lock", "")
         try:
             result = process_variant(product_dir, current_variant, api_key, args)
         except Exception as error:
@@ -637,8 +726,12 @@ def main() -> None:
     parser.add_argument("--version", default="快速")
     parser.add_argument("--quality", default="sd")
     parser.add_argument("--aspect-ratio", default=DEFAULT_ASPECT_RATIO)
-    parser.add_argument("--duration", default="8")
-    parser.add_argument("--audio-duration", default="8")
+    parser.add_argument(
+        "--duration",
+        default=None,
+        help="Video duration. Defaults to 10 for omni-flash/omni_flash-10s and 8 for other models.",
+    )
+    parser.add_argument("--audio-duration", default=None)
     parser.add_argument("--resolution", default="720p")
     parser.add_argument("--generate-audio", action="store_true")
     parser.add_argument("--output-subdir", default="")
@@ -654,11 +747,25 @@ def main() -> None:
     parser.add_argument("--audio-style", default="safe", choices=["none", "safe", "mid", "legacy", "asmr"])
     parser.add_argument("--light-overlay", action="store_true")
     parser.add_argument("--safe-audio-test", action="store_true")
-    parser.add_argument("--single-reference", action="store_true", help="Use only the first generated reference image instead of first/last keyframes.")
+    parser.add_argument(
+        "--reference-mode",
+        default="first-last",
+        choices=["first-last", "omni-reference"],
+        help="Omni image mode: an exact generated start/end pair, or 1–3 all-purpose generated/product identity references.",
+    )
+    parser.add_argument("--single-reference", action="store_true", help="Deprecated alias: use one generated scene image in omni-reference mode.")
     parser.add_argument("--allow-landscape", action="store_true", help="Allow non-9:16 aspect ratios for explicit landscape-only jobs.")
     parser.add_argument("--continue-on-error", action="store_true", help="Record failed variants and continue processing the batch.")
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
+    if args.duration is None:
+        args.duration = "10" if args.model in {"omni-flash", "omni_flash-10s"} else "8"
+    if args.audio_duration is None:
+        args.audio_duration = str(args.duration)
+    if args.model in {"omni-flash", "omni_flash-10s"} and str(args.duration) not in {"4", "6", "8", "10"}:
+        raise SystemExit("Omni duration must be one of 4, 6, 8, or 10 seconds")
+    if args.single_reference:
+        args.reference_mode = "omni-reference"
     if args.aspect_ratio != DEFAULT_ASPECT_RATIO and not args.allow_landscape:
         raise SystemExit(
             f"Refusing aspect_ratio={args.aspect_ratio}. Product UGC videos default to vertical {DEFAULT_ASPECT_RATIO}; "
