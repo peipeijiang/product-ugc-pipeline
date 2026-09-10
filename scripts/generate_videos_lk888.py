@@ -86,7 +86,14 @@ def unique_paths(paths: list[Path]) -> list[Path]:
 
 
 def omni_storyboard_identity_paths(product_dir: Path, variant: dict[str, Any]) -> list[Path]:
-    """Return the fixed v2 Omni pair: chronological storyboard + identity grid."""
+    """Return the v2 Omni references: storyboard, identity grid, then extra refs.
+
+    The first two are fixed: the chronological storyboard sets shot order and the
+    identity grid sets product geometry. Any remaining explicitly declared
+    variant reference (for example an Image2 mechanism sheet that teaches an
+    action the static panels cannot show) follows after them, so the prompt's
+    "image 3" and later slots refer to real uploaded images.
+    """
     from v2_contract import load_identity, local_file
 
     identity = load_identity(product_dir)
@@ -110,7 +117,12 @@ def omni_storyboard_identity_paths(product_dir: Path, variant: dict[str, Any]) -
         )
     if not storyboard.with_suffix(".provenance.json").is_file():
         raise RuntimeError(f"Storyboard is missing provenance: {storyboard}")
-    return [storyboard, identity_sheet]
+    extra_references = [
+        path
+        for path in explicit_references
+        if path.resolve() not in {storyboard.resolve(), identity_sheet.resolve()}
+    ]
+    return [storyboard, identity_sheet, *extra_references]
 
 
 def generated_start_end_paths(product_dir: Path, variant_id: int) -> tuple[Path, Path]:
@@ -354,6 +366,47 @@ def voice_profile(locale: str | None) -> tuple[str, str]:
     return VOICE_LOCALE_PROFILES.get(str(locale or "en-US"), VOICE_LOCALE_PROFILES["en-US"])
 
 
+def power_connection_clause(brief: dict[str, Any], budget: int | None = None) -> str:
+    """Render the product's confirmed power chain as a mandatory prompt clause.
+
+    Scraped listings usually show only the cable leaving the product, so the
+    video model invents the connection: a bare mains plug, a USB plug pushed
+    into a wall socket, or a lamp glowing with nothing plugged in. When the
+    brief records the real chain, state it and forbid those inventions.
+
+    A budget caps the clause for models with a hard prompt length limit. Whole
+    list items are dropped from the least critical end rather than cutting
+    mid-sentence, so the chain itself is never truncated.
+    """
+    power = brief.get("power_connection") or {}
+    if not power:
+        return ""
+    sources = [str(item) for item in (power.get("valid_power_sources") or [])]
+    forbidden = [str(item) for item in (power.get("forbidden") or [])]
+    head = (
+        "POWER CONNECTION, must be physically readable in the same shot: "
+        + str(power.get("cable_exit", "")).strip() + " "
+        + str(power.get("connector_on_cable", "")).strip() + " "
+        + str(power.get("required_visible_chain", "")).strip() + " "
+    ).strip()
+    sources_text = ("Acceptable sources: " + "; ".join(sources) + ".") if sources else ""
+
+    def assemble(keep_forbidden: list[str]) -> str:
+        forbidden_text = ("Never show: " + "; ".join(keep_forbidden) + ".") if keep_forbidden else ""
+        return " ".join(part for part in (head, sources_text, forbidden_text) if part)
+
+    clause = assemble(forbidden)
+    if budget and len(clause) > budget:
+        while forbidden:
+            forbidden = forbidden[:-1]
+            clause = assemble(forbidden)
+            if len(clause) <= budget:
+                break
+    if budget and len(clause) > budget:
+        clause = clause[:budget].rstrip()
+    return clause
+
+
 def append_safe_audio_test_instruction(prompt: str, voice_lines: Any, locale: str = "en-US") -> str:
     voice, language = voice_profile(locale)
     safe_line = first_voice_line(voice_lines, "Place the trap outside after adding bait.")
@@ -509,17 +562,50 @@ def normalize_status(status_response: dict[str, Any]) -> dict[str, Any]:
     return data if isinstance(data, dict) else status_response
 
 
+OMNI_PROMPT_CHAR_LIMIT = 4000
+OMNI_MODELS = {"omni-flash", "omni_flash-10s"}
+
+
+def enforce_prompt_char_limit(prompt: str, limit: int = OMNI_PROMPT_CHAR_LIMIT, label: str = "Omni") -> str:
+    """Backstop against the provider's hard prompt character cap.
+
+    The provider rejects an over-long prompt outright (for example
+    "提示必须为4000个字符或更少"), so no prompt may leave the client over budget.
+    """
+    if len(prompt) <= limit:
+        return prompt
+    print(f"[prompt] {label} prompt is {len(prompt)} chars, over the {limit} cap; truncating", flush=True)
+    return prompt[:limit].rstrip()
+
+
 def compact_omni_prompt(
     variant: dict[str, Any],
     duration: str,
     reference_mode: str,
     product_dir: Path | None = None,
+    limit: int | None = None,
 ) -> str:
-    """Keep Omni prompts inside the provider's 4,000-character hard limit."""
-    def clipped(value: Any, limit: int) -> str:
+    """Fit an Omni prompt inside the provider's 4,000-character hard limit.
+
+    Each clause used to carry its own slice length with no global budget, so a
+    variant with a power-chain block rendered around 4,750 characters and every
+    submission was rejected. Render with full slices first, then binary-search
+    one scale factor for the elastic creative clauses until the whole prompt
+    fits. The identity lock, SKU, power chain, spoken line and safety tail never
+    scale, so mandatory content always survives.
+    """
+    cap = limit or OMNI_PROMPT_CHAR_LIMIT
+
+    def clipped(value: Any, width: int) -> str:
         text = json.dumps(value, ensure_ascii=False) if isinstance(value, (list, dict)) else str(value or "")
         text = re.sub(r"\s+", " ", text).strip()
-        return text[:limit].rstrip()
+        return text[:width].rstrip()
+
+    def scaled(value: Any, width: int, factor: float, weight: float = 1.0) -> str:
+        # weight above 1 shrinks a clause faster. The storyboard image already
+        # carries the shot plan, so its text yields room before the scene does.
+        effective = width if factor >= 1.0 else max(24, int(round(width * factor ** weight)))
+        return clipped(value, effective)
 
     storyboard = variant.get("storyboard_10s") or variant.get("storyboard_8s") or variant.get("shot_plan") or []
     beats: list[str] = []
@@ -544,25 +630,42 @@ def compact_omni_prompt(
         voice = str(voice_items)
     brief = load_json(product_dir / "product_brief.json", {}) if product_dir else {}
     voice_desc, voice_language = voice_profile(variant.get("voice_locale"))
+    power_line = power_connection_clause(brief, budget=720)
     identity = variant.get("product_fidelity_block") or brief.get("confirmed_identity") or []
     misuse = variant.get("negative_prompt") or brief.get("misuse_risks_to_avoid") or []
-    return (
-        f"Create exactly one {duration}-second vertical 9:16 realistic creator-style product video. {mode_instruction} "
-        "Preserve the same adult creator, room, wardrobe, lighting, camera geometry, props, and the same single physical product throughout. "
-        "Show exactly ONE product in the entire video; never duplicate it in hands, on furniture, in mirrors, reflections, or screens. "
-        f"PRODUCT TRUTH AND IDENTITY LOCK: {clipped(identity, 700)}. Match image 2 for silhouette, parts, proportions and controls; when documented SKU colors differ, use the single colorway shown in image 1 consistently. "
-        f"MANDATORY SKU FOR THIS VIDEO: {clipped(variant.get('sku_colourway'), 240)}. "
-        f"FORBIDDEN DRIFT: {clipped(misuse, 600)}. Never morph, resize, recolor, add branding, invent controls or unsupported functions. "
-        f"CONCEPT: {clipped(variant.get('title'), 180)}. HOOK: {clipped(variant.get('hook'), 320)}. "
-        f"PRIMARY FUNCTION: {clipped(variant.get('primary_function_focus'), 320)}. "
-        f"SCENE: {clipped(variant.get('scene_imagination'), 650)}. "
-        f"SHOT PLAN: follow these chronological beats across all {duration} seconds: {clipped(beats or storyboard, 1250)}. "
-        f"SUPPORTED ACTION: {clipped(variant.get('usage_logic'), 650)}. "
-        f"PAYOFF: {clipped(variant.get('proof_moment'), 450)}. "
-        f"NATIVE AUDIO: {voice_desc} creator voice, natural and warm. Speak exactly: {clipped(voice, 400)}. Every spoken word must be in {voice_language}; never answer in English. Do not add speech. Add subtle room/product sounds and low music without singing. "
-        "No subtitles, captions, labels, overlays, logos, watermarks, app UI, touchscreen, wireless charging, projector, camera lens, extra accessories, extra products, or unsupported claims. Use natural handheld motion."
-        + (" Finish exactly on image 2." if reference_mode == "first-last" else "")
-    )
+    def render(factor: float) -> str:
+        return (
+            f"Create exactly one {duration}-second vertical 9:16 realistic creator-style product video. {mode_instruction} "
+            "Keep the same adult creator, room, wardrobe, lighting, camera geometry, props and the one physical product throughout. "
+            "Show exactly ONE product; never duplicate it in hands, furniture, mirrors, reflections or screens. "
+            f"PRODUCT TRUTH AND IDENTITY LOCK: {scaled(identity, 700, factor)}. "
+            "Match image 2 for silhouette, parts, proportions and controls; if SKU colours differ, use the single colourway shown in image 1. "
+            f"MANDATORY SKU FOR THIS VIDEO: {clipped(variant.get('sku_colourway'), 240)}. "
+            + (power_line + " " if power_line else "")
+            + f"FORBIDDEN DRIFT: {scaled(misuse, 600, factor)}. Never morph, resize, recolour, add branding or invent controls. "
+            f"CONCEPT: {scaled(variant.get('title'), 180, factor, 0.8)}. HOOK: {scaled(variant.get('hook'), 320, factor, 0.8)}. "
+            f"PRIMARY FUNCTION: {scaled(variant.get('primary_function_focus'), 320, factor, 0.8)}. "
+            f"SCENE: {scaled(variant.get('scene_imagination'), 650, factor, 0.8)}. "
+            f"SHOT PLAN: follow these chronological beats across all {duration} seconds: {scaled(beats or storyboard, 1250, factor, 2.5)}. "
+            f"SUPPORTED ACTION: {scaled(variant.get('usage_logic'), 650, factor, 1.8)}. "
+            f"PAYOFF: {scaled(variant.get('proof_moment'), 450, factor, 1.8)}. "
+            f"NATIVE AUDIO: {voice_desc} creator voice, natural and warm. Speak exactly: {clipped(voice, 400)}. "
+            f"Every spoken word must be in {voice_language}; never answer in English. Do not add speech. Add subtle room and product sounds and low music without singing. "
+            "No subtitles, captions, overlays, logos, watermarks, app UI, touchscreen, wireless charging, projector, extra accessories, extra products or unsupported claims. Natural handheld motion."
+            + (" Finish exactly on image 2." if reference_mode == "first-last" else "")
+        )
+
+    prompt = render(1.0)
+    if len(prompt) > cap:
+        low, high = 0.02, 1.0
+        for _ in range(28):
+            mid = (low + high) / 2.0
+            if len(render(mid)) <= cap:
+                low = mid
+            else:
+                high = mid
+        prompt = render(low)
+    return enforce_prompt_char_limit(prompt, cap, "Omni compact")
 
 
 def poll_task(api_key: str, task_id: str, base_url: str, poll_seconds: int, status_endpoint: str) -> dict[str, Any]:
@@ -651,15 +754,21 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
         require_qc(product_dir, scene_refs, "keyframes",
                    override=bool(getattr(args, "allow_unverified_references", False)))
     reference_limit = 7 if args.model == "omni_flash-10s" else 3 if args.model == "omni-flash" else 2
-    base_prompt = variant.get("video_prompt") or compact_omni_prompt(
-        variant, str(args.duration), args.reference_mode, product_dir
-    )
-    if args.model in {"omni-flash", "omni_flash-10s"} and len(base_prompt) > 4000:
-        base_prompt = compact_omni_prompt(variant, str(args.duration), args.reference_mode, product_dir)
-        print(f"[prompt] compacted Omni prompt to {len(base_prompt)} characters", flush=True)
     scale_lock = str(variant.get("_physical_scale_lock") or "").strip()
-    if scale_lock:
-        base_prompt += " STRICT PHYSICAL SCALE THROUGHOUT: " + scale_lock
+    scale_suffix = (" STRICT PHYSICAL SCALE THROUGHOUT: " + scale_lock) if scale_lock else ""
+    omni_limited = args.model in OMNI_MODELS
+    base_prompt = str(variant.get("video_prompt") or "").strip()
+    if not base_prompt or (omni_limited and len(base_prompt) + len(scale_suffix) > OMNI_PROMPT_CHAR_LIMIT):
+        # Reserve room for the scale suffix and for anything appended below, so
+        # the finished prompt still fits the provider's cap.
+        budget = OMNI_PROMPT_CHAR_LIMIT - len(scale_suffix) if omni_limited else 1_000_000
+        base_prompt = compact_omni_prompt(
+            variant, str(args.duration), args.reference_mode, product_dir, limit=budget
+        )
+        if omni_limited:
+            print(f"[prompt] compacted Omni prompt to {len(base_prompt)} characters", flush=True)
+    if scale_suffix:
+        base_prompt += scale_suffix
     expected = video_contract(product_dir, reference_images[:reference_limit], args.model, base_prompt, {
         "aspect_ratio": args.aspect_ratio, "duration": str(args.duration),
         "audio_duration": str(args.audio_duration), "resolution": args.resolution,
@@ -700,6 +809,10 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
                 else append_safe_native_audio_instruction(base_prompt, voiceover, voice_locale)
             )
         )
+    if args.model in OMNI_MODELS:
+        # Last gate before the request: audio or scale suffixes appended above
+        # can still push an otherwise-fitting prompt past the provider cap.
+        prompt = enforce_prompt_char_limit(prompt)
     params = build_model_params(args, [item["url"] for item in uploads])
     payload = {"model": args.model, "prompt": prompt, "params": params, "count": 1}
     print(
@@ -782,6 +895,7 @@ def process_product(product_dir: Path, api_key: str, selected_variants: set[int]
             continue
         current_variant = dict(variant)
         current_variant["_physical_scale_lock"] = prompts.get("physical_scale_lock", "")
+        current_variant["_silhouette_lock"] = prompts.get("silhouette_lock", "")
         selected.append(current_variant)
 
     def run_variant(current_variant: dict[str, Any]) -> dict[str, Any]:

@@ -198,6 +198,7 @@ class PipelineTests(unittest.TestCase):
         import json
         folder, args = self.setup_identity()
         args.stage, args.samples = "identity", 8
+        args.image_max_edge = 1400
         response = {"choices": [{"message": {"content": json.dumps({"checks": {
             name: {"status": "pass", "evidence": "test observation"} for name in CHECKS}})}}]}
         with patch("qc_dual_consistency.request_json", return_value=response) as api:
@@ -285,7 +286,12 @@ class PipelineTests(unittest.TestCase):
             "images/source.png",
         ]}
         references = omni_storyboard_identity_paths(folder, variant)
-        self.assertEqual(references, [storyboard, folder / "identity_lock/reference_sheet.png"])
+        # storyboard and identity grid are the two mandatory all-purpose refs;
+        # any extra references declared on the variant trail them in order.
+        self.assertEqual(
+            references,
+            [storyboard, folder / "identity_lock/reference_sheet.png", folder / "images/source.png"],
+        )
 
         with self.assertRaisesRegex(RuntimeError, "chronological storyboard"):
             omni_storyboard_identity_paths(folder, {"reference_images": ["identity_lock/reference_sheet.png"]})

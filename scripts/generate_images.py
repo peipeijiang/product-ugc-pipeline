@@ -272,11 +272,13 @@ def build_keyframe_prompt(variant: dict[str, Any], product_name: str, frame_role
             "\nSTRICT END-STATE ADVANCE: The final frame must not be a near-duplicate of the start frame. "
             "Keep identity and room continuity, but visibly change the camera composition and the creator's pose/action so the completed payoff reads immediately."
         )
+    silhouette_lock = str(variant.get("_silhouette_lock") or "").strip()
     return prompt + (
         "\nSTRICT SINGLETON PRODUCT RULE: Show exactly one physical instance of the referenced product in the entire image. "
         "Never show one product in a hand and a second product on a table. Do not create a duplicate through mirrors, reflections, screens, or background props."
-        "\nSTRICT S8 SILHOUETTE RULE: Preserve the source's low, elongated capsule body, visibly about 2.3 to 2.6 times wider than tall. "
-        "Never make the device tall, squat, square, or oversized relative to a nearby smartphone."
+        "\nSTRICT SILHOUETTE RULE: Preserve the source's exact silhouette and proportions; never make the product taller, "
+        "squatter, shorter, longer or wider than the canonical photos show. "
+        + (silhouette_lock if silhouette_lock else "Match the product's own proportions from the reference photos; do not substitute a similar-looking product.")
     )
 
 
@@ -511,6 +513,7 @@ def process_product(product_dir: Path, api_key: str, selected_variants: set[int]
             continue
         current_variant = dict(variant)
         current_variant["_physical_scale_lock"] = prompts.get("physical_scale_lock", "")
+        current_variant["_silhouette_lock"] = prompts.get("silhouette_lock", "")
         targets.append(current_variant)
 
     results_path = product_dir / "generated_images" / "image_generation_results.json"

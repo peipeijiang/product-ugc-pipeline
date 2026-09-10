@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import io
 import json
+import base64
 import subprocess
 import tempfile
 from pathlib import Path
@@ -17,13 +19,73 @@ from v2_contract import RULES, category_spec, digest, hashes, load_identity, loa
 CHECKS = ("identity", "scale", "placement", "operation", "continuity", "category_specific")
 
 
+def review_data_url(path: Path, max_edge: int) -> str:
+    """Encode a QC visual as a bounded JPEG data URL.
+
+    Generated references (storyboards, identity grids) are lossless PNGs of
+    8-12 MB. The review endpoint rejects those payloads outright with HTTP 400,
+    so the review would silently degrade into "every target errored". QC judges
+    visible structure, not pixel-exact colour, so a bounded high-quality JPEG is
+    sufficient and is what the endpoint accepts.
+    """
+    from PIL import Image
+
+    with Image.open(path) as image:
+        image = image.convert("RGB")
+        if max_edge > 0 and max(image.size) > max_edge:
+            scale = max_edge / max(image.size)
+            image = image.resize((max(1, round(image.width * scale)), max(1, round(image.height * scale))), Image.LANCZOS)
+        buffer = io.BytesIO()
+        image.save(buffer, "JPEG", quality=88)
+    return "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
 def normalize_checks(output: dict) -> dict:
     """Accept either {"checks": {...}} or the checks flattened at the top level."""
     checks = output.get("checks")
     if isinstance(checks, dict) and checks:
-        return checks
+        grouped = group_checks_by_status(checks)
+        return grouped or checks
     flattened = {name: output[name] for name in CHECKS if isinstance(output.get(name), dict)}
     return flattened or (checks or {})
+
+
+def group_checks_by_status(checks: dict) -> dict:
+    """Rebuild per-check verdicts from a response grouped by status.
+
+    Reviewers occasionally answer as {"pass": [{"check": "identity", "evidence": ...}],
+    "fail": [...], "unknown": [...]} instead of one object per check. Every entry still
+    carries an explicit status bucket and its own evidence, so this re-shapes the answer
+    without inventing a verdict or evidence for any check.
+    """
+    statuses = {"pass", "fail", "unknown", "not_applicable"}
+
+    def status_buckets(node):
+        """Collect every {"pass": [...], "fail": [...]} block, whatever its nesting."""
+        if isinstance(node, dict) and node and set(node) <= statuses:
+            return [node]
+        if isinstance(node, dict):
+            return [bucket for value in node.values() for bucket in status_buckets(value)]
+        if isinstance(node, list):
+            return [bucket for value in node for bucket in status_buckets(value)]
+        return []
+
+    regrouped = {}
+    for bucket in status_buckets(checks):
+        for status, items in bucket.items():
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                name = item.get("check") or item.get("name") or item.get("check_name")
+                evidence = item.get("evidence") or item.get("reason") or item.get("notes")
+                declared = item.get("status")
+                resolved = declared if declared in statuses else status
+                if name not in CHECKS or not isinstance(evidence, str) or not evidence.strip():
+                    continue
+                regrouped.setdefault(name, {"status": resolved, "evidence": evidence})
+    return regrouped if set(regrouped) == set(CHECKS) else {}
 
 
 def verdict(output: dict) -> str:
@@ -146,9 +208,9 @@ def review(folder: Path, target: Path, identity: dict, key: str, args) -> dict:
                 "a part relationship that should be visible is genuinely occluded. "
             )
         if frame_role == "start":
-            role_instruction = "This TARGET is the START frame. Evaluate the setup/friction state; do not require the end-state action or product placement yet. Mark continuity not_applicable because no earlier scene exists and the end frame is intentionally not supplied for this check. "
+            role_instruction = "This TARGET is the START frame. Evaluate the setup/friction state; do not require the end-state action or product placement yet. Mark continuity not_applicable because no earlier scene exists and the end frame is intentionally not supplied for this check. Mark operation not_applicable as well: a single still photograph cannot evidence an ordered multi-step mechanism sequence, so judge only whether the depicted product state and posture are consistent with the documented operation and mark the stepped sequence itself not_applicable with that reason. "
         elif frame_role == "end":
-            role_instruction = "This TARGET is the END frame. Evaluate the end-state action and compare it with the supplied generated start scene for continuity. "
+            role_instruction = "This TARGET is the END frame. Evaluate the end-state action and compare it with the supplied generated start scene for continuity. Do not fail operation for the absence of a visible stepped-mechanism sequence: one still photograph cannot evidence an ordered multi-step adjustment, so when the depicted end state and posture match the documented operation, mark operation not_applicable with that reason. Fail operation only when the visible product state itself contradicts the documented operation. "
         elif frame_role == "storyboard":
             role_instruction = ("This TARGET is a chronological six-panel storyboard grid used as one all-purpose video reference. "
                                 "Evaluate every panel and the panel-to-panel identity/action chain. A repeated depiction of the same single product across different panels is expected; fail only if a panel contains duplicate products or product identity drifts. ")
@@ -183,7 +245,8 @@ def review(folder: Path, target: Path, identity: dict, key: str, args) -> dict:
                   + "\nVariant storyboard for this target: " + json.dumps(review_variant, ensure_ascii=False))
         content = [{"type": "text", "text": prompt}]
         for label, path in visuals:
-            content.extend([{"type": "text", "text": label}, {"type": "image_url", "image_url": {"url": data_url(path)}}])
+            content.extend([{"type": "text", "text": label},
+                            {"type": "image_url", "image_url": {"url": review_data_url(path, args.image_max_edge)}}])
         response = request_json("/chat/completions", key, {"model": args.model, "messages": [
             {"role": "system", "content": "You are a critical product-fidelity reviewer. Return JSON only."},
             {"role": "user", "content": content}], "response_format": {"type": "json_object"}},
@@ -240,6 +303,8 @@ def main():
                    help="Explicit product-relative target path for keyframe QC, e.g. runs/.../variant-03-storyboard.png. May be repeated.")
     p.add_argument("--merge-existing", action="store_true", help="Replace selected target verdicts while preserving other targets in the stage report")
     p.add_argument("--workers", type=int, default=1, help="Review independent targets concurrently.")
+    p.add_argument("--image-max-edge", type=int, default=2048,
+                   help="Downscale QC visuals to this longest edge before sending (0 keeps full size). Review endpoints reject 8-12 MB PNG payloads.")
     args = p.parse_args()
     if not 2 <= args.samples <= 32:
         p.error("--samples must be 2..32")
