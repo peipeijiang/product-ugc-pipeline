@@ -100,6 +100,42 @@ def http_request(
     data: bytes | None = None,
     timeout: int = 60,
 ) -> tuple[int, dict[str, str], bytes]:
+    # Long-running batches hit intermittent TLS handshake failures against both
+    # providers (SSLEOFError / RemoteDisconnected / connection reset) while a plain
+    # curl to the same URL succeeds. These are connection-level failures where the
+    # request normally never reached the provider, so retrying a few times is far
+    # cheaper than failing a paid batch on a handshake hiccup. Provider-level errors
+    # are never retried here.
+    transient_markers = (
+        "SSLEOFError",
+        "SSLError",
+        "RemoteDisconnected",
+        "Connection aborted",
+        "Connection reset",
+        "Max retries exceeded",
+        "timed out",
+        "TimeoutError",
+    )
+    attempts = 3
+    for attempt in range(1, attempts + 1):
+        try:
+            return _http_request_once(url, method, headers, data, timeout)
+        except RuntimeError as error:
+            text = str(error)
+            transient = any(marker in text for marker in transient_markers)
+            if not transient or attempt == attempts:
+                raise
+            time.sleep(min(2 ** attempt, 8))
+    raise RuntimeError(f"Request failed for {url}: unreachable")
+
+
+def _http_request_once(
+    url: str,
+    method: str,
+    headers: dict[str, str] | None,
+    data: bytes | None,
+    timeout: int,
+) -> tuple[int, dict[str, str], bytes]:
     try:
         import requests
 
