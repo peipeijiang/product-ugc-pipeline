@@ -14,6 +14,7 @@ SPECS = {
     "electronics": ("3 rows x 2 columns", "1024x1536", ["front silhouette", "45 degree thickness", "supported side and ports", "supported top and controls", "verified use and contact", "verified relative scale"]),
     "home-tools": ("3 panels top, 2 panels bottom", "1024x1024", ["full silhouette", "supported side", "grip and functional part", "verified use and contact", "verified relative scale"]),
     "pet-tools": ("3 panels top, 2 panels bottom", "1024x1024", ["full silhouette", "supported side", "grip and functional part", "verified pet interaction", "verified pet size relation"]),
+    "furniture": ("3 panels top, 2 panels bottom", "1024x1024", ["full silhouette", "supported side and frame geometry", "hinge and adjustment detail", "verified use and contact", "verified relative scale"]),
 }
 
 RULES = """Evidence precedence: real canonical product photos govern appearance;

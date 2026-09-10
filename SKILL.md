@@ -41,7 +41,7 @@ Product references lock the product, not the whole source photo. Use source imag
 
 1. Put product URLs in a text file, one URL per line.
 2. Run `scripts/scrape_products.py` to create numbered product folders and download the complete product asset set: every main-gallery/SKU image and every detail-description image. The same completeness requirement applies when extraction uses `ego-browser`, another browser, page APIs, or a custom scraper.
-3. Vision-analyze every downloaded candidate before writing any product document. In an interactive Codex run, use Codex's built-in vision directly on every local file and record the per-image result in `image_analysis.json`; do not call MiniMax for image understanding or QC. For provider-backed CLI automation, run `scripts/analyze_materials.py --limit-images 0`.
+3. Vision-analyze every downloaded candidate before writing any product document. **Vision priority is built-in model vision first.** In an interactive Codex run, look at every local file with the model's own vision and record the per-image result in `image_analysis.json`; do not call MiniMax for image understanding or QC. Only when the host cannot feed images to the model at all — for example a vision sidecar that returns a provider error for every image — fall back to a provider vision model through the configured keys, in this order: LaoZhang vision (`scripts/analyze_materials.py --limit-images 0`), then LK888/updrama vision (`--base-url` pointed at the LK888-compatible endpoint with that key). Record in the analysis log which engine actually produced the observations, and say so in the hand-off: a provider fallback is a valid vision run but it is not equivalent to built-in vision. For provider-backed CLI automation, run `scripts/analyze_materials.py --limit-images 0`.
 4. Run `scripts/build_product_brief.py` to synthesize product usage cognition from `product_manifest.json` + `image_analysis.json`.
 5. Run `scripts/generate_ugc_prompts.py` to create UGC prompt variants grounded in the product brief. This step must first build a benefit ladder from the highest-priority commercial promise, then write the hook, voiceover, storyboard, keyframe prompts, and VEO prompt around that ladder.
 6. Run `scripts/generate_images.py` to create image-to-image “pad images” or start/end keyframes. The default image provider is upDrama `tt-image-2.5` on LK888; if it fails the script automatically falls back to the OpenAI-compatible GPT-Image-2 route.
@@ -65,6 +65,27 @@ generic page assets, use `ego-browser` to open the actual product-detail page. E
 every page image URL that is plausibly a product main image, SKU/colorway image,
 detail image, installed/use image, packaging image, or product video poster. Do not
 continue from a single external “matching” image when page assets are available.
+
+**Login-gated, age-gated and region-gated product pages default to `ego-browser`.**
+TikTok Shop, member-only, age-gated and region-locked PDPs routinely answer a plain
+HTTP fetch with only generic page chrome, an anti-bot challenge, or a
+“this item is not available in your country or region” shell — a real TikTok Shop JP
+offer returned three usable product assets from static scraping while the live page
+held six gallery images plus eleven detail images. When the target page needs the
+user's session, cookies or region context, open it with `ego-browser` (see the
+ego-browser skill) instead of extending the static scraper; the browser reuses the
+user's existing login state, so never try to reproduce authentication by hand. On
+macOS the CLI cannot reach the browser bootstrap from inside the default agent
+sandbox and reports `Failed to connect to ego_cli bootstrap`; that is an environment
+limit, not a missing install, so re-run it outside the sandbox.
+
+For TikTok Shop PDPs the authoritative asset list is the Next.js `loaderData`
+payload. Parse the `product_model` object for `images` (main gallery),
+`skus[].sku_image` and `sku_property_image_map` (colourway crops), the `description`
+array (detail-description images) and `videos`. Reading
+`document.querySelectorAll('img')` alone misses lazy panels, and the carousel slide
+count can include the SKU crop rather than a distinct gallery image, so treat the
+parsed payload as the source of truth and the DOM as a cross-check.
 
 Download the full candidate set into `images/`, preserve source URLs in
 `product_manifest.json`, and record an extraction audit with gallery/detail counts,
@@ -104,6 +125,36 @@ product-ugc-output/
 │   └── videos/
 └── run_manifest.json
 ```
+
+### Adding a product category that does not exist yet (mandatory when nothing fits)
+
+The built-in v2 categories do not cover every SKU. A folding outdoor reclining chair
+is neither a kitchen tool nor a pet tool: the keyword classifier labelled it
+`electronics` with confidence 0.6, and the identity-stage `category_specific` check
+then failed for the honest reason that the checklist asks about blades, food contact
+and pet body language. Do not force the product into the nearest listed category, and
+do not instruct the reviewer model to ignore the mismatch.
+
+Add a category instead. It is four edits and one regeneration:
+
+1. Add a `SPECS` entry in `scripts/v2_contract.py`: `("<layout>", "<canvas>", [panel names])`.
+   Keep the panel names generic enough to fit the whole family and the canvas at a
+   size the image route actually supports.
+2. Add `references/category-<name>.md` with the 7-dimension framework table, the
+   special checks (scale realism, material truth, gravity and stability, no phantom
+   parts), the verified use actions and the single reference-sheet panel plan.
+   `category_spec()` reads this file straight into the QC prompt, so it is the
+   checklist the reviewer will actually apply.
+3. Set `category.json` to the new name with `"detected_from": "explicit_user_category"`.
+   `generate_product_identity_lock.py --category <name>` rewrites that file itself, so
+   pass the flag rather than editing by hand.
+4. Regenerate the identity sheet with `--force`, re-run `generate_usage_pose_sheet.py`,
+   then re-run `qc_dual_consistency.py --stage identity`. A changed category
+   invalidates the existing identity sheet by design.
+
+`furniture` (家具 / 户外折叠家具) was added this way and is the worked example. Keep
+a new checklist honest: it has to reject real defects for that family, not wave the
+product through.
 
 ## Quick Commands
 
@@ -148,6 +199,7 @@ These lessons are hard production rules, not preferences:
 13. **Bypass system proxies, not just proxy environment variables.** macOS System Settings can define a system-wide proxy that `requests` still honours through `trust_env` after the proxy environment variables are stripped. When that proxy is not running, every provider call fails with `ProxyError` or `SSLEOFError` and looks like a provider outage or a concurrency problem. Force direct connections in the HTTP layer for both the `requests` path and the `urllib` fallback.
 14. **A concurrent batch must isolate failures and persist progress, or it wedges.** When several variants share one `ThreadPoolExecutor`, a bare `future.result()` inside the `as_completed` loop re-raises the first exception and aborts the loop, so already-submitted work is silently dropped from the report: a 10-target QC run where one target hit a transient error wrote only 8 results and left no error line for the missing two. Wrap each `future.result()` in `try/except`, record a `status: error` entry carrying the exception text, and keep iterating so the remaining targets still land. Persist the results file after every completion rather than only at the end, so an interrupted or crashing run keeps the frames and tasks it already finished. Apply the same shape to storyboard/keyframe generation (`generate_images.py --workers N`), video submission (`generate_videos_lk888.py --workers N`), keyframe/storyboard QC (`qc_dual_consistency.py --workers N`) and the legacy cascade pipeline, and never let one slow or failing variant stall submission of the rest.
 15. **Image generation is provider-chained: TT Image 2.5 first, GPT-Image-2 second.** `generate_images.py`, `generate_product_identity_lock.py` and `generate_usage_pose_sheet.py` default to the upDrama media-task route (`--image-provider tt-image-2.5` against `https://api.lk888.ai/v1/media/generate`) because it is a single create-and-poll round trip, takes 1-16 references and controls aspect ratio and resolution independently. On any failure the script retries `tt-image-2` on the same route, then the OpenAI-compatible GPT-Image-2 `/images/edits` route. Never hand-roll a provider swap inside a batch: pass `--image-provider` / `--image-fallback`, and read the per-frame `image_provider` and `provider_fallbacks` fields in `image_generation_results.json` to see which route actually produced each frame.
+16. **A v2 Omni storyboard must hold exactly one product per panel.** `--reference-mode omni-reference` sends the chronological storyboard as an all-purpose reference, and the storyboard QC enforces the same singleton rule as the video prompt. A comedy or comparison beat that stages a row of chairs — or any background office task chair, stool, bench or chair-like silhouette — is read as a duplicated product and fails identity and continuity. Carry multi-person escalation with staging instead: planted spears, stacked helmets, queues, abandoned picnic tarps and waiting bystanders all land the joke while the frame keeps one product. Three more rules make the difference between pass and fail: panel 1 must contain the product itself, folded at the open mouth of its carry bag, so the single instance is traceable from panel 1 onward; the upright and reclined panels need a comparable side angle so the angle change evidences the operation; and the long silhouette with its extended support panel must be visible in every panel where the product is open, or the model quietly substitutes a different, shorter product.
 
 ## Parallel Pipeline (Fire-and-Forget + Auto-Cascade)
 
@@ -444,7 +496,9 @@ Before delivering outputs, inspect `materials.md`, `image_analysis.json`, and `u
 
 ## v2 New Features (2026-09-04)
 
-Product UGC Pipeline v2 extends support to **5 product categories**:
+Product UGC Pipeline v2 ships **6 product categories**. When a product genuinely
+belongs to none of them, add a category rather than force-fitting it — see
+"Adding a product category that does not exist yet" above.
 
 1. **Apparel** (服装) - tops, pants, dresses, outerwear, skirts, swimwear, lingerie, bridal, costume
    - Uses Virtual Try-On Video's 7要素 framework
@@ -471,9 +525,14 @@ Product UGC Pipeline v2 extends support to **5 product categories**:
    - One grid reference sheet (5 panels) + optional pet-comfort sheet
    - Pet comfort check (body language: relaxed/enjoying/accepting vs distressed)
 
+6. **Furniture** (家具/户外折叠家具) 🆕 - folding chairs, reclining loungers, moon chairs, cots, stools, tables
+   - Custom 7维 Furniture framework (structure, hinge, load path, scale, occupant contact)
+   - One grid reference sheet (3 top + 2 bottom)
+   - Gravity and load-path check, recline realism within the documented range, no phantom cushions/wheels/motors
+
 ### New Scripts
 
-- `scripts/classify_product_category.py` - Auto-classify products into 5 categories
+- `scripts/classify_product_category.py` - Heuristic auto-classifier (keyword/image cues; a mislabelled product is expected, so confirm or override the category before identity generation)
 - `scripts/generate_product_identity_lock.py` - Generate one category-specific multi-panel grid reference sheet
 - `scripts/generate_usage_pose_sheet.py` - Source-backed ordered action ledger, reuses the single identity sheet by default
 - `scripts/qc_dual_consistency.py` - Category-specific QC checks
@@ -485,6 +544,7 @@ Product UGC Pipeline v2 extends support to **5 product categories**:
 - `references/category-pet-tools.md` - Pet tools complete spec
 - `references/category-jewelry.md` - Jewelry independent spec
 - `references/category-electronics.md` - Electronics complete spec
+- `references/category-furniture.md` - Furniture / outdoor folding furniture complete spec
 
 ### Usage Example
 

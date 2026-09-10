@@ -345,6 +345,8 @@ VOICE_LOCALE_PROFILES: dict[str, tuple[str, str]] = {
     "es-ES": ("young Spanish woman speaking Castilian Spanish from Spain", "Castilian Spanish from Spain"),
     "es-419": ("young Latin American woman speaking neutral Latin American Spanish", "neutral Latin American Spanish"),
     "pt-BR": ("young Brazilian woman speaking Brazilian Portuguese", "Brazilian Portuguese"),
+    "ja-JP": ("young Japanese woman speaking natural conversational Japanese with a standard Tokyo accent",
+              "Japanese as spoken in Japan"),
 }
 
 

@@ -137,6 +137,13 @@ def review(folder: Path, target: Path, identity: dict, key: str, args) -> dict:
                 "not_applicable and explain that a still identity grid carries no control action and no "
                 "ordered scene chain. Do not mark them unknown. Judge identity, scale, placement and "
                 "category_specific strictly from the visible product. "
+                "For placement, judge the INTERNAL relationships the grid can actually show: part-to-part "
+                "position, attachment points, hinge and adjustment-plate location, pocket and accessory "
+                "placement, and whether the silhouette rests on its own supports. The identity grid is "
+                "generated on a deliberately neutral studio background, so real-world ground or body "
+                "contact is not evidence this stage can obtain: when the only gap is scene/ground contact, "
+                "mark placement not_applicable with that reason instead of unknown. Use unknown only when "
+                "a part relationship that should be visible is genuinely occluded. "
             )
         if frame_role == "start":
             role_instruction = "This TARGET is the START frame. Evaluate the setup/friction state; do not require the end-state action or product placement yet. Mark continuity not_applicable because no earlier scene exists and the end frame is intentionally not supplied for this check. "
