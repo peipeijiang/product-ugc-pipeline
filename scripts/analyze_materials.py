@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -114,40 +115,46 @@ def update_materials_md(product_dir: Path, manifest: dict[str, Any], analyses: l
     write_text(product_dir / "materials.md", "\n".join(lines).rstrip() + "\n")
 
 
-def analyze_product_dir(product_dir: Path, api_key: str, model: str, base_url: str, limit_images: int) -> None:
+def analyze_product_dir(product_dir: Path, api_key: str, model: str, base_url: str, limit_images: int, workers: int) -> None:
     manifest = load_json(product_dir / "product_manifest.json")
     if not manifest:
         print(f"[skip] missing manifest: {product_dir}")
         return
-    analyses: list[dict[str, Any]] = []
-    image_items = manifest.get("images", [])
+    extraction_audit = manifest.get("extraction_audit") or {}
+    if extraction_audit.get("complete") is not True:
+        raise RuntimeError(
+            f"{product_dir.name}: product image extraction is not marked complete; "
+            "download the full main-gallery and detail-description candidate set first"
+        )
+    manifest_image_items = manifest.get("images", [])
+    if not manifest_image_items:
+        raise RuntimeError(f"{product_dir.name}: manifest contains no downloaded images")
+    image_items = manifest_image_items
     if limit_images > 0:
         image_items = image_items[:limit_images]
-    for image_item in image_items:
+
+    def analyze_item(image_item: dict[str, Any]) -> dict[str, Any]:
         local_path = image_item["local_path"]
         image_path = product_dir / local_path
         quality = image_item.get("quality") or image_quality_metadata(image_path)
         if not quality.get("usable_product_material", True):
             print(f"[skip-analyze] {product_dir.name}/{local_path} unusable material {quality}", flush=True)
-            analyses.append(
-                {
-                    "local_path": local_path,
-                    "source_url": image_item.get("url"),
-                    "source": image_item.get("source"),
-                    "alt": image_item.get("alt", ""),
-                    "quality": quality,
-                    "analysis": {
-                        "is_product_related": False,
-                        "visual_summary": "Skipped by deterministic image-quality filter.",
-                        "full_product_visibility": "not_product",
-                        "reference_role": "weak_or_irrelevant",
-                        "ugc_usefulness_score": 0,
-                        "best_use": "weak_reference",
-                        "prompt_risks": "Do not use this image as a product reference.",
-                    },
-                }
-            )
-            continue
+            return {
+                "local_path": local_path,
+                "source_url": image_item.get("source_url") or image_item.get("url"),
+                "source": image_item.get("source"),
+                "alt": image_item.get("alt", ""),
+                "quality": quality,
+                "analysis": {
+                    "is_product_related": False,
+                    "visual_summary": "Skipped by deterministic image-quality filter.",
+                    "full_product_visibility": "not_product",
+                    "reference_role": "weak_or_irrelevant",
+                    "ugc_usefulness_score": 0,
+                    "best_use": "weak_reference",
+                    "prompt_risks": "Do not use this image as a product reference.",
+                },
+            }
         print(f"[analyze] {product_dir.name}/{local_path}", flush=True)
         response = analyze_image(api_key, image_path, manifest["product_name"], model, base_url)
         parsed = extract_json_content(response)
@@ -156,23 +163,27 @@ def analyze_product_dir(product_dir: Path, api_key: str, model: str, base_url: s
                 f"Vision analysis failed for {product_dir.name}/{local_path}: "
                 f"{parsed.get('error')}. Refusing to write image_analysis.json with invalid model output."
             )
-        analyses.append(
-            {
-                "local_path": local_path,
-                "source_url": image_item.get("url"),
-                "source": image_item.get("source"),
-                "alt": image_item.get("alt", ""),
-                "quality": quality,
-                "analysis": parsed,
-            }
-        )
+        return {
+            "local_path": local_path,
+            "source_url": image_item.get("source_url") or image_item.get("url"),
+            "source": image_item.get("source"),
+            "alt": image_item.get("alt", ""),
+            "quality": quality,
+            "analysis": parsed,
+        }
+
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
+        analyses = list(executor.map(analyze_item, image_items))
     product_related = [item for item in analyses if (item.get("analysis") or {}).get("is_product_related", True)]
     write_json(
         product_dir / "image_analysis.json",
         {
             "product_name": manifest["product_name"],
             "analysis_policy": {
-                "default_limit_images": limit_images,
+                "requested_limit_images": limit_images,
+                "manifest_image_count": len(manifest_image_items),
+                "analyzed_image_count": len(analyses),
+                "full_coverage": len(analyses) == len(manifest_image_items),
                 "non_product_images_retained_in_log": True,
                 "prompt_generation_should_prefer_product_related_images": True,
             },
@@ -189,11 +200,12 @@ def main() -> None:
     parser.add_argument("--model", default="gpt-5.2")
     parser.add_argument("--base-url", default="https://api.laozhang.ai/v1")
     parser.add_argument("--products", default="", help="Comma-separated product selectors, e.g. 01 or 01-flower")
-    parser.add_argument("--limit-images", type=int, default=6, help="Only analyze the first N filtered product images per selected product. Use 0 for all.")
+    parser.add_argument("--limit-images", type=int, default=0, help="Analyze all downloaded candidates by default. A positive N is diagnostic-only and cannot feed a production brief.")
+    parser.add_argument("--workers", type=int, default=4, help="Maximum concurrent vision-analysis requests per product.")
     args = parser.parse_args()
     api_key = require_api_key_for_base_url(args.base_url)
     for product_dir in selected_product_dirs(args.output_dir, args.products):
-        analyze_product_dir(product_dir, api_key, args.model, args.base_url, args.limit_images)
+        analyze_product_dir(product_dir, api_key, args.model, args.base_url, args.limit_images, args.workers)
 
 
 if __name__ == "__main__":

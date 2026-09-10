@@ -159,8 +159,9 @@ def collect_image_urls(
     structured_product_images = product_image_urls(product, page_url)
     for product_image in structured_product_images:
         add_image(product_image, "json_ld_product_image")
-    if product_only and structured_product_images:
-        return list(collected.values())
+    # Full product cognition requires both gallery and detail-page candidates.
+    # Keep `product_only` for CLI compatibility, but never use it to truncate the
+    # source surfaces before vision has classified the images.
     for key in ("og:image", "og:image:secure_url", "twitter:image"):
         add_image(parser.meta.get(key, ""), key)
     for image_attrs in parser.images:
@@ -183,6 +184,37 @@ def collect_image_urls(
         return (1, image_url)
 
     return sorted(collected.values(), key=product_image_priority)
+
+
+def extract_detail_document_urls(html_text: str, page_url: str) -> list[str]:
+    """Find separately hosted long-description documents (common on 1688)."""
+    decoded = html.unescape(html_text).replace("\\/", "/")
+    patterns = (
+        r'["\'](?:descUrl|descurl|descriptionUrl|detailUrl)["\']\s*:\s*["\']([^"\']+)',
+        r'(https?://[^"\'\s]+(?:1688offer|offer)[^"\'\s]+)',
+    )
+    found: list[str] = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, decoded, flags=re.IGNORECASE):
+            candidate = absolute_url(match.group(1), page_url)
+            if candidate not in found:
+                found.append(candidate)
+    return found
+
+
+def collect_detail_images(detail_url: str, page_url: str) -> list[dict[str, str]]:
+    try:
+        _, _, body = http_request(detail_url, timeout=60)
+    except Exception as error:
+        print(f"[detail-warning] {detail_url}: {error}", flush=True)
+        return []
+    detail_text = body.decode("utf-8", "ignore")
+    parser = ProductHTMLParser()
+    parser.feed(detail_text)
+    items = collect_image_urls(parser, page_url, detail_text, {}, product_only=False)
+    for item in items:
+        item["source"] = "detail_description"
+    return items
 
 
 def description_sections(description: str) -> dict[str, str]:
@@ -364,8 +396,19 @@ def scrape_product(index: int, url: str, output_dir: Path, max_images: int, imag
     images_dir = folder / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
     image_records: list[dict[str, Any]] = []
-    all_image_candidates = collect_image_urls(parser, url, html_text, product, product_only=not include_page_images)
-    image_candidates = all_image_candidates[:max_images]
+    all_image_candidates = collect_image_urls(parser, url, html_text, product, product_only=False)
+    detail_document_urls = extract_detail_document_urls(html_text, url)
+    for detail_url in detail_document_urls:
+        all_image_candidates.extend(collect_detail_images(detail_url, url))
+    deduped_candidates: list[dict[str, str]] = []
+    seen_candidate_keys: set[str] = set()
+    for candidate in all_image_candidates:
+        key = canonical_image_key(candidate["url"])
+        if key not in seen_candidate_keys:
+            deduped_candidates.append(candidate)
+            seen_candidate_keys.add(key)
+    all_image_candidates = deduped_candidates
+    image_candidates = all_image_candidates[:max_images] if max_images > 0 else all_image_candidates
     for image_index, image_info in enumerate(image_candidates, start=1):
         image_url = image_info["url"]
         local_path = images_dir / f"{image_index:02d}{extension_for_url(image_url)}"
@@ -398,6 +441,12 @@ def scrape_product(index: int, url: str, output_dir: Path, max_images: int, imag
         selling_points.insert(0, description[:260])
     sections = description_sections(description)
     usage_signals = usage_signals_from_text(description, selling_points)
+    is_1688 = "1688.com" in urllib.parse.urlparse(url).netloc.lower()
+    detail_candidate_count = len(
+        [item for item in all_image_candidates if item.get("source") == "detail_description"]
+    )
+    download_complete = len(image_records) == len(image_candidates) and bool(image_records)
+    source_surface_complete = (not is_1688) or bool(detail_document_urls and detail_candidate_count)
     manifest = {
         "index": index,
         "source_url": url,
@@ -409,9 +458,19 @@ def scrape_product(index: int, url: str, output_dir: Path, max_images: int, imag
         "selling_points": selling_points[:12],
         "usage_signals": usage_signals,
         "material_policy": {
-            "product_only_images": not include_page_images,
-            "image_selection_rule": "Prefer JSON-LD Product.image assets; page images are only used when --include-page-images is set or structured product images are missing.",
+            "product_only_images": False,
+            "image_selection_rule": "Download all gallery and detail-description candidates before vision classification; exclude irrelevant assets only after per-image vision analysis.",
             "raw_candidate_count_after_filter": len(all_image_candidates),
+        },
+        "extraction_audit": {
+            "method": "static_html_and_linked_detail_documents",
+            "main_page_candidate_count": len([item for item in all_image_candidates if item.get("source") != "detail_description"]),
+            "detail_document_urls": detail_document_urls,
+            "detail_candidate_count": detail_candidate_count,
+            "downloaded_count": len(image_records),
+            "requires_browser_fallback": not source_surface_complete,
+            "complete": download_complete and source_surface_complete,
+            "limitation": "If the live page hides gallery/detail assets behind JavaScript or anti-bot protection, use ego-browser and update this audit before vision analysis.",
         },
         "images": image_records,
         "json_ld_product": product,
@@ -425,9 +484,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Scrape product pages into numbered material folders.")
     parser.add_argument("urls_file", type=Path)
     parser.add_argument("--out", type=Path, default=Path("product-ugc-output"))
-    parser.add_argument("--max-images", type=int, default=12)
+    parser.add_argument("--max-images", type=int, default=0, help="Download all candidates by default. A positive limit is diagnostic-only.")
     parser.add_argument("--image-timeout", type=int, default=20)
-    parser.add_argument("--include-page-images", action="store_true", help="Also include non-JSON-LD page images such as lifestyle/page assets.")
+    parser.add_argument("--include-page-images", action="store_true", help="Deprecated compatibility flag; complete gallery/detail extraction is always enabled.")
     args = parser.parse_args()
     urls = read_urls(args.urls_file)
     args.out.mkdir(parents=True, exist_ok=True)

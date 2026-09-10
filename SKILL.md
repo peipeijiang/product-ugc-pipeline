@@ -40,14 +40,46 @@ Product references lock the product, not the whole source photo. Use source imag
 ## Workflow
 
 1. Put product URLs in a text file, one URL per line.
-2. Run `scripts/scrape_products.py` to create numbered product folders and download product-only page images.
-3. Run `scripts/analyze_materials.py` with `LAOZHANG_API_KEY` to describe filtered product images and identify usage mechanics/reference roles.
+2. Run `scripts/scrape_products.py` to create numbered product folders and download the complete product asset set: every main-gallery/SKU image and every detail-description image. The same completeness requirement applies when extraction uses `ego-browser`, another browser, page APIs, or a custom scraper.
+3. Vision-analyze every downloaded candidate before writing any product document. In an interactive Codex run, use Codex's built-in vision directly on every local file and record the per-image result in `image_analysis.json`; do not call MiniMax for image understanding or QC. For provider-backed CLI automation, run `scripts/analyze_materials.py --limit-images 0`.
 4. Run `scripts/build_product_brief.py` to synthesize product usage cognition from `product_manifest.json` + `image_analysis.json`.
 5. Run `scripts/generate_ugc_prompts.py` to create UGC prompt variants grounded in the product brief. This step must first build a benefit ladder from the highest-priority commercial promise, then write the hook, voiceover, storyboard, keyframe prompts, and VEO prompt around that ladder.
 6. Run `scripts/generate_images.py` to create image-to-image “pad images” or start/end keyframes using GPT-Image-2 and the selected product references.
 7. Run `scripts/generate_videos_lk888.py` to send public start/end keyframe URLs to LK888/updrama VEO. Production default video generation is LK888 `veo3.1`.
 8. Use `scripts/generate_videos.py` for LaoZhang VEO only when the user explicitly asks for LaoZhang or LK888 is not the requested provider.
 9. When the user asks for “two new versions”, “再来两个新版本”, or any fresh reroll, prefer `scripts/run_fresh_batch.py` so the skill first extends the canonical prompt file, then keyframes, then videos, instead of accidentally rerunning an old prompt batch.
+
+### Universal source-completeness and vision gate (mandatory)
+
+This gate applies to **every extraction method**, not only the browser fallback.
+Before product cognition begins, download all product main-gallery images, SKU or
+colorway images, detail-description images, installed/use images, packaging images,
+and product-video posters exposed by the live offer. For 1688, the long description
+is commonly served from a separate `descUrl`/detail-description response; fetching
+only the visible gallery is incomplete. Preserve each source URL and source surface
+(`main_gallery`, `sku`, `detail_description`, `video_poster`, etc.) in
+`product_manifest.json`. Do not stop after finding one apparently canonical image.
+
+If static scraping returns no images, incomplete images, a challenge page, or only
+generic page assets, use `ego-browser` to open the actual product-detail page. Extract
+every page image URL that is plausibly a product main image, SKU/colorway image,
+detail image, installed/use image, packaging image, or product video poster. Do not
+continue from a single external “matching” image when page assets are available.
+
+Download the full candidate set into `images/`, preserve source URLs in
+`product_manifest.json`, and record an extraction audit with gallery/detail counts,
+method, and any explicit limitation. Then run vision analysis on all candidates
+(`--limit-images 0`, using concurrent requests where the provider permits). In a
+Codex session this means direct built-in model vision, not MiniMax. Let the vision results label images canonical, alternate-SKU, detail,
+demonstration, packaging, or irrelevant; retain every product-related image in the
+analysis log and exclude irrelevant UI/logo/recommendation assets from product
+cognition. Build `materials.md` and `product_brief.json` only after that full image
+analysis. The analyzed local-path set must exactly cover the manifest image set;
+partial analysis is a hard failure even if the first few images look sufficient.
+The product brief must cite the actual local image path(s) and page fields
+for each appearance, function, dimension, control, and usage claim. A single image
+is acceptable only when the live product page itself contains only one usable
+product image, which must be recorded as an explicit limitation.
 
 Default output structure:
 
@@ -77,7 +109,7 @@ product-ugc-output/
 
 ```bash
 python product-ugc-pipeline/scripts/scrape_products.py urls.txt --out product-ugc-output
-LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/analyze_materials.py product-ugc-output
+LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/analyze_materials.py product-ugc-output --limit-images 0
 LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/build_product_brief.py product-ugc-output
 LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_ugc_prompts.py product-ugc-output --count 10
 LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_images.py product-ugc-output --variants 1-10 --model gpt-image-2-vip --size 1024x1536 --keyframes
@@ -89,7 +121,7 @@ LAOZHANG_API_KEY=sk-... LK888_API_KEY=sk-... python product-ugc-pipeline/scripts
 
 This skill does not use a local dry-run fallback for prompt/image/video generation. Generation steps should run through the real model/API path so outputs stay consistent with production behavior.
 
-This skill must fail fast when the cognition pipeline is incomplete. Do not manually invent `image_analysis.json`, `product_brief.json`, `ugc_prompts.json`, or generated keyframes to keep a batch moving. If vision analysis, product-brief synthesis, prompt generation, or Image2 keyframe generation fails, stop and report the failing provider/model/error. Continue only after switching to a working model/provider or after the user explicitly asks for a non-production experiment.
+This skill must fail fast when the cognition pipeline is incomplete. Direct per-image analysis by Codex built-in vision is a valid vision-model run when its observations and file coverage are recorded; guessing from filenames or product titles is not. Do not manually invent `image_analysis.json`, `product_brief.json`, `ugc_prompts.json`, or generated keyframes to keep a batch moving. If vision analysis, product-brief synthesis, prompt generation, or Image2 keyframe generation fails, stop and report the failing model/provider/error. Continue only after switching to a working model/provider or after the user explicitly asks for a non-production experiment.
 
 Video generation is VEO-first on LK888 by default. Do not silently switch production videos from LK888 `veo3.1` to Seedance, Kling, Omni, LaoZhang VEO, or any non-VEO model. If LK888 VEO fails, times out, has no channel, or returns insufficient balance, stop and report the exact status/cost/error. Use non-VEO models such as `omni-flash`, Seedance, or Kling only when the user explicitly asks for that model or approves the fallback.
 
@@ -105,6 +137,13 @@ These lessons are hard production rules, not preferences:
 4. **Omni Flash has two explicit image modes and defaults to 10 seconds.** `omni-flash` supports 4/6/8/10 seconds and this skill defaults it to 10 seconds. Use `--reference-mode first-last` for an exact generated start/end pair. In v2, `--reference-mode omni-reference` always sends exactly two all-purpose references in this order: an Image2-generated chronological storyboard and the current QC-passed product identity grid. The storyboard must carry current Image2 provenance, pass explicit keyframe QC, and show only one physical product instance per panel. The adapter supplies the identity grid automatically. The canonical real product photo remains authoritative upstream evidence for generating and correcting these assets, but it is not sent as a third Omni video reference. Never silently treat the two all-purpose references as a forced first/final pair.
 5. **Never invent product lighting to prove a state change.** Storyboard and video prompts must not add a glowing end-cap, ambient LED ring, light show, equalizer or new indicator unless that exact state is visible in the real product photos or is explicitly confirmed by the user. Vision QC treats invented lighting as identity and continuity drift rather than a harmless flourish. When a beat needs to show that playback, pairing or a mode started, carry it with the creator action, reaction and audio while the product appearance stays identical across panels and shots. Permissive wording such as thin optional ambient rings is unsafe: the image model reads it as license and escalates it into a saturated lit disc.
 6. **Record the reference chain.** Each generated video result should make it clear which local generated frame(s) and product reference(s) were used, so later review can tell whether the media followed the correct pipeline.
+7. **Pin one SKU colourway per storyboard, and describe it lit and unlit.** For products sold in several colours, choose one colourway per variant and state it as an explicit mandatory line in the storyboard prompt. Saying only "keep the same colour across panels" is not enough: the image model treats switching a lamp on as licence to recolour, so warm-glow products drift toward amber and gold in the lit panels. Spell out both states of the same hue ("pink when unlit and still clearly pink when lit"), and for white or light SKUs say the emitted light is cool neutral white and that any amber, honey, butter or golden cast on the product is wrong. Also pin the secondary parts that follow colour by association: the trunk, housing or base must keep one colour and must never be tinted to match the product's lit colour.
+8. **Ban legible writing everywhere, not just captions.** Forbidding captions and watermarks still leaves the model free to render door plates, wall signs, book spines, posters and packaging print, which vision QC then reports as text overlay. State that every panel must be free of legible writing of any kind and that such surfaces stay blank or out of focus.
+9. **Give vision QC the product's real controls as an allow-list.** A QC prompt that forbids "remote control" without naming the legitimate parts will fail honest storyboards: an inline cable switch gets reported as a remote, a power bank as a forbidden battery, and background houseplants as real leaves. List the confirmed real parts and legitimate scene props as explicitly correct before listing violations, or the QC pass rate becomes meaningless and real defects hide among false positives.
+10. **Tell each QC stage which checks it cannot possibly evidence.** The identity stage reviews one static grid, so operation and continuity have no evidence by construction. If the prompt does not say so, the model returns `unknown` for both, the contract downgrades the verdict to `needs_review`, and video submission stays blocked no matter how good the grid is. Mark structurally impossible checks `not_applicable` with a reason, and reserve `unknown` for evidence that should exist but is occluded.
+11. **Keep generated-image bytes out of manifests.** Spreading an image-generation result straight into a manifest embeds the provider's base64 payload, which pushed one identity manifest to 2.5 MB. Any later request that serialises that manifest into a prompt then dies on a truncated connection, and the failure surfaces as a confusing QC shape error rather than an oversized request. Store the saved file path, hash and parameters; drop the raw response.
+12. **Accept both QC response shapes.** Vision models return the six checks either nested under `checks` or flattened at the top level. Only accepting the nested form turns a perfectly good review into "missing or unexpected checks". Normalise both, and when a shape still does not match, dump the raw response so a schema mismatch is not mistaken for a transport failure.
+13. **Bypass system proxies, not just proxy environment variables.** macOS System Settings can define a system-wide proxy that `requests` still honours through `trust_env` after the proxy environment variables are stripped. When that proxy is not running, every provider call fails with `ProxyError` or `SSLEOFError` and looks like a provider outage or a concurrency problem. Force direct connections in the HTTP layer for both the `requests` path and the `urllib` fallback.
 
 ## Parallel Pipeline (Fire-and-Forget + Auto-Cascade)
 
@@ -179,6 +218,7 @@ python product-ugc-pipeline/scripts/parallel_pipeline.py product-ugc-output/01-p
 For each product folder:
 
 - `product_manifest.json`: source URL, product name, detected price, selling points, downloaded image list, source image URLs.
+- `product_manifest.json` must also include an extraction audit proving that the main gallery and detail-description surfaces were checked; an explicitly documented live-page limitation is required when either surface has no usable images.
 - `materials.md`: human-readable material log; update it after image analysis and product-brief synthesis.
 - `images/`: original downloaded product-only images; never overwrite these.
 - `image_analysis.json`: per-image visual description, product-related flag, exact product-identity details, visible/inferred use mechanics, UGC usefulness score, prompt risks, and recommended usage.
@@ -192,6 +232,7 @@ For each product folder:
 
 For production videos:
 
+- Product extraction must be marked complete for every relevant source surface. The manifest image set and `image_analysis.json` local-path set must match exactly; partial vision runs cannot feed the product brief.
 - `image_analysis.json` must come from a successful vision model run. If any image analysis record contains `analysis.error`, stop.
 - `product_brief.json` must include product identity, confirmed use cases, step-by-step usage, misuse risks, and hallucination defense. If any required field is missing, stop.
 - `ugc_prompts.json` must be generated from the valid manifest + image analysis + product brief, either by the prompt model or by Codex directly when product cognition is clear. Do not invent prompts without reading the product source files; direct Codex-authored prompts are production-valid when they cite the same inputs, pass the quality gate, and record a `prompt_history` note.
@@ -340,18 +381,6 @@ Read `references/laozhang-api-notes.md` before changing API calls. Key defaults:
 - VEO 3.1 async endpoint: `POST /videos`, poll `GET /videos/{id}`, then download via `GET /videos/{id}/content`.
 - Use VEO models with `-fl` suffix for image-to-video reference frames.
 
-## MiniMax API Notes
-
-MiniMax can be used as a backup vision/chat provider when LaoZhang vision endpoints fail.
-
-Key defaults:
-
-- Base URL: `https://api.minimaxi.com/v1`
-- Common model: `MiniMax-M3`
-- The current scripts are OpenAI-compatible and can call MiniMax by passing `--model MiniMax-M3 --base-url https://api.minimaxi.com/v1`.
-- MiniMax may return JSON inside `<think>...</think>` blocks or fenced ```json code blocks. The JSON parsers in `analyze_materials.py`, `build_product_brief.py`, and `generate_ugc_prompts.py` strip those wrappers before parsing.
-- The legacy `https://api.minimax.io` host may not accept newer `sk-cp-...` keys; prefer `https://api.minimaxi.com/v1` for these keys.
-
 ## LK888 / updrama API Notes
 
 Use `scripts/generate_videos_lk888.py` only when LK888/updrama is the requested provider or LaoZhang VEO is unavailable.
@@ -391,7 +420,7 @@ Before delivering outputs, inspect `materials.md`, `image_analysis.json`, and `u
 ## Defaults
 
 - Scraping: use JSON-LD `Product.image` assets first and exclude generic page images by default. Add `--include-page-images` only when product pages lack structured product images.
-- Vision analysis: analyze the first 6 filtered product images by default. Use `--limit-images 0` to analyze all filtered images, or `--limit-images 2` for cheap quick tests.
+- Vision analysis: analyze every downloaded candidate by default (`--limit-images 0`). A positive `--limit-images` value is diagnostic-only and produces partial analysis that must not be used to build a production product brief. In interactive Codex work, use the model's built-in vision directly; MiniMax vision is not part of this skill.
 - Prompt generation: read `product_brief.json` when present; if missing, fall back to manifest + image analysis but treat that as lower confidence.
 - Prompt generation: default model is `gpt-5.2`; override with `--model`, `--prompt-model`, or `PRODUCT_UGC_PROMPT_MODEL` when a specific provider/model such as `omni-flash` is available in the active API channel.
 - Prompt generation: do not use LK888 media/video models as prompt writers. For small ad-hoc rerolls where Codex has enough product context, Codex may directly author and append/rewrite variants in `ugc_prompts.json`; record this in `prompt_history` with a manual rewrite note.

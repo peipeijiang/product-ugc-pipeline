@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import os
 import re
@@ -14,6 +15,12 @@ import requests
 
 from common import download_binary, load_json, selected_product_dirs, write_json
 from generate_images import parse_variants
+
+# The desktop environment may inject a stale local SOCKS proxy.  LK888 and
+# public reference hosts must be reached directly for production submissions.
+for _proxy_key in list(os.environ):
+    if "proxy" in _proxy_key.lower():
+        os.environ.pop(_proxy_key, None)
 
 
 BASE_URL = "https://api.lk888.ai/api"
@@ -481,41 +488,52 @@ def normalize_status(status_response: dict[str, Any]) -> dict[str, Any]:
     return data if isinstance(data, dict) else status_response
 
 
-def compact_omni_prompt(variant: dict[str, Any], duration: str, reference_mode: str) -> str:
+def compact_omni_prompt(
+    variant: dict[str, Any],
+    duration: str,
+    reference_mode: str,
+    product_dir: Path | None = None,
+) -> str:
     """Keep Omni prompts inside the provider's 4,000-character hard limit."""
     def clipped(value: Any, limit: int) -> str:
         text = json.dumps(value, ensure_ascii=False) if isinstance(value, (list, dict)) else str(value or "")
         text = re.sub(r"\s+", " ", text).strip()
         return text[:limit].rstrip()
 
-    storyboard = variant.get("storyboard_8s") or variant.get("shot_plan") or []
+    storyboard = variant.get("storyboard_10s") or variant.get("storyboard_8s") or variant.get("shot_plan") or []
     beats: list[str] = []
     if isinstance(storyboard, list):
         for item in storyboard:
             if isinstance(item, dict):
                 visual = str(item.get("visual") or item.get("shot") or "").strip()
                 spoken = str(item.get("spoken") or "").strip()
+                timing = str(item.get("time") or item.get("timing") or "").strip()
                 if visual:
-                    beats.append(visual + (f"; spoken: {spoken}" if spoken else ""))
+                    beat = (f"{timing}: " if timing else "") + visual
+                    beats.append(beat + (f"; spoken: {spoken}" if spoken else ""))
     mode_instruction = (
         "Image 1 is the opening frame and image 2 is the final frame; interpolate a continuous action between them."
         if reference_mode == "first-last"
         else "Use exactly two all-purpose references: image 1 is the chronological storyboard and image 2 is the product identity grid; they are not a forced first/final-frame pair."
     )
-    voice_items = variant.get("voiceover_script_8s") or []
+    voice_items = variant.get("voiceover_script_10s") or variant.get("voiceover_script_8s") or []
     if isinstance(voice_items, list):
         voice = " ".join(str(item.get("line", "")) if isinstance(item, dict) else str(item) for item in voice_items)
     else:
         voice = str(voice_items)
+    brief = load_json(product_dir / "product_brief.json", {}) if product_dir else {}
+    identity = variant.get("product_fidelity_block") or brief.get("confirmed_identity") or []
+    misuse = variant.get("negative_prompt") or brief.get("misuse_risks_to_avoid") or []
     return (
         f"Create exactly one {duration}-second vertical 9:16 realistic creator-style product video. {mode_instruction} "
         "Preserve the same adult creator, room, wardrobe, lighting, camera geometry, props, and the same single physical product throughout. "
         "Show exactly ONE product in the entire video; never duplicate it in hands, on furniture, in mirrors, reflections, or screens. "
-        "PRODUCT LOCK: black S8 mirror clock Bluetooth speaker; low elongated horizontal capsule body, about 2.3–2.6 times wider than tall; matte black shell; glossy mirror front; large white seven-segment time digits with small status icons; one large front-right rotary knob; exactly seven small tactile buttons in one straight top row; circular silver-trimmed ends that keep the same metallic accent ring in every shot. APPEARANCE LOCK: never illuminate an end-cap as a glowing disc, never add an ambient light ring, LED strip, equalizer or new indicator, and never change the display beyond the supported seven-segment digits and tiny icons. Communicate playback or mode changes only through the creator action and reaction, never through invented product lighting. Never morph, resize, recolor, rotate into a tall shape, add branding, or invent controls. "
+        f"PRODUCT TRUTH AND IDENTITY LOCK: {clipped(identity, 700)}. Match image 2 for silhouette, parts, proportions and controls; when documented SKU colors differ, use the single colorway shown in image 1 consistently. "
+        f"FORBIDDEN DRIFT: {clipped(misuse, 600)}. Never morph, resize, recolor, add branding, invent controls or unsupported functions. "
         f"CONCEPT: {clipped(variant.get('title'), 180)}. HOOK: {clipped(variant.get('hook'), 320)}. "
         f"PRIMARY FUNCTION: {clipped(variant.get('primary_function_focus'), 320)}. "
         f"SCENE: {clipped(variant.get('scene_imagination'), 650)}. "
-        f"SHOT PLAN: distribute these beats naturally across all {duration} seconds: {clipped(beats or storyboard, 1050)}. "
+        f"SHOT PLAN: follow these chronological beats across all {duration} seconds: {clipped(beats or storyboard, 1250)}. "
         f"SUPPORTED ACTION: {clipped(variant.get('usage_logic'), 650)}. "
         f"PAYOFF: {clipped(variant.get('proof_moment'), 450)}. "
         f"NATIVE AUDIO: young American female creator voice, natural and warm. Speak exactly: {clipped(voice, 400)}. Do not add speech. Add subtle room/product sounds and low music without singing. "
@@ -609,9 +627,11 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
         validate_scene_chain(product_dir, scene_refs)
         require_qc(product_dir, scene_refs, "keyframes")
     reference_limit = 7 if args.model == "omni_flash-10s" else 3 if args.model == "omni-flash" else 2
-    base_prompt = variant.get("video_prompt") or "Create a product UGC video."
+    base_prompt = variant.get("video_prompt") or compact_omni_prompt(
+        variant, str(args.duration), args.reference_mode, product_dir
+    )
     if args.model in {"omni-flash", "omni_flash-10s"} and len(base_prompt) > 4000:
-        base_prompt = compact_omni_prompt(variant, str(args.duration), args.reference_mode)
+        base_prompt = compact_omni_prompt(variant, str(args.duration), args.reference_mode, product_dir)
         print(f"[prompt] compacted Omni prompt to {len(base_prompt)} characters", flush=True)
     scale_lock = str(variant.get("_physical_scale_lock") or "").strip()
     if scale_lock:
@@ -639,19 +659,20 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
         args.retry_backoff_seconds,
     )
     callouts = overlay_callouts(variant, args.light_overlay)
+    voiceover = variant.get("voiceover_script_10s") or variant.get("voiceover_script_8s")
     if args.audio_style == "none" or prompt_has_native_audio(base_prompt):
         prompt = base_prompt
     else:
         prompt = (
-            append_safe_audio_test_instruction(base_prompt, variant.get("voiceover_script_8s")) if args.safe_audio_test else (
+            append_safe_audio_test_instruction(base_prompt, voiceover) if args.safe_audio_test else (
                 append_asmr_audio_instruction(base_prompt)
                 if args.audio_style == "asmr"
                 else
-                append_mid_native_audio_instruction(base_prompt, variant.get("voiceover_script_8s"), callouts)
+                append_mid_native_audio_instruction(base_prompt, voiceover, callouts)
                 if args.audio_style == "mid"
-                else append_native_audio_instruction(base_prompt, variant.get("voiceover_script_8s"))
+                else append_native_audio_instruction(base_prompt, voiceover)
                 if args.audio_style == "legacy"
-                else append_safe_native_audio_instruction(base_prompt, variant.get("voiceover_script_8s"))
+                else append_safe_native_audio_instruction(base_prompt, voiceover)
             )
         )
     params = build_model_params(args, [item["url"] for item in uploads])
@@ -672,6 +693,17 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
     if not task_ids:
         raise RuntimeError(f"Missing task_id: {json.dumps(create_response, ensure_ascii=False)}")
     task_id = task_ids[0]
+    task_record_path = output_dir / f"variant-{variant_id:02d}.task.json"
+    write_json(task_record_path, {
+        "variant_id": variant_id,
+        "task_id": task_id,
+        "status": "submitted",
+        "model": args.model,
+        "created_at": int(time.time()),
+        "reference_mode": args.reference_mode,
+        "params": {key: value for key, value in params.items() if key != "images"},
+    })
+    print(f"[submitted] variant={variant_id:02d} task_id={task_id}", flush=True)
     status_response = poll_task(api_key, task_id, args.base_url, args.poll_seconds, args.status_endpoint)
     result_url = status_response.get("result_url") or status_response.get("url")
     if not result_url:
@@ -684,6 +716,15 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
     )
     if not downloaded:
         raise RuntimeError(f"Download failed: {result_url}")
+    write_json(task_record_path, {
+        "variant_id": variant_id,
+        "task_id": task_id,
+        "status": "success",
+        "model": args.model,
+        "completed_at": int(time.time()),
+        "result_url": result_url,
+        "output_path": str(output_path.relative_to(product_dir)),
+    })
     if v2_active:
         recorded_params = {key: value for key, value in params.items() if key != "images"}
         record_video(product_dir, output_path, expected, prompt,
@@ -708,26 +749,38 @@ def process_product(product_dir: Path, api_key: str, selected_variants: set[int]
     results_path = output_dir / "video_generation_results.json"
     existing = load_json(results_path, {"results": []})
     results = list(existing.get("results", []))
+    selected = []
     for variant in prompts.get("variants", []):
         variant_id = int(variant.get("variant_id", 0))
         if variant_id not in selected_variants:
             continue
         current_variant = dict(variant)
         current_variant["_physical_scale_lock"] = prompts.get("physical_scale_lock", "")
+        selected.append(current_variant)
+
+    def run_variant(current_variant: dict[str, Any]) -> dict[str, Any]:
         try:
-            result = process_variant(product_dir, current_variant, api_key, args)
+            return process_variant(product_dir, current_variant, api_key, args)
         except Exception as error:
             if not args.continue_on_error:
                 raise
-            result = {
+            return {
                 "variant_id": current_variant["variant_id"],
                 "status": "failed",
                 "error": str(error),
                 "output_path": str((output_dir / f"variant-{current_variant['variant_id']:02d}.mp4").relative_to(product_dir)),
             }
-        results = [item for item in results if int(item.get("variant_id", 0)) != current_variant["variant_id"]]
-        results.append(result)
-        write_json(results_path, {"results": results})
+
+    workers = max(1, min(args.workers, len(selected) or 1))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        future_map = {pool.submit(run_variant, variant): variant for variant in selected}
+        for future in concurrent.futures.as_completed(future_map):
+            current_variant = future_map[future]
+            result = future.result()
+            results = [item for item in results if int(item.get("variant_id", 0)) != current_variant["variant_id"]]
+            results.append(result)
+            results.sort(key=lambda item: int(item.get("variant_id", 0)))
+            write_json(results_path, {"results": results})
 
 
 def main() -> None:
@@ -773,6 +826,7 @@ def main() -> None:
     parser.add_argument("--single-reference", action="store_true", help="Deprecated alias: use one generated scene image in omni-reference mode.")
     parser.add_argument("--allow-landscape", action="store_true", help="Allow non-9:16 aspect ratios for explicit landscape-only jobs.")
     parser.add_argument("--continue-on-error", action="store_true", help="Record failed variants and continue processing the batch.")
+    parser.add_argument("--workers", type=int, default=1, help="Submit and poll independent variants concurrently.")
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
     if args.duration is None:

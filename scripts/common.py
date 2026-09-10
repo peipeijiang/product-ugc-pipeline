@@ -16,6 +16,14 @@ from pathlib import Path
 from typing import Any
 
 
+# The desktop shell can inject a stale local proxy (including lowercase variants).
+# Production API calls must use the direct route; otherwise image/video generation
+# fails before reaching the provider.
+for _environment_key in list(os.environ):
+    if "proxy" in _environment_key.lower():
+        os.environ.pop(_environment_key, None)
+
+
 DEFAULT_BASE_URL = "https://api.laozhang.ai/v1"
 
 
@@ -92,7 +100,19 @@ def http_request(
         request_headers = {"User-Agent": user_agent()}
         if headers:
             request_headers.update(headers)
-        response = requests.request(method, url, headers=request_headers, data=data, timeout=timeout)
+        # macOS System Settings can define a system-wide proxy that requests picks up
+        # through trust_env even after the proxy environment variables are removed.
+        # Production API calls must bypass it or they fail before reaching the provider.
+        session = requests.Session()
+        session.trust_env = False
+        response = session.request(
+            method,
+            url,
+            headers=request_headers,
+            data=data,
+            timeout=timeout,
+            proxies={"http": None, "https": None},
+        )
         response.raise_for_status()
         return response.status_code, dict(response.headers.items()), response.content
     except ImportError:
@@ -109,7 +129,8 @@ def http_request(
         request_headers.update(headers)
     request = urllib.request.Request(url, data=data, headers=request_headers, method=method)
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        direct_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with direct_opener.open(request, timeout=timeout) as response:
             return response.status, dict(response.headers.items()), response.read()
     except urllib.error.HTTPError as error:
         body = error.read()
@@ -193,12 +214,10 @@ def require_api_key() -> str:
 
 def require_api_key_for_base_url(base_url: str) -> str:
     lowered = (base_url or "").lower()
-    if "minimax" in lowered or "minimaxi" in lowered:
-        env_names = ("MINIMAX_API_KEY", "PRODUCT_UGC_API_KEY", "LAOZHANG_API_KEY")
-    elif "laozhang" in lowered:
+    if "laozhang" in lowered:
         env_names = ("LAOZHANG_API_KEY", "PRODUCT_UGC_API_KEY")
     else:
-        env_names = ("PRODUCT_UGC_API_KEY", "LAOZHANG_API_KEY", "MINIMAX_API_KEY")
+        env_names = ("PRODUCT_UGC_API_KEY", "LAOZHANG_API_KEY")
     for env_name in env_names:
         api_key = os.environ.get(env_name, "").strip()
         if api_key:

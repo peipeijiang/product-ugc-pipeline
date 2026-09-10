@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import subprocess
 import tempfile
@@ -16,8 +17,17 @@ from v2_contract import RULES, category_spec, digest, hashes, load_identity, loa
 CHECKS = ("identity", "scale", "placement", "operation", "continuity", "category_specific")
 
 
+def normalize_checks(output: dict) -> dict:
+    """Accept either {"checks": {...}} or the checks flattened at the top level."""
+    checks = output.get("checks")
+    if isinstance(checks, dict) and checks:
+        return checks
+    flattened = {name: output[name] for name in CHECKS if isinstance(output.get(name), dict)}
+    return flattened or (checks or {})
+
+
 def verdict(output: dict) -> str:
-    checks = output.get("checks", {})
+    checks = normalize_checks(output)
     if set(checks) != set(CHECKS):
         raise RuntimeError("QC model returned missing or unexpected checks")
     for item in checks.values():
@@ -52,7 +62,13 @@ def video_frames(video: Path, destination: Path, count: int) -> tuple[list[Path]
 
 def review(folder: Path, target: Path, identity: dict, key: str, args) -> dict:
     brief = load_json(folder / "product_brief.json", {})
+    # Identity QC with 19-image manifests and 9KB briefs exceeds connection limits.
+    # Slim the brief to core identity + risks only; analysis is redundant with the real photos.
+    slim_brief = {k: v for k, v in brief.items() if k in {"product_name", "confirmed_identity", "misuse_risks_to_avoid"}}
     originals = [local_file(folder, name) for name in identity["reference_images"]]
+    # Use at most two source images for identity stage to keep request size manageable.
+    if args.stage == "identity":
+        originals = originals[:2]
     dependencies = originals + [folder / "product_brief.json", folder / "identity_lock/manifest.json"]
     visuals = [(f"Real source product {i + 1}", path) for i, path in enumerate(originals)]
     if args.stage in {"keyframes", "videos"}:
@@ -110,6 +126,14 @@ def review(folder: Path, target: Path, identity: dict, key: str, args) -> dict:
         else:
             visuals.append(("TARGET under review", target))
         role_instruction = ""
+        if args.stage == "identity":
+            role_instruction = (
+                "This TARGET is a static product identity grid, not a scene or a video. "
+                "Operation and continuity cannot be evidenced from it: mark BOTH of those checks "
+                "not_applicable and explain that a still identity grid carries no control action and no "
+                "ordered scene chain. Do not mark them unknown. Judge identity, scale, placement and "
+                "category_specific strictly from the visible product. "
+            )
         if frame_role == "start":
             role_instruction = "This TARGET is the START frame. Evaluate the setup/friction state; do not require the end-state action or product placement yet. Mark continuity not_applicable because no earlier scene exists and the end frame is intentionally not supplied for this check. "
         elif frame_role == "end":
@@ -133,7 +157,7 @@ def review(folder: Path, target: Path, identity: dict, key: str, args) -> dict:
                   "For end frame compare start scene/person. For videos inspect ordered sampled frames for "
                   "action sequence and continuity; sampling is not exhaustive motion validation.\n"
                   + "Category checklist (not SKU facts):\n" + category_spec(identity["category"])["checks"]
-                  + "\nProduct brief: " + json.dumps(brief, ensure_ascii=False)
+                  + "\nProduct brief: " + json.dumps(slim_brief, ensure_ascii=False)
                   + "\nVariant storyboard for this target: " + json.dumps(review_variant, ensure_ascii=False))
         content = [{"type": "text", "text": prompt}]
         for label, path in visuals:
@@ -143,8 +167,16 @@ def review(folder: Path, target: Path, identity: dict, key: str, args) -> dict:
             {"role": "user", "content": content}], "response_format": {"type": "json_object"}},
             base_url=args.base_url, timeout=args.timeout)
         result = parse_json_text(response["choices"][0]["message"]["content"], "dual consistency QC")
+        if set(result.get("checks", {})) != set(CHECKS):
+            result = {"checks": normalize_checks(result), "corrections": result.get("corrections", [])}
+        if set(result.get("checks", {})) != set(CHECKS):
+            # Surface what the model actually returned; a silent shape mismatch is
+            # otherwise indistinguishable from a transport failure.
+            Path("/tmp/qc_last_bad_response.json").write_text(
+                json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
     return {"path": str(target.relative_to(folder)), "sha256": digest(target), "status": verdict(result),
-            "checks": result["checks"], "corrections": result.get("corrections", []),
+            "checks": normalize_checks(result), "corrections": result.get("corrections", []),
             "dependencies": hashes(folder, dependencies), "sample_timestamps": times,
             "scope": "sampled_video_frames" if times else "still_image"}
 
@@ -185,6 +217,7 @@ def main():
     p.add_argument("--target", action="append", default=[],
                    help="Explicit product-relative target path for keyframe QC, e.g. runs/.../variant-03-storyboard.png. May be repeated.")
     p.add_argument("--merge-existing", action="store_true", help="Replace selected target verdicts while preserving other targets in the stage report")
+    p.add_argument("--workers", type=int, default=1, help="Review independent targets concurrently.")
     args = p.parse_args()
     if not 2 <= args.samples <= 32:
         p.error("--samples must be 2..32")
@@ -211,7 +244,7 @@ def main():
         selected_paths = {str(target.relative_to(folder)) for target in selected_targets}
         report["results"] = [item for item in report["results"] if item.get("path") not in selected_paths]
         write_json(report_path, report)
-        for target in selected_targets:
+        def review_with_retries(target: Path) -> dict:
             for attempt in range(args.retries + 1):
                 try:
                     result = review(folder, target, identity, key, args)
@@ -220,9 +253,18 @@ def main():
                     result = {"path": str(target.relative_to(folder)), "status": "error", "error": str(error)}
                     if attempt == args.retries:
                         break
-            report["results"].append(result)
-            write_json(report_path, report)
-            print(f"[qc] {folder.name}/{target.name}: {result['status']}", flush=True)
+            return result
+
+        workers = max(1, min(args.workers, len(selected_targets) or 1))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            future_map = {pool.submit(review_with_retries, target): target for target in selected_targets}
+            for future in concurrent.futures.as_completed(future_map):
+                target = future_map[future]
+                result = future.result()
+                report["results"].append(result)
+                report["results"].sort(key=lambda item: item.get("path", ""))
+                write_json(report_path, report)
+                print(f"[qc] {folder.name}/{target.name}: {result['status']}", flush=True)
         reports.append(report)
     if args.report:
         write_json(args.report, {"products": reports})

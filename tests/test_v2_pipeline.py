@@ -11,6 +11,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from PIL import Image
 from common import load_json, write_json, selected_product_dirs
+from build_product_brief import assert_full_image_coverage
 from generate_product_identity_lock import generate, parser
 from generate_usage_pose_sheet import generate as usage
 from generate_images import generate_one_image, keyframe_references
@@ -38,7 +39,9 @@ class PipelineTests(unittest.TestCase):
         folder = self.root / f"01-{category}"
         (folder / "images").mkdir(parents=True)
         Image.new("RGB", (64, 64), "red").save(folder / "images/source.png")
-        write_json(folder / "product_manifest.json", {"product_name": category, "images": [{"local_path": "images/source.png"}]})
+        write_json(folder / "product_manifest.json", {"product_name": category,
+            "extraction_audit": {"complete": True},
+            "images": [{"local_path": "images/source.png"}]})
         write_json(folder / "category.json", {"category": category})
         write_json(folder / "image_analysis.json", {"images": [{"local_path": "images/source.png", "analysis": {
             "full_product_visibility": "full_product", "reference_role": "canonical_full_product"}}]})
@@ -160,6 +163,21 @@ class PipelineTests(unittest.TestCase):
         folder = self.fixture("apparel")
         self.assertEqual(selected_product_dirs(folder), [folder])
         self.assertEqual(selected_product_dirs(self.root, "01"), [folder])
+
+    def test_product_brief_requires_complete_extraction_and_full_vision_coverage(self):
+        folder = self.fixture("electronics")
+        manifest = load_json(folder / "product_manifest.json")
+        analysis = load_json(folder / "image_analysis.json")
+        assert_full_image_coverage(folder, manifest, analysis)
+
+        manifest["images"].append({"local_path": "images/missing-detail.png"})
+        with self.assertRaisesRegex(RuntimeError, "full-image vision gate failed"):
+            assert_full_image_coverage(folder, manifest, analysis)
+
+        manifest["images"] = manifest["images"][:1]
+        manifest["extraction_audit"]["complete"] = False
+        with self.assertRaisesRegex(RuntimeError, "extraction audit"):
+            assert_full_image_coverage(folder, manifest, analysis)
 
     def test_synthetic_fixture_is_rejected_before_paid_generation(self):
         folder = self.fixture("apparel")

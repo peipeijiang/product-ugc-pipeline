@@ -15,6 +15,39 @@ Return strict compact JSON. Do not invent unsupported product functions.
 Separate confirmed facts from cautious inferences."""
 
 
+def assert_full_image_coverage(product_dir: Path, manifest: dict[str, Any], image_analysis: dict[str, Any]) -> None:
+    extraction_audit = manifest.get("extraction_audit") or {}
+    if extraction_audit.get("complete") is not True:
+        raise RuntimeError(
+            f"{product_dir.name}: extraction audit is missing or incomplete; "
+            "main-gallery and detail-description images must be collected before product cognition"
+        )
+    manifest_paths = [str(item.get("local_path") or "").strip() for item in manifest.get("images", [])]
+    analyzed_paths = [str(item.get("local_path") or "").strip() for item in image_analysis.get("images", [])]
+    if not manifest_paths:
+        raise RuntimeError(f"{product_dir.name}: product_manifest.json contains no downloaded images")
+    if any(not path for path in manifest_paths) or any(not path for path in analyzed_paths):
+        raise RuntimeError(f"{product_dir.name}: image records contain missing local_path values")
+    missing = sorted(set(manifest_paths) - set(analyzed_paths))
+    unexpected = sorted(set(analyzed_paths) - set(manifest_paths))
+    duplicates = sorted({path for path in analyzed_paths if analyzed_paths.count(path) > 1})
+    if missing or unexpected or duplicates or len(analyzed_paths) != len(manifest_paths):
+        raise RuntimeError(
+            f"{product_dir.name}: full-image vision gate failed; "
+            f"manifest={len(manifest_paths)} analyzed={len(analyzed_paths)} "
+            f"missing={missing} unexpected={unexpected} duplicates={duplicates}"
+        )
+    policy = image_analysis.get("analysis_policy") or {}
+    if policy.get("full_coverage") is False:
+        raise RuntimeError(f"{product_dir.name}: image_analysis.json is explicitly marked partial")
+    failures = [
+        item.get("local_path") for item in image_analysis.get("images", [])
+        if (item.get("analysis") or {}).get("error")
+    ]
+    if failures:
+        raise RuntimeError(f"{product_dir.name}: failed vision records: {failures}")
+
+
 def extract_json_content(response: dict[str, Any]) -> dict[str, Any]:
     content = (((response.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
     if not content:
@@ -122,6 +155,7 @@ def process_product(product_dir: Path, api_key: str, args: argparse.Namespace) -
     if not manifest or not image_analysis:
         print(f"[skip] missing manifest or image analysis: {product_dir}", flush=True)
         return
+    assert_full_image_coverage(product_dir, manifest, image_analysis)
     print(f"[brief] {product_dir.name}", flush=True)
     brief = build_with_model(api_key, manifest, image_analysis, args.model, args.base_url, args.timeout)
     if brief.get("error"):
