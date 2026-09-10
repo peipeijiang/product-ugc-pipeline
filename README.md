@@ -61,6 +61,13 @@ python scripts/generate_videos_lk888.py output --variants 1-3 --model veo3.1
 python scripts/qc_dual_consistency.py output --stage videos --variants 1-3
 ```
 
+图像默认走 upDrama 的 `tt-image-2.5` 媒体任务通道（`LK888_API_KEY` / `UPDRAMA_API_KEY`），失败时自动依次退到 `tt-image-2` 和 LaoZhang 的 GPT-Image-2 `/images/edits`。每张图的 `image_provider` 和 `provider_fallbacks` 记录在 `generated_images/image_generation_results.json`。需要强制单通道时：
+
+```bash
+python scripts/generate_images.py output --variants 1-3 --keyframes \
+  --image-provider laozhang-image2 --image-fallback none --model gpt-image-2-vip --size 1024x1536
+```
+
 Omni Flash 是显式选择，沿用原接口：
 
 ```bash

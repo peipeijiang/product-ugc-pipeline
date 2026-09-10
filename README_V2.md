@@ -6,7 +6,7 @@ v2 保留原视频模型和提交参数，在视频前增加单张宫格、来�
 
 默认每个商品仅生成 identity_lock/reference_sheet.png 一张参考图，全部广告版本复用。usage_poses/manifest.json 引用同一张图，不生成分散的动作图片。它记录完整动作顺序；一张静态宫格不等于逐帧动作视频。
 
-`generate_product_identity_lock.py` 复用 `generate_images.generate_image_file` 的 GPT-Image-2 `/images/edits` 路径。类目布局定义在 `scripts/v2_contract.py`，专项检查读取 `references/category-*.md`。优先使用产品简报选中的完整商品原图，拒绝缺少原图、认知失败和无依据的动作。
+`generate_product_identity_lock.py` 复用 `generate_images.generate_image_file`。默认图像通道是 upDrama `tt-image-2.5` 媒体任务（1–16 张参考图，比例与分辨率独立控制），失败时依次退到 `tt-image-2` 与 GPT-Image-2 `/images/edits`；详见 `references/image-provider-notes.md`。类目布局定义在 `scripts/v2_contract.py`，专项检查读取 `references/category-*.md`。优先使用产品简报选中的完整商品原图，拒绝缺少原图、认知失败和无依据的动作。生成的宫格不得包含可读文字、标题或页脚；尺寸等数据留在 manifest 中。
 
 | 类目 | 布局（按行读） | 请求画布 |
 |---|---|---|

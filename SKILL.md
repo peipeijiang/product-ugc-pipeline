@@ -1,6 +1,6 @@
 ---
 name: product-ugc-pipeline
-description: Build product UGC ad-production pipelines from ecommerce product URLs. Use when Codex needs to scrape product pages, save product image/material folders, analyze image assets with a vision model, generate multiple short-form ecommerce UGC prompts, create product-faithful reference images with LaoZhang GPT-Image-2, or create VEO 3.1 product videos through LaoZhang or LK888/updrama APIs.
+description: Build product UGC ad-production pipelines from ecommerce product URLs. Use when Codex needs to scrape product pages, save product image/material folders, analyze image assets with a vision model, generate multiple short-form ecommerce UGC prompts, create product-faithful reference images with upDrama TT Image 2.5 (GPT-Image-2 fallback), or create VEO 3.1 / Omni Flash product videos through LaoZhang or LK888/updrama APIs.
 ---
 
 # Product UGC Pipeline
@@ -44,7 +44,7 @@ Product references lock the product, not the whole source photo. Use source imag
 3. Vision-analyze every downloaded candidate before writing any product document. In an interactive Codex run, use Codex's built-in vision directly on every local file and record the per-image result in `image_analysis.json`; do not call MiniMax for image understanding or QC. For provider-backed CLI automation, run `scripts/analyze_materials.py --limit-images 0`.
 4. Run `scripts/build_product_brief.py` to synthesize product usage cognition from `product_manifest.json` + `image_analysis.json`.
 5. Run `scripts/generate_ugc_prompts.py` to create UGC prompt variants grounded in the product brief. This step must first build a benefit ladder from the highest-priority commercial promise, then write the hook, voiceover, storyboard, keyframe prompts, and VEO prompt around that ladder.
-6. Run `scripts/generate_images.py` to create image-to-image “pad images” or start/end keyframes using GPT-Image-2 and the selected product references.
+6. Run `scripts/generate_images.py` to create image-to-image “pad images” or start/end keyframes. The default image provider is upDrama `tt-image-2.5` on LK888; if it fails the script automatically falls back to the OpenAI-compatible GPT-Image-2 route.
 7. Run `scripts/generate_videos_lk888.py` to send public start/end keyframe URLs to LK888/updrama VEO. Production default video generation is LK888 `veo3.1`.
 8. Use `scripts/generate_videos.py` for LaoZhang VEO only when the user explicitly asks for LaoZhang or LK888 is not the requested provider.
 9. When the user asks for “two new versions”, “再来两个新版本”, or any fresh reroll, prefer `scripts/run_fresh_batch.py` so the skill first extends the canonical prompt file, then keyframes, then videos, instead of accidentally rerunning an old prompt batch.
@@ -112,7 +112,9 @@ python product-ugc-pipeline/scripts/scrape_products.py urls.txt --out product-ug
 LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/analyze_materials.py product-ugc-output --limit-images 0
 LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/build_product_brief.py product-ugc-output
 LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_ugc_prompts.py product-ugc-output --count 10
-LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_images.py product-ugc-output --variants 1-10 --model gpt-image-2-vip --size 1024x1536 --keyframes
+LK888_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_images.py product-ugc-output --variants 1-10 --keyframes
+# explicit fallback-only run on the OpenAI-compatible GPT-Image-2 route
+LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_images.py product-ugc-output --variants 1-10 --image-provider laozhang-image2 --image-fallback none --model gpt-image-2-vip --size 1024x1536 --keyframes
 LK888_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_videos_lk888.py product-ugc-output --variants 1-10 --model veo3.1 --generation-mode fast
 LK888_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_videos_lk888.py product-ugc-output --variants 1-10 --model omni-flash --base-url https://api.lk888.ai --status-endpoint /v1/media/status --reference-mode first-last
 LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_videos.py product-ugc-output --variants 1-10 --model veo-3.1-fast-fl
@@ -145,6 +147,7 @@ These lessons are hard production rules, not preferences:
 12. **Accept both QC response shapes.** Vision models return the six checks either nested under `checks` or flattened at the top level. Only accepting the nested form turns a perfectly good review into "missing or unexpected checks". Normalise both, and when a shape still does not match, dump the raw response so a schema mismatch is not mistaken for a transport failure.
 13. **Bypass system proxies, not just proxy environment variables.** macOS System Settings can define a system-wide proxy that `requests` still honours through `trust_env` after the proxy environment variables are stripped. When that proxy is not running, every provider call fails with `ProxyError` or `SSLEOFError` and looks like a provider outage or a concurrency problem. Force direct connections in the HTTP layer for both the `requests` path and the `urllib` fallback.
 14. **A concurrent batch must isolate failures and persist progress, or it wedges.** When several variants share one `ThreadPoolExecutor`, a bare `future.result()` inside the `as_completed` loop re-raises the first exception and aborts the loop, so already-submitted work is silently dropped from the report: a 10-target QC run where one target hit a transient error wrote only 8 results and left no error line for the missing two. Wrap each `future.result()` in `try/except`, record a `status: error` entry carrying the exception text, and keep iterating so the remaining targets still land. Persist the results file after every completion rather than only at the end, so an interrupted or crashing run keeps the frames and tasks it already finished. Apply the same shape to storyboard/keyframe generation (`generate_images.py --workers N`), video submission (`generate_videos_lk888.py --workers N`), keyframe/storyboard QC (`qc_dual_consistency.py --workers N`) and the legacy cascade pipeline, and never let one slow or failing variant stall submission of the rest.
+15. **Image generation is provider-chained: TT Image 2.5 first, GPT-Image-2 second.** `generate_images.py`, `generate_product_identity_lock.py` and `generate_usage_pose_sheet.py` default to the upDrama media-task route (`--image-provider tt-image-2.5` against `https://api.lk888.ai/v1/media/generate`) because it is a single create-and-poll round trip, takes 1-16 references and controls aspect ratio and resolution independently. On any failure the script retries `tt-image-2` on the same route, then the OpenAI-compatible GPT-Image-2 `/images/edits` route. Never hand-roll a provider swap inside a batch: pass `--image-provider` / `--image-fallback`, and read the per-frame `image_provider` and `provider_fallbacks` fields in `image_generation_results.json` to see which route actually produced each frame.
 
 ## Parallel Pipeline (Fire-and-Forget + Auto-Cascade)
 
@@ -370,6 +373,17 @@ Every UGC variant must be grounded in `product_brief.json`:
 - Do not let the reference image over-constrain the lifestyle scene. Once the correct product identity and usage mechanics are locked, expand the scene to realistic buyer contexts that make the function easier to understand.
 - For each variant, map one selling point to one buyer problem, one usage action, one proof/result moment, and one final improved after-state. If several functions exist, split them across variants rather than cramming them into the same clip.
 - If usage is uncertain, write a conservative tabletop/hand demo rather than inventing a dramatic function.
+
+## Image Provider Notes
+
+Read `references/image-provider-notes.md` before changing image calls. Key defaults:
+
+- Primary route: upDrama / LK888 media tasks. `POST https://api.lk888.ai/v1/media/generate`, poll `GET /v1/media/status?task_id=`, then download `result_url`.
+- Primary model: `tt-image-2.5`. Accepts 1-16 reference images, `version` (`flare` / `sunburst`), `aspect_ratio`, `resolution` (1K/2K/4K), `quality` and `background`.
+- Second attempt: `tt-image-2` on the same media route.
+- Final fallback: GPT-Image-2 through the OpenAI-compatible `/images/edits` and `/images/generations` routes on LaoZhang.
+- API key env vars: `LK888_API_KEY` or `UPDRAMA_API_KEY` for the media route; `LAOZHANG_API_KEY` for the fallback route.
+- Interactive sessions may also call Codex built-in image generation directly when both script routes are unavailable, but the frame still has to be recorded with its provider, hash and parameters, and still has to pass the same vision QC.
 
 ## LaoZhang API Notes
 
