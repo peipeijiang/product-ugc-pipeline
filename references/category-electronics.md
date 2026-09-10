@@ -18,6 +18,8 @@
 - **Port/button accuracy:** count must match (2 USB-C ports cannot become 3). Position must not shift.
 - **Interaction physics:** finger touch area correct (触摸板 not 按压坑), cable bend radius realistic, plug orientation correct.
 - **LED/screen truth:** only show states visible in source photo OR explicitly user-confirmed. Do not invent screen content.
+- **Illuminated faces:** when the product has a lit surface (diffuser, backlit panel, glowing strip), render it the way the source photos show it — broad, softly blended luminance behind the surface. Never a countable array of individual emitters or hard bright dots, and never a flat featureless light card either. Some pages claim a bead count that the photos do not show; follow the photo.
+- **Emitted light does not recolour the body:** the housing keeps its own material colour whether the product is on or off. A warm mode must not tint a white shell amber or gold.
 - **No phantom parts:** do not add cables/wires/motors/chambers/hinges/text not in source photo.
 - **Assembly logic (for toy blocks):** connection points must align, pieces must interlock correctly, gravity must work.
 
