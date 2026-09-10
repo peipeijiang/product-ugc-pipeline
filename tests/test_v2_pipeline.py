@@ -14,7 +14,7 @@ from common import load_json, write_json, selected_product_dirs
 from build_product_brief import assert_full_image_coverage
 from generate_product_identity_lock import generate, parser
 from generate_usage_pose_sheet import generate as usage
-from generate_images import generate_one_image, keyframe_references
+from generate_images import generate_image_file, generate_one_image, keyframe_references
 from generate_videos_lk888 import omni_storyboard_identity_paths
 from qc_dual_consistency import CHECKS, verdict, review, targets
 from v2_contract import (SPECS, action_ledger, check_existing_video, digest, hashes,
@@ -118,6 +118,40 @@ class PipelineTests(unittest.TestCase):
                 generate(folder, "test", self.args(folder))
         with self.assertRaises(RuntimeError):
             load_identity(folder)
+
+    def test_media_task_image_route_saves_frame_and_records_provider(self):
+        folder = self.fixture("electronics")
+        args = self.args(folder)
+        args.image_provider = "tt-image-2.5"
+        args.image_fallback = "none"
+        reference = folder / "images/source.png"
+        destination = folder / "generated_images/variant-01.png"
+
+        def fake_download(url, path, timeout=60):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            Image.new("RGB", (64, 64), "blue").save(path)
+            return True
+
+        responses = [
+            {"data": {"task_id": 4242}},
+            {"is_final": True, "state": "success", "result_url": "https://example.invalid/frame.png"},
+        ]
+        with patch("generate_images.require_api_key_for_base_url", return_value="test-key"), \
+             patch("generate_images.request_json", side_effect=responses) as calls, \
+             patch("generate_images.download_binary", side_effect=fake_download):
+            result = generate_image_file(
+                "test-key", folder, {"variant_id": 1}, args, destination, "prompt",
+                reference_override=[reference],
+            )
+
+        self.assertEqual(result["image_provider"], "tt-image-2.5")
+        self.assertEqual(result["status"], "saved")
+        self.assertTrue(destination.exists())
+        payload = calls.call_args_list[0].args[2]
+        self.assertEqual(payload["model"], "tt-image-2.5")
+        self.assertEqual(payload["params"]["aspect_ratio"], "9:16")
+        self.assertEqual(payload["params"]["resolution"], "2K")
+        self.assertTrue(payload["params"]["images"][0].startswith("data:image/"))
 
     def test_qc_rejects_unknown_and_malformed(self):
         checks = {name: {"status": "pass", "evidence": "test evidence"} for name in CHECKS}
