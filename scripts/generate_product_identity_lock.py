@@ -49,7 +49,13 @@ def generate(folder: Path, api_key: str, args: argparse.Namespace) -> dict:
     panels = [panel_overrides.get(panel, panel) for panel in spec["panels"]]
     prompt = (
         f"Create exactly ONE product reference sheet, {spec['layout']}, canvas {spec['size']}. "
-        "Read panels left-to-right, top-to-bottom. Same SKU, color, shape and part counts in every panel. "
+        "Read panels left-to-right, top-to-bottom. Same SKU, colour, shape and structural part counts in every panel. "
+        "Structural part counts means buttons, ports and clip geometry only. Any light-emitting face is ONE smooth frosted diffuser "
+        "panel glowing with broad, softly blended luminous zones behind the frosting. Never draw individual LED emitters, bright "
+        "dots or a countable grid of beads, never let a panel-number convention push you into drawing emitters to satisfy it, and "
+        "never flatten the face into a featureless uniform light card either. "
+        "Honour every stated real dimension as a visible size relationship: if the brief gives a width, the product must read at that "
+        "width against the hand, phone or monitor in the panel, not smaller. "
         "Neutral background and thin white separators. No visible title, footer, caption or decorative text; product name and source-backed dimensions belong in the manifest, not inside the generated reference image. "
         "Reference 1 is the canonical real product. "
         "Other supplied photos are evidence for the same product only. Do not borrow source scenery. "

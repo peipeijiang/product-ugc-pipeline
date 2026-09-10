@@ -37,9 +37,32 @@ def is_media_image_provider(provider: str) -> bool:
     return provider in (MEDIA_IMAGE_PROVIDER, MEDIA_IMAGE_PROVIDER_ALT)
 
 
+def resolve_image_aspect_ratio(args: argparse.Namespace) -> str:
+    """Pick the media-route aspect ratio.
+
+    An explicit --image-aspect-ratio always wins. The default is "auto", which
+    derives the ratio from --size so the identity sheet and the keyframes keep the
+    proportion the caller asked for instead of silently becoming 9:16.
+    """
+    requested = str(getattr(args, "image_aspect_ratio", "auto") or "auto")
+    if requested != "auto":
+        return requested
+    size = str(getattr(args, "size", "") or "")
+    try:
+        width, height = parse_size(size)
+    except (TypeError, ValueError):
+        return "9:16"
+    if width <= 0 or height <= 0:
+        return "9:16"
+    from math import gcd
+
+    divisor = gcd(width, height)
+    return f"{width // divisor}:{height // divisor}"
+
+
 def media_image_params(args: argparse.Namespace) -> dict[str, Any]:
     return {
-        "aspect_ratio": args.image_aspect_ratio,
+        "aspect_ratio": resolve_image_aspect_ratio(args),
         "resolution": args.image_resolution,
         "version": args.image_version,
         "quality": args.image_quality,
@@ -549,7 +572,7 @@ def add_image_provider_arguments(parser: argparse.ArgumentParser) -> None:
         help="Route used when the primary image provider fails. Defaults to the OpenAI-compatible GPT-Image-2 route.",
     )
     parser.add_argument("--image-base-url", default=LK888_BASE_URL, help="Base URL for the upDrama media-task image route.")
-    parser.add_argument("--image-aspect-ratio", default="9:16", help="Aspect ratio for the media-task image route.")
+    parser.add_argument("--image-aspect-ratio", default="auto", help="Aspect ratio for the media-task image route. 'auto' derives it from --size, so 1024x1536 stays 2:3 instead of silently becoming 9:16.")
     parser.add_argument("--image-resolution", default="2K", choices=["auto", "1K", "2K", "4K"], help="Resolution tier for the media-task image route.")
     parser.add_argument("--image-version", default="sunburst", choices=["flare", "sunburst"], help="tt-image-2.5 quality tier: flare (standard) or sunburst (enhanced).")
     parser.add_argument("--image-quality", default="high", choices=["auto", "low", "medium", "high", "xhigh", "max"], help="Render quality tier for the media-task image route.")

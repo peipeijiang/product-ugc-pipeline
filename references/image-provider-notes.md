@@ -35,7 +35,7 @@ Params used by the pipeline:
 
 | Param | Value | Notes |
 |---|---|---|
-| `aspect_ratio` | `9:16` | Vertical product UGC. |
+| `aspect_ratio` | derived from `--size` | `auto` by default, so `--size 1024x1536` becomes `2:3` for identity sheets and keyframes, and `--size 1080x1920` becomes `9:16`. Pass an explicit value to override. |
 | `resolution` | `2K` | `auto` / `1K` / `2K` / `4K`. |
 | `version` | `sunburst` | `flare` = standard, `sunburst` = enhanced detail. |
 | `quality` | `high` | `auto`/`low`/`medium`/`high`/`xhigh`/`max`. |

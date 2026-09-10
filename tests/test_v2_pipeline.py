@@ -124,6 +124,7 @@ class PipelineTests(unittest.TestCase):
         args = self.args(folder)
         args.image_provider = "tt-image-2.5"
         args.image_fallback = "none"
+        args.size = "1024x1536"
         reference = folder / "images/source.png"
         destination = folder / "generated_images/variant-01.png"
 
@@ -149,9 +150,39 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(destination.exists())
         payload = calls.call_args_list[0].args[2]
         self.assertEqual(payload["model"], "tt-image-2.5")
-        self.assertEqual(payload["params"]["aspect_ratio"], "9:16")
+        # The default aspect ratio derives from --size so the sheet keeps its 2:3 canvas.
+        self.assertEqual(payload["params"]["aspect_ratio"], "2:3")
         self.assertEqual(payload["params"]["resolution"], "2K")
         self.assertTrue(payload["params"]["images"][0].startswith("data:image/"))
+
+    def test_explicit_image_aspect_ratio_overrides_size(self):
+        folder = self.fixture("electronics")
+        args = self.args(folder)
+        args.image_provider = "tt-image-2.5"
+        args.image_fallback = "none"
+        args.size = "1024x1536"
+        args.image_aspect_ratio = "9:16"
+        reference = folder / "images/source.png"
+        destination = folder / "generated_images/variant-01.png"
+
+        def fake_download(url, path, timeout=60):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            Image.new("RGB", (64, 64), "blue").save(path)
+            return True
+
+        responses = [
+            {"data": {"task_id": 4243}},
+            {"is_final": True, "state": "success", "result_url": "https://example.invalid/frame.png"},
+        ]
+        with patch("generate_images.require_api_key_for_base_url", return_value="test-key"), \
+             patch("generate_images.request_json", side_effect=responses) as calls, \
+             patch("generate_images.download_binary", side_effect=fake_download):
+            generate_image_file(
+                "test-key", folder, {"variant_id": 1}, args, destination, "prompt",
+                reference_override=[reference],
+            )
+
+        self.assertEqual(calls.call_args_list[0].args[2]["params"]["aspect_ratio"], "9:16")
 
     def test_qc_rejects_unknown_and_malformed(self):
         checks = {name: {"status": "pass", "evidence": "test evidence"} for name in CHECKS}
