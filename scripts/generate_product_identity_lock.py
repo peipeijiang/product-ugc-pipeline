@@ -74,7 +74,7 @@ def generate(folder: Path, api_key: str, args: argparse.Namespace) -> dict:
     # of supporting evidence; the complete analysis still remains in prompt.
     result = generate_image_file(api_key, folder, {}, args, destination, prompt, ctx["references"][:3])
     if result["status"] != "saved":
-        raise RuntimeError(f"Image2 did not return a saved identity image: {result['status']}")
+        raise RuntimeError(f"Image route did not return a saved identity image: {result['status']}")
     from PIL import Image
     with Image.open(destination) as image:
         image.verify()
@@ -82,9 +82,17 @@ def generate(folder: Path, api_key: str, args: argparse.Namespace) -> dict:
     # base64 image. Keeping it in the manifest bloats the file into the megabytes and
     # later blows up any request that serialises the manifest into a prompt.
     slim_result = {key: value for key, value in result.items() if key != "response"}
+    # Record the route that actually produced the sheet, not the fallback defaults,
+    # so a later reader can tell which model and base URL generated this grid.
+    used_provider = str(result.get("image_provider") or args.image_provider)
+    if is_media_image_provider(used_provider):
+        route_model, route_base_url = used_provider, args.image_base_url
+    else:
+        route_model, route_base_url = args.model, args.base_url
     record = {**slim_result, "status": "completed", "category": spec["category"], "sheet_count": 1,
-              "layout": spec["layout"], "panels": panels, "model": args.model,
-              "base_url": args.base_url, "source_hashes": input_hashes(folder, ctx),
+              "layout": spec["layout"], "panels": panels, "model": route_model,
+              "base_url": route_base_url, "image_provider": used_provider,
+              "source_hashes": input_hashes(folder, ctx),
               "sha256": digest(destination), "qc_status": "pending", "actions": actions}
     write_json(folder / "identity_lock/manifest.json", record)
     return record
