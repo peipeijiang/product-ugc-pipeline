@@ -2,11 +2,161 @@
 from __future__ import annotations
 
 import argparse
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
-from common import load_json, multipart_request, request_json, require_api_key_for_base_url, save_response_image, selected_product_dirs, write_json
+from common import (
+    LK888_BASE_URL,
+    LK888_IMAGE_FALLBACK_MODEL,
+    LK888_IMAGE_MODEL,
+    data_url,
+    download_binary,
+    load_json,
+    multipart_request,
+    request_json,
+    require_api_key_for_base_url,
+    save_response_image,
+    selected_product_dirs,
+    write_json,
+)
 import v2_contract as v2
+
+
+# Image providers. The upDrama media-task route (tt-image-2.5) is the production
+# default because it is a single round-trip per frame with no separate upload
+# step; the LaoZhang OpenAI-compatible Images route stays as the fallback.
+MEDIA_IMAGE_PROVIDER = "tt-image-2.5"
+MEDIA_IMAGE_PROVIDER_ALT = "tt-image-2"
+OPENAI_IMAGE_PROVIDER = "laozhang-image2"
+IMAGE_PROVIDERS = (MEDIA_IMAGE_PROVIDER, MEDIA_IMAGE_PROVIDER_ALT, OPENAI_IMAGE_PROVIDER)
+
+
+def is_media_image_provider(provider: str) -> bool:
+    return provider in (MEDIA_IMAGE_PROVIDER, MEDIA_IMAGE_PROVIDER_ALT)
+
+
+def media_image_params(args: argparse.Namespace) -> dict[str, Any]:
+    return {
+        "aspect_ratio": args.image_aspect_ratio,
+        "resolution": args.image_resolution,
+        "version": args.image_version,
+        "quality": args.image_quality,
+        "background": args.image_background,
+    }
+
+
+def generate_image_via_media_task(
+    api_key: str,
+    args: argparse.Namespace,
+    prompt: str,
+    references: list[Path],
+    destination: Path,
+    model: str,
+) -> tuple[dict[str, Any], Path]:
+    """Create one upDrama media task, poll to a terminal state and save the frame."""
+    params = media_image_params(args)
+    if references:
+        params["images"] = [data_url(path) for path in references]
+    payload = {"model": model, "prompt": prompt, "params": params}
+    created = request_json(
+        "/v1/media/generate",
+        api_key,
+        payload,
+        base_url=args.image_base_url,
+        timeout=args.timeout,
+    )
+    task_id = (created.get("data") or {}).get("task_id") or created.get("task_id")
+    if not task_id:
+        raise RuntimeError(f"{model} create failed: {str(created)[:500]}")
+    print(f"[media-image] {model} task {task_id}", flush=True)
+    deadline = time.time() + args.timeout
+    last_state = "pending"
+    while time.time() < deadline:
+        status = request_json(
+            f"/v1/media/status?task_id={task_id}",
+            api_key,
+            None,
+            method="GET",
+            base_url=args.image_base_url,
+            timeout=60,
+        )
+        last_state = str(status.get("state") or "")
+        if status.get("is_final"):
+            if last_state != "success":
+                raise RuntimeError(f"{model} task {task_id} ended {last_state}: {str(status.get('error'))[:300]}")
+            result_url = str(status.get("result_url") or "")
+            if not result_url:
+                raise RuntimeError(f"{model} task {task_id} succeeded without result_url")
+            if not download_binary(result_url, destination, timeout=args.timeout):
+                raise RuntimeError(f"{model} task {task_id} result could not be downloaded")
+            return status, destination
+        time.sleep(args.image_poll_seconds)
+    raise RuntimeError(f"{model} task {task_id} did not finish within {args.timeout}s (last state {last_state})")
+
+
+def request_openai_image(
+    api_key: str,
+    args: argparse.Namespace,
+    prompt: str,
+    references: list[Path],
+    variant_id: int,
+) -> dict[str, Any]:
+    """GPT-Image-2 via the OpenAI-compatible Images route (upload or generate)."""
+    if references:
+        fields = {"model": args.model, "prompt": prompt}
+        if should_include_size(args.model, args.size):
+            fields["size"] = args.size
+        if args.quality and args.model == "gpt-image-2":
+            fields["quality"] = args.quality
+        response = None
+        last_error = None
+        for attempt in range(1, args.retries + 1):
+            try:
+                # LaoZhang/OpenAI-compatible Images Edits accepts one file as
+                # `image`, but multiple inputs must use the array field
+                # `image[]`. Repeating the scalar field now reaches the
+                # deprecated upstream `referenceImages` path.
+                image_field = "image[]" if len(references) > 1 else "image"
+                response = multipart_request(
+                    "/images/edits",
+                    api_key,
+                    fields=fields,
+                    files=[(image_field, item) for item in references],
+                    base_url=args.base_url,
+                    timeout=args.timeout,
+                )
+                break
+            except (TimeoutError, RuntimeError) as error:
+                last_error = error
+                transient = any(
+                    marker in str(error)
+                    for marker in (
+                        "UNEXPECTED_EOF",
+                        "urlopen error",
+                        "timed out",
+                        "Connection reset",
+                        "Max retries exceeded",
+                        "HTTP 502",
+                        "HTTP 503",
+                        "internal_server_error",
+                        "Bad Gateway",
+                        "Service Unavailable",
+                    )
+                )
+                if not transient or attempt == args.retries:
+                    raise
+                print(f"[retry] image edit variant {variant_id:02d} attempt {attempt}/{args.retries} transient error: {error}", flush=True)
+        if response is None:
+            raise last_error or RuntimeError("image edit failed without response")
+        return response
+    payload: dict[str, Any] = {"model": args.model, "prompt": prompt}
+    if should_include_size(args.model, args.size):
+        payload["size"] = args.size
+    if args.quality and args.model == "gpt-image-2":
+        payload["quality"] = args.quality
+    return request_json("/images/generations", api_key, payload, base_url=args.base_url, timeout=args.timeout)
 
 
 def parse_variants(value: str) -> set[int]:
@@ -201,7 +351,13 @@ def generate_image_file(
             prompt += "\nImage 1 is the generated start scene: person/room continuity only. Image 2 is the REAL canonical product; later images are secondary guidance."
         else:
             prompt += "\nImage 1 is the REAL canonical product; later images are secondary guidance."
-        expected = {"references": v2.hashes(product_dir, references), "prompt": prompt, "model": args.model, "base_url": args.base_url}
+        expected = {
+            "references": v2.hashes(product_dir, references),
+            "prompt": prompt,
+            "image_provider": args.image_provider,
+            "model": args.model,
+            "base_url": args.base_url,
+        }
         if destination.exists() and not args.force:
             previous = load_json(provenance, {})
             if any(previous.get(k) != value for k, value in expected.items()) or previous.get("sha256") != v2.digest(destination):
@@ -228,60 +384,43 @@ def generate_image_file(
             "prompt": prompt,
             "composition_policy": "No AI redraw: original product image resized onto 9:16 pad to prevent product drift.",
         }
-    if reference:
-        fields = {"model": args.model, "prompt": prompt}
-        if should_include_size(args.model, args.size):
-            fields["size"] = args.size
-        if args.quality and args.model == "gpt-image-2":
-            fields["quality"] = args.quality
-        response = None
-        last_error = None
-        for attempt in range(1, args.retries + 1):
-            try:
-                # LaoZhang/OpenAI-compatible Images Edits accepts one file as
-                # `image`, but multiple inputs must use the array field
-                # `image[]`. Repeating the scalar field now reaches the
-                # deprecated upstream `referenceImages` path.
-                image_field = "image[]" if len(references) > 1 else "image"
-                response = multipart_request(
-                    "/images/edits",
-                    api_key,
-                    fields=fields,
-                    files=[(image_field, item) for item in references],
-                    base_url=args.base_url,
-                    timeout=args.timeout,
+    provider = args.image_provider
+    provider_chain = [provider]
+    fallback = args.image_fallback
+    if fallback and fallback != "none" and fallback != provider:
+        chain_candidates = [args.image_fallback]
+        # A media-provider failure also retries the older media model before
+        # leaving the media task route entirely.
+        if is_media_image_provider(provider) and fallback == OPENAI_IMAGE_PROVIDER:
+            chain_candidates.insert(0, MEDIA_IMAGE_PROVIDER_ALT)
+        provider_chain.extend(chain_candidates)
+    response: dict[str, Any] = {}
+    saved_path: Path | None = None
+    provider_errors: list[str] = []
+    used_provider = provider
+    for attempt_provider in provider_chain:
+        try:
+            if is_media_image_provider(attempt_provider):
+                task_key = require_api_key_for_base_url(args.image_base_url)
+                status, saved_path = generate_image_via_media_task(
+                    task_key, args, prompt, references, destination, attempt_provider
                 )
-                break
-            except (TimeoutError, RuntimeError) as error:
-                last_error = error
-                transient = any(
-                    marker in str(error)
-                    for marker in (
-                        "UNEXPECTED_EOF",
-                        "urlopen error",
-                        "timed out",
-                        "Connection reset",
-                        "Max retries exceeded",
-                        "HTTP 502",
-                        "HTTP 503",
-                        "internal_server_error",
-                        "Bad Gateway",
-                        "Service Unavailable",
-                    )
-                )
-                if not transient or attempt == args.retries:
-                    raise
-                print(f"[retry] image edit variant {variant_id:02d} attempt {attempt}/{args.retries} transient error: {error}", flush=True)
-        if response is None:
-            raise last_error or RuntimeError("image edit failed without response")
-    else:
-        payload: dict[str, Any] = {"model": args.model, "prompt": prompt}
-        if should_include_size(args.model, args.size):
-            payload["size"] = args.size
-        if args.quality and args.model == "gpt-image-2":
-            payload["quality"] = args.quality
-        response = request_json("/images/generations", api_key, payload, base_url=args.base_url, timeout=args.timeout)
-    saved_path = save_response_image(response, destination)
+                response = {"provider": attempt_provider, "task": status}
+            else:
+                response = request_openai_image(api_key, args, prompt, references, variant_id)
+                saved_path = save_response_image(response, destination)
+                if not saved_path:
+                    raise RuntimeError("OpenAI Images response did not contain a saved image")
+            used_provider = attempt_provider
+            break
+        except Exception as error:
+            provider_errors.append(f"{attempt_provider}: {error}")
+            if attempt_provider is provider_chain[-1]:
+                raise RuntimeError(
+                    f"Image generation failed on every provider for variant {variant_id:02d}: "
+                    + " | ".join(provider_errors)
+                ) from error
+            print(f"[provider] {attempt_provider} failed for variant {variant_id:02d}; falling back: {error}", flush=True)
     if scene_v2:
         if not saved_path:
             raise RuntimeError("Image2 response did not contain a saved scene frame")
@@ -293,6 +432,8 @@ def generate_image_file(
         "reference_images": [str(item.relative_to(product_dir)) for item in references],
         "output_path": str(destination.relative_to(product_dir)) if saved_path else None,
         "prompt": prompt,
+        "image_provider": used_provider,
+        "provider_fallbacks": provider_errors,
         "response": summarize_image_response(response),
     }
 
@@ -340,23 +481,89 @@ def process_product(product_dir: Path, api_key: str, selected_variants: set[int]
         print(f"[skip] missing prompts file: {prompts_path}")
         return
     results: list[dict[str, Any]] = []
+    targets: list[dict[str, Any]] = []
     for variant in prompts.get("variants", []):
         variant_id = int(variant.get("variant_id", 0))
         if variant_id not in selected_variants:
             continue
-        print(f"[image] {product_dir.name} variant {variant_id:02d}")
         current_variant = dict(variant)
         current_variant["_physical_scale_lock"] = prompts.get("physical_scale_lock", "")
-        results.append(generate_one_image(api_key, product_dir, current_variant, args))
-    write_json(product_dir / "generated_images" / "image_generation_results.json", {"results": results})
+        targets.append(current_variant)
+
+    results_path = product_dir / "generated_images" / "image_generation_results.json"
+    if not targets:
+        write_json(results_path, {"results": results})
+        return
+
+    def run_one(current_variant: dict[str, Any]) -> dict[str, Any]:
+        variant_id = int(current_variant.get("variant_id", 0))
+        print(f"[image] {product_dir.name} variant {variant_id:02d}", flush=True)
+        return generate_one_image(api_key, product_dir, current_variant, args)
+
+    def persist() -> None:
+        # Write after every completion so a later crash cannot lose finished frames.
+        ordered = sorted(results, key=lambda item: int(item.get("variant_id", 0) or 0))
+        write_json(results_path, {"results": ordered})
+
+    workers = max(1, min(int(getattr(args, "workers", 1) or 1), len(targets)))
+    if workers == 1:
+        for current_variant in targets:
+            variant_id = int(current_variant.get("variant_id", 0))
+            try:
+                results.append(run_one(current_variant))
+            except Exception as exc:
+                print(f"[image] variant {variant_id:02d} failed: {exc}", flush=True)
+                results.append({"variant_id": variant_id, "status": "error",
+                                "error": f"{type(exc).__name__}: {exc}"})
+            persist()
+        return
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        future_map = {pool.submit(run_one, current_variant): current_variant for current_variant in targets}
+        for future in as_completed(future_map):
+            current_variant = future_map[future]
+            variant_id = int(current_variant.get("variant_id", 0))
+            try:
+                # One bad frame must not discard the whole batch or wedge the run.
+                results.append(future.result())
+            except Exception as exc:
+                print(f"[image] variant {variant_id:02d} failed: {exc}", flush=True)
+                results.append({"variant_id": variant_id, "status": "error",
+                                "error": f"{type(exc).__name__}: {exc}"})
+            persist()
+    persist()
+
+
+def add_image_provider_arguments(parser: argparse.ArgumentParser) -> None:
+    """Shared image-route flags so every script sends the same provider chain."""
+    parser.add_argument(
+        "--image-provider",
+        default=MEDIA_IMAGE_PROVIDER,
+        choices=list(IMAGE_PROVIDERS),
+        help="Production image route. Defaults to the upDrama media-task model tt-image-2.5.",
+    )
+    parser.add_argument(
+        "--image-fallback",
+        default=OPENAI_IMAGE_PROVIDER,
+        choices=[OPENAI_IMAGE_PROVIDER, "none"],
+        help="Route used when the primary image provider fails. Defaults to the OpenAI-compatible GPT-Image-2 route.",
+    )
+    parser.add_argument("--image-base-url", default=LK888_BASE_URL, help="Base URL for the upDrama media-task image route.")
+    parser.add_argument("--image-aspect-ratio", default="9:16", help="Aspect ratio for the media-task image route.")
+    parser.add_argument("--image-resolution", default="2K", choices=["auto", "1K", "2K", "4K"], help="Resolution tier for the media-task image route.")
+    parser.add_argument("--image-version", default="sunburst", choices=["flare", "sunburst"], help="tt-image-2.5 quality tier: flare (standard) or sunburst (enhanced).")
+    parser.add_argument("--image-quality", default="high", choices=["auto", "low", "medium", "high", "xhigh", "max"], help="Render quality tier for the media-task image route.")
+    parser.add_argument("--image-background", default="opaque", choices=["opaque", "transparent", "auto"], help="Background mode for the media-task image route.")
+    parser.add_argument("--image-poll-seconds", type=int, default=4, help="Polling interval for media-task image jobs.")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate GPT-Image-2 product-faithful pad images from UGC prompts.")
+    parser = argparse.ArgumentParser(description="Generate product-faithful pad images / keyframes from UGC prompts.")
     parser.add_argument("output_dir", type=Path)
     parser.add_argument("--variants", default="1-10")
     parser.add_argument("--prompts-file", default="ugc_prompts.json")
-    parser.add_argument("--model", default="gpt-image-2-vip")
+    add_image_provider_arguments(parser)
+    parser.add_argument("--model", default="gpt-image-2-vip", help="Model for the OpenAI-compatible fallback route.")
     parser.add_argument("--size", default="1024x1536")
     parser.add_argument("--quality", default="")
     parser.add_argument("--base-url", default="https://api.laozhang.ai/v1")
@@ -369,6 +576,7 @@ def main() -> None:
     parser.add_argument("--keyframes", action="store_true", help="Generate start/end keyframe images named variant-XX-start.png and variant-XX-end.png.")
     parser.add_argument("--frame-role", default="both", choices=["both", "start", "end"], help="With --keyframes, generate both frames or reroll only one role.")
     parser.add_argument("--max-reference-images", type=int, default=1, help="Maximum selected reference images to send to image edit requests.")
+    parser.add_argument("--workers", type=int, default=1, help="Concurrent image workers. Results are written after each frame so a slow or failing frame cannot wedge the batch.")
     args = parser.parse_args()
     selected_variants = parse_variants(args.variants)
     api_key = "local-compose" if args.compose_only else require_api_key_for_base_url(args.base_url)

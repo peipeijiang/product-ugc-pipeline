@@ -26,6 +26,12 @@ for _environment_key in list(os.environ):
 
 DEFAULT_BASE_URL = "https://api.laozhang.ai/v1"
 
+# upDrama / 链路图像与视频媒体任务端点。这一族使用 /v1/media/generate 创建任务、
+# /v1/media/status?task_id= 轮询，与 OpenAI 兼容的 /images/* 协议不同。
+LK888_BASE_URL = "https://api.lk888.ai"
+LK888_IMAGE_MODEL = "tt-image-2.5"
+LK888_IMAGE_FALLBACK_MODEL = "tt-image-2"
+
 
 def slugify(value: str, fallback: str = "product") -> str:
     normalized = re.sub(r"[\s_]+", "-", value.strip().lower())
@@ -214,10 +220,12 @@ def require_api_key() -> str:
 
 def require_api_key_for_base_url(base_url: str) -> str:
     lowered = (base_url or "").lower()
-    if "laozhang" in lowered:
+    if "lk888" in lowered or "lk666" in lowered or "updrama" in lowered:
+        env_names = ("LK888_API_KEY", "UPDRAMA_API_KEY", "PRODUCT_UGC_API_KEY")
+    elif "laozhang" in lowered:
         env_names = ("LAOZHANG_API_KEY", "PRODUCT_UGC_API_KEY")
     else:
-        env_names = ("PRODUCT_UGC_API_KEY", "LAOZHANG_API_KEY")
+        env_names = ("PRODUCT_UGC_API_KEY", "LAOZHANG_API_KEY", "LK888_API_KEY", "UPDRAMA_API_KEY")
     for env_name in env_names:
         api_key = os.environ.get(env_name, "").strip()
         if api_key:

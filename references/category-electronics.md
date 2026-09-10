@@ -44,36 +44,36 @@
 
 **Screen/LED content rule:** ONLY show screen content or LED colors that are visible in the source photo OR explicitly confirmed by user. Do NOT invent app UI, notification icons, battery percentage, time displays, or decorative graphics.
 
-## Reference Sheet 适配（单张 2×3 宫格）
+## Reference Sheet 适配（单张 3 行×2 列宫格）
 
-Electronics 用**一张** 2 行 × 3 列宫格参考图表达 6 个角度/关系。生成图仍可能在格间画错，必须与原图逐格质检。宫格指导场景首尾帧，VEO 接收的是首尾帧；没有证据的角度应复用已有视角。
+Electronics 用**一张** 3 行 × 2 列竖版宫格参考图表达 6 个角度/关系。生成图仍可能在格间画错，必须与原图逐格质检。宫格指导场景首尾帧，VEO 接收的是首尾帧；没有证据的角度应复用已有视角。
 
-规格：1024×1536（2:3 竖版），6 格等分，20px 白色分隔线，顶部横幅写产品名，底部标注尺寸锁定值。
+规格：1024×1536（2:3 竖版），6 格等分，20px 白色分隔线。产品名与尺寸锁定值保存在 `manifest.json` / `product_brief.json`，不要求图片模型在宫格内渲染文字，以免乱码污染后续视频参考。
 
 | Panel | 位置 | Angle | Purpose |
 |---|---|---|---|
 | 1 | 上左 | Front view | 主身份锁（轮廓、尺寸、材质） |
-| 2 | 上中 | 45° angle | 厚度与曲面，侧面按键/接口 |
-| 3 | 上右 | Side profile 90° | 接口数量 + 位置验证 |
-| 4 | 下左 | Top view | 按键布局，LED 指示灯位置 |
-| 5 | 下中 | In-use close-up | 手持比例锁，交互区 |
+| 2 | 上右 | 45° angle | 厚度与曲面，侧面按键/接口 |
+| 3 | 中左 | Side profile 90°（仅有来源证据时；否则重复已知 45°） | 接口数量 + 位置验证，禁止补画未知侧后结构 |
+| 4 | 中右 | Top view | 按键布局，LED 指示灯位置 |
+| 5 | 下左 | In-use close-up | 手持比例锁，交互区 |
 | 6 | 下右 | Scale reference | 绝对尺寸锚（AA 电池 / 信用卡 / 手机） |
 
 **Prompt 骨架：**
 
 ```
-Create a 2×3 product reference sheet (1024×1536, portrait) of {product}:
+Create a 3-row × 2-column product reference sheet (1024×1536, portrait) of {product}:
 Panel 1 (top-left): front view, primary functional surface
-Panel 2 (top-center): 45° angle, thickness and contour
-Panel 3 (top-right): side profile 90°, all ports/buttons on edge
-Panel 4 (bottom-left): top view, button layout + LED positions
-Panel 5 (bottom-center): in-use close-up, correct hand grip
+Panel 2 (top-right): 45° angle, thickness and contour
+Panel 3 (middle-left): side profile only when source-backed; otherwise repeat a supported 45° view
+Panel 4 (middle-right): top view, button layout + LED positions
+Panel 5 (bottom-left): in-use close-up, correct hand grip
 Panel 6 (bottom-right): beside {AA battery / credit card} for scale
 
 Dimensions: {source-backed measurements, otherwise unknown}; match verified relative scale
 Ports/buttons: {exact count and positions}
 Style: clean product grid, white background, studio light, 6 equal panels,
-20px white borders, header = product name, footer = dimension lock
+20px white borders, no rendered header/footer/caption text; keep product name and dimensions in metadata
 Negative: panel-to-panel distortion, different products across panels,
 text inside panels, phantom ports/buttons
 ```

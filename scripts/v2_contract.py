@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SPECS = {
     "apparel": ("2 rows x 2 columns", "1024x1024", ["front silhouette", "supported angle", "fabric and seams", "verified worn fit"]),
     "jewelry": ("1 row x 3 columns", "1536x1024", ["front placement and scale", "45 degree contact and drape", "material and closure detail"]),
-    "electronics": ("2 rows x 3 columns", "1024x1536", ["front silhouette", "45 degree thickness", "supported side and ports", "supported top and controls", "verified use and contact", "verified relative scale"]),
+    "electronics": ("3 rows x 2 columns", "1024x1536", ["front silhouette", "45 degree thickness", "supported side and ports", "supported top and controls", "verified use and contact", "verified relative scale"]),
     "home-tools": ("3 panels top, 2 panels bottom", "1024x1024", ["full silhouette", "supported side", "grip and functional part", "verified use and contact", "verified relative scale"]),
     "pet-tools": ("3 panels top, 2 panels bottom", "1024x1024", ["full silhouette", "supported side", "grip and functional part", "verified pet interaction", "verified pet size relation"]),
 }

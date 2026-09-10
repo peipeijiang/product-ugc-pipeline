@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate ONE category-specific sheet through the existing Image2 edit route."""
+"""Generate ONE category-specific identity sheet through the configured image route."""
 from __future__ import annotations
 
 import argparse
@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 from common import require_api_key_for_base_url, write_json
-from generate_images import generate_image_file
+from generate_images import add_image_provider_arguments, generate_image_file, is_media_image_provider
 from v2_contract import RULES, SPECS, action_ledger, context, digest, input_hashes, load_identity, products
 
 
@@ -42,7 +42,7 @@ def generate(folder: Path, api_key: str, args: argparse.Namespace) -> dict:
         for key in (
             "product_name", "confirmed_identity", "confirmed_selling_points",
             "canonical_reference_images", "misuse_risks_to_avoid",
-            "hallucination_defense", "identity_panel_overrides",
+            "hallucination_defense", "identity_panel_overrides", "dimensions_mm",
         )
     }
     panel_overrides = ctx["brief"].get("identity_panel_overrides") or {}
@@ -50,7 +50,8 @@ def generate(folder: Path, api_key: str, args: argparse.Namespace) -> dict:
     prompt = (
         f"Create exactly ONE product reference sheet, {spec['layout']}, canvas {spec['size']}. "
         "Read panels left-to-right, top-to-bottom. Same SKU, color, shape and part counts in every panel. "
-        "Neutral background, thin white separators, no decorative text. Reference 1 is the canonical real product. "
+        "Neutral background and thin white separators. No visible title, footer, caption or decorative text; product name and source-backed dimensions belong in the manifest, not inside the generated reference image. "
+        "Reference 1 is the canonical real product. "
         "Other supplied photos are evidence for the same product only. Do not borrow source scenery. "
         "For unsupported views repeat a supported view; never reconstruct hidden hardware from imagination. "
         "EVERY panel must show the COMPLETE product with all of its defining parts visible or plausibly "
@@ -94,6 +95,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("output_dir", type=Path)
     p.add_argument("--products", default="")
     p.add_argument("--category", choices=list(SPECS), default="")
+    add_image_provider_arguments(p)
     p.add_argument("--model", default="gpt-image-2-vip")
     p.add_argument("--base-url", default="https://api.laozhang.ai/v1")
     p.add_argument("--timeout", type=int, default=420)
@@ -105,7 +107,8 @@ def parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = parser().parse_args()
-    key = require_api_key_for_base_url(args.base_url)
+    primary_url = args.image_base_url if is_media_image_provider(args.image_provider) else args.base_url
+    key = require_api_key_for_base_url(primary_url)
     for folder in products(args.output_dir, args.products):
         print(f"[identity] {folder.name}: {generate(folder, key, args)['output_path']}", flush=True)
 

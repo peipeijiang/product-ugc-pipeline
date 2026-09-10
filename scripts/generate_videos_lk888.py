@@ -529,6 +529,7 @@ def compact_omni_prompt(
         "Preserve the same adult creator, room, wardrobe, lighting, camera geometry, props, and the same single physical product throughout. "
         "Show exactly ONE product in the entire video; never duplicate it in hands, on furniture, in mirrors, reflections, or screens. "
         f"PRODUCT TRUTH AND IDENTITY LOCK: {clipped(identity, 700)}. Match image 2 for silhouette, parts, proportions and controls; when documented SKU colors differ, use the single colorway shown in image 1 consistently. "
+        f"MANDATORY SKU FOR THIS VIDEO: {clipped(variant.get('sku_colourway'), 240)}. "
         f"FORBIDDEN DRIFT: {clipped(misuse, 600)}. Never morph, resize, recolor, add branding, invent controls or unsupported functions. "
         f"CONCEPT: {clipped(variant.get('title'), 180)}. HOOK: {clipped(variant.get('hook'), 320)}. "
         f"PRIMARY FUNCTION: {clipped(variant.get('primary_function_focus'), 320)}. "
@@ -776,7 +777,17 @@ def process_product(product_dir: Path, api_key: str, selected_variants: set[int]
         future_map = {pool.submit(run_variant, variant): variant for variant in selected}
         for future in concurrent.futures.as_completed(future_map):
             current_variant = future_map[future]
-            result = future.result()
+            try:
+                result = future.result()
+            except Exception as exc:
+                # One bad variant must not discard the whole batch
+                result = {
+                    "variant_id": current_variant["variant_id"],
+                    "status": "failed",
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "output_path": str((output_dir / f"variant-{current_variant['variant_id']:02d}.mp4").relative_to(product_dir)),
+                }
+                print(f"[video] variant {current_variant['variant_id']:02d} failed: {exc}", flush=True)
             results = [item for item in results if int(item.get("variant_id", 0)) != current_variant["variant_id"]]
             results.append(result)
             results.sort(key=lambda item: int(item.get("variant_id", 0)))

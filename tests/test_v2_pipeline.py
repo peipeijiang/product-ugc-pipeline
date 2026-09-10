@@ -56,6 +56,10 @@ class PipelineTests(unittest.TestCase):
         args.separate_sheet = False
         args.keyframes = True
         args.allow_compose_keyframes = False
+        # These tests patch the OpenAI-compatible Images route, so pin that
+        # provider instead of the production upDrama media-task default.
+        args.image_provider = "laozhang-image2"
+        args.image_fallback = "none"
         return args
 
     def approve(self, folder, stage, paths):
