@@ -150,8 +150,12 @@ def guidance(folder: Path) -> str:
     return RULES + "\nVerified action ledger: " + json.dumps(usage["actions"], ensure_ascii=False) + "\nCategory checks:\n" + category_spec(record["category"])["checks"]
 
 
-def require_qc(folder: Path, paths: list[Path], stage: str) -> None:
+def require_qc(folder: Path, paths: list[Path], stage: str, override: bool = False) -> None:
     if not active(folder):
+        return
+    if override:
+        # Explicit user-authorised bypass. The caller records the override in the
+        # video provenance so an unreviewed reference is auditable after the fact.
         return
     record = load_identity(folder)
     report = load_json(folder / "qc" / f"{stage}.json", {})

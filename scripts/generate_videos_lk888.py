@@ -258,7 +258,8 @@ def upload_references(
     return results
 
 
-def append_native_audio_instruction(prompt: str, voice_lines: Any) -> str:
+def append_native_audio_instruction(prompt: str, voice_lines: Any, locale: str = "en-US") -> str:
+    voice, language = voice_profile(locale)
     line = ""
     if isinstance(voice_lines, list) and voice_lines:
         first = voice_lines[0]
@@ -269,7 +270,7 @@ def append_native_audio_instruction(prompt: str, voice_lines: Any) -> str:
     elif isinstance(voice_lines, str):
         line = voice_lines.strip()
     audio_block = (
-        "\n\nNATIVE AUDIO: Generate natural native audio inside the video: a bright, young American female ecommerce creator voice, energetic but not robotic, with subtle upbeat social-ad background music. "
+        f"\n\nNATIVE AUDIO: Generate natural native audio inside the video: a bright {voice} ecommerce creator voice, energetic but not robotic, with subtle upbeat social-ad background music. Every spoken word must be in {language}; never answer in English. "
         "No subtitles, no captions, no readable on-screen text, no labels, no social media icons, no platform logos, no camera/reel icons, no reaction icons, no app UI, no watermarks. "
     )
     if line:
@@ -337,27 +338,44 @@ def overlay_callouts(variant: dict[str, Any], enabled: bool) -> list[str]:
     return cleaned
 
 
-def append_safe_audio_test_instruction(prompt: str, voice_lines: Any) -> str:
+VOICE_LOCALE_PROFILES: dict[str, tuple[str, str]] = {
+    "en-US": ("young American woman", "English"),
+    "es-MX": ("young Mexican woman speaking natural Mexican Spanish, with the clear open vowels and rhythm of Mexico rather than Spain",
+              "Mexican Spanish as spoken in Mexico"),
+    "es-ES": ("young Spanish woman speaking Castilian Spanish from Spain", "Castilian Spanish from Spain"),
+    "es-419": ("young Latin American woman speaking neutral Latin American Spanish", "neutral Latin American Spanish"),
+    "pt-BR": ("young Brazilian woman speaking Brazilian Portuguese", "Brazilian Portuguese"),
+}
+
+
+def voice_profile(locale: str | None) -> tuple[str, str]:
+    return VOICE_LOCALE_PROFILES.get(str(locale or "en-US"), VOICE_LOCALE_PROFILES["en-US"])
+
+
+def append_safe_audio_test_instruction(prompt: str, voice_lines: Any, locale: str = "en-US") -> str:
+    voice, language = voice_profile(locale)
     safe_line = first_voice_line(voice_lines, "Place the trap outside after adding bait.")
     audio_block = (
-        "\n\nNATIVE AUDIO TEST: Include one short natural English sentence in a young adult female voice. "
+        f"\n\nNATIVE AUDIO TEST: Include one short natural sentence in {language}. The speaker is a {voice}. "
         "No music, no singing, no hype, no slang, no labels, no subtitles, no captions, no readable on-screen text, no social media icons, no platform logos, no camera/reel icons, no reaction icons, no app UI, no watermarks. "
         f"Speak exactly this one sentence and nothing else: \"{safe_line}\""
     )
     return prompt + audio_block
 
 
-def append_safe_native_audio_instruction(prompt: str, voice_lines: Any) -> str:
+def append_safe_native_audio_instruction(prompt: str, voice_lines: Any, locale: str = "en-US") -> str:
+    voice, language = voice_profile(locale)
     safe_line = first_voice_line(voice_lines, "Here is how the product works.")
     audio_block = (
-        "\n\nNATIVE AUDIO: Include one short natural English voice line in a young adult female voice. "
+        f"\n\nNATIVE AUDIO: Include one short natural voice line in {language}. The speaker is a {voice}. Every spoken word must be in {language}; never answer in English. "
         "No music, no singing, no hype words, no slang, no labels, no subtitles, no captions, no readable on-screen text, no social media icons, no platform logos, no camera/reel icons, no reaction icons, no app UI, no watermarks. "
         f"Speak exactly this one sentence and nothing else: \"{safe_line}\""
     )
     return prompt + audio_block
 
 
-def append_mid_native_audio_instruction(prompt: str, voice_lines: Any, callouts: list[str]) -> str:
+def append_mid_native_audio_instruction(prompt: str, voice_lines: Any, callouts: list[str], locale: str = "en-US") -> str:
+    voice, language = voice_profile(locale)
     safe_line = compact_voiceover_line(voice_lines, "Watch this tiny upgrade make the setup feel easier.", max_words=18)
     overlay_block = ""
     if callouts:
@@ -376,7 +394,8 @@ def append_mid_native_audio_instruction(prompt: str, voice_lines: Any, callouts:
             else ""
         )
     audio_block = (
-        "\n\nNATIVE AUDIO: Generate natural native audio inside the video: a bright young American female lifestyle-commerce creator voice, stylish, warm, emotionally engaged, friendly, clear, not robotic, not corporate. "
+        f"\n\nNATIVE AUDIO: Generate natural native audio inside the video: a bright {voice} lifestyle-commerce creator voice, stylish, warm, emotionally engaged, friendly, clear, not robotic, not corporate. "
+        f"Every spoken word must be in {language}; never answer in English. "
         f"Spoken voiceover, complete within 8 seconds: \"{safe_line}\" "
         "Add subtle upbeat modern lifestyle background music under the voice at low volume, no lyrics, plus light real handling sounds. "
         "No subtitles, no captions, no full-sentence labels, no emoji text, no social media icons, no platform logos, no camera/reel icons, no reaction icons, no app UI, and no watermarks. The only allowed readable text is the explicitly allowed tiny feature-tag overlay words."
@@ -522,6 +541,7 @@ def compact_omni_prompt(
     else:
         voice = str(voice_items)
     brief = load_json(product_dir / "product_brief.json", {}) if product_dir else {}
+    voice_desc, voice_language = voice_profile(variant.get("voice_locale"))
     identity = variant.get("product_fidelity_block") or brief.get("confirmed_identity") or []
     misuse = variant.get("negative_prompt") or brief.get("misuse_risks_to_avoid") or []
     return (
@@ -537,7 +557,7 @@ def compact_omni_prompt(
         f"SHOT PLAN: follow these chronological beats across all {duration} seconds: {clipped(beats or storyboard, 1250)}. "
         f"SUPPORTED ACTION: {clipped(variant.get('usage_logic'), 650)}. "
         f"PAYOFF: {clipped(variant.get('proof_moment'), 450)}. "
-        f"NATIVE AUDIO: young American female creator voice, natural and warm. Speak exactly: {clipped(voice, 400)}. Do not add speech. Add subtle room/product sounds and low music without singing. "
+        f"NATIVE AUDIO: {voice_desc} creator voice, natural and warm. Speak exactly: {clipped(voice, 400)}. Every spoken word must be in {voice_language}; never answer in English. Do not add speech. Add subtle room/product sounds and low music without singing. "
         "No subtitles, captions, labels, overlays, logos, watermarks, app UI, touchscreen, wireless charging, projector, camera lens, extra accessories, extra products, or unsupported claims. Use natural handheld motion."
         + (" Finish exactly on image 2." if reference_mode == "first-last" else "")
     )
@@ -626,7 +646,8 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
         if not scene_refs:
             raise RuntimeError("v2 video requires generated scene frames")
         validate_scene_chain(product_dir, scene_refs)
-        require_qc(product_dir, scene_refs, "keyframes")
+        require_qc(product_dir, scene_refs, "keyframes",
+                   override=bool(getattr(args, "allow_unverified_references", False)))
     reference_limit = 7 if args.model == "omni_flash-10s" else 3 if args.model == "omni-flash" else 2
     base_prompt = variant.get("video_prompt") or compact_omni_prompt(
         variant, str(args.duration), args.reference_mode, product_dir
@@ -661,19 +682,20 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
     )
     callouts = overlay_callouts(variant, args.light_overlay)
     voiceover = variant.get("voiceover_script_10s") or variant.get("voiceover_script_8s")
+    voice_locale = str(variant.get("voice_locale") or getattr(args, "voice_locale", "en-US"))
     if args.audio_style == "none" or prompt_has_native_audio(base_prompt):
         prompt = base_prompt
     else:
         prompt = (
-            append_safe_audio_test_instruction(base_prompt, voiceover) if args.safe_audio_test else (
+            append_safe_audio_test_instruction(base_prompt, voiceover, voice_locale) if args.safe_audio_test else (
                 append_asmr_audio_instruction(base_prompt)
                 if args.audio_style == "asmr"
                 else
-                append_mid_native_audio_instruction(base_prompt, voiceover, callouts)
+                append_mid_native_audio_instruction(base_prompt, voiceover, callouts, voice_locale)
                 if args.audio_style == "mid"
-                else append_native_audio_instruction(base_prompt, voiceover)
+                else append_native_audio_instruction(base_prompt, voiceover, voice_locale)
                 if args.audio_style == "legacy"
-                else append_safe_native_audio_instruction(base_prompt, voiceover)
+                else append_safe_native_audio_instruction(base_prompt, voiceover, voice_locale)
             )
         )
     params = build_model_params(args, [item["url"] for item in uploads])
@@ -729,7 +751,8 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
     if v2_active:
         recorded_params = {key: value for key, value in params.items() if key != "images"}
         record_video(product_dir, output_path, expected, prompt,
-                     {"task_id": task_id, "base_url": args.base_url, "params": recorded_params})
+                     {"task_id": task_id, "base_url": args.base_url, "params": recorded_params,
+                      "reference_qc_override": bool(getattr(args, "allow_unverified_references", False))})
     return {
         "variant_id": variant_id,
         "task_id": task_id,
@@ -839,6 +862,10 @@ def main() -> None:
     parser.add_argument("--continue-on-error", action="store_true", help="Record failed variants and continue processing the batch.")
     parser.add_argument("--workers", type=int, default=1, help="Submit and poll independent variants concurrently.")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--allow-unverified-references", action="store_true",
+                        help="Submit even when keyframe QC has not passed. Only with explicit user sign-off; the override is recorded in each video's provenance.")
+    parser.add_argument("--voice-locale", default="en-US",
+                        help="Spoken language and accent for the native audio, e.g. en-US, es-MX, es-ES, es-419, pt-BR. A per-variant 'voice_locale' field overrides this.")
     args = parser.parse_args()
     if args.duration is None:
         args.duration = "10" if args.model in {"omni-flash", "omni_flash-10s"} else "8"
