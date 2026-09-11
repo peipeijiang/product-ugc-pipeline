@@ -86,15 +86,15 @@ def unique_paths(paths: list[Path]) -> list[Path]:
 
 
 def omni_storyboard_identity_paths(product_dir: Path, variant: dict[str, Any]) -> list[Path]:
-    """Return the v2 Omni references: storyboard, identity grid, then extra refs.
+    """Return v2 Omni references: storyboard, identity grid, optional operation grid.
 
     The first two are fixed: the chronological storyboard sets shot order and the
     identity grid sets product geometry. Any remaining explicitly declared
-    variant reference (for example an Image2 mechanism sheet that teaches an
-    action the static panels cannot show) follows after them, so the prompt's
-    "image 3" and later slots refer to real uploaded images.
+    state-change operation grid follows automatically as image 3. Otherwise one
+    explicitly declared extra reference may use that slot. Omni accepts at most
+    three images, so ambiguous overflow is rejected before a paid submission.
     """
-    from v2_contract import load_identity, local_file
+    from v2_contract import load_identity, load_usage, local_file, require_qc
 
     identity = load_identity(product_dir)
     identity_sheet = local_file(product_dir, identity["output_path"])
@@ -117,12 +117,28 @@ def omni_storyboard_identity_paths(product_dir: Path, variant: dict[str, Any]) -
         )
     if not storyboard.with_suffix(".provenance.json").is_file():
         raise RuntimeError(f"Storyboard is missing provenance: {storyboard}")
+    usage = load_usage(product_dir)
+    usage_sheet = local_file(product_dir, usage["output_path"])
+    automatic_operation = None
+    if usage_sheet.resolve() != identity_sheet.resolve():
+        require_qc(product_dir, [usage_sheet], "usage")
+        automatic_operation = usage_sheet
     extra_references = [
         path
         for path in explicit_references
-        if path.resolve() not in {storyboard.resolve(), identity_sheet.resolve()}
+        if path.resolve() not in {
+            storyboard.resolve(), identity_sheet.resolve(),
+            automatic_operation.resolve() if automatic_operation else identity_sheet.resolve(),
+        }
     ]
-    return [storyboard, identity_sheet, *extra_references]
+    references = [storyboard, identity_sheet]
+    if automatic_operation:
+        references.append(automatic_operation)
+    elif extra_references:
+        references.append(extra_references.pop(0))
+    if extra_references:
+        raise RuntimeError("Omni supports at most three images; remove extra variant references")
+    return references
 
 
 def generated_start_end_paths(product_dir: Path, variant_id: int) -> tuple[Path, Path]:
@@ -618,10 +634,26 @@ def compact_omni_prompt(
                 if visual:
                     beat = (f"{timing}: " if timing else "") + visual
                     beats.append(beat + (f"; spoken: {spoken}" if spoken else ""))
+    operation_sheet = False
+    if product_dir and reference_mode == "omni-reference":
+        try:
+            from v2_contract import load_identity, load_usage, local_file
+            identity_record = load_identity(product_dir)
+            usage_record = load_usage(product_dir)
+            operation_sheet = (
+                local_file(product_dir, usage_record["output_path"]).resolve()
+                != local_file(product_dir, identity_record["output_path"]).resolve()
+            )
+        except RuntimeError:
+            operation_sheet = False
     mode_instruction = (
         "Image 1 is the opening frame and image 2 is the final frame; interpolate a continuous action between them."
         if reference_mode == "first-last"
-        else "Use exactly two all-purpose references: image 1 is the chronological storyboard and image 2 is the product identity grid; they are not a forced first/final-frame pair."
+        else (
+            "Use three all-purpose references: image 1 is the chronological storyboard, image 2 is the product identity grid, and image 3 is the evidence-safe state-change sheet. They are not a forced first/final-frame pair. Never invent a midpoint omitted from image 3."
+            if operation_sheet else
+            "Use two all-purpose references: image 1 is the chronological storyboard and image 2 is the product identity grid; they are not a forced first/final-frame pair."
+        )
     )
     voice_items = variant.get("voiceover_script_10s") or variant.get("voiceover_script_8s") or []
     if isinstance(voice_items, list):

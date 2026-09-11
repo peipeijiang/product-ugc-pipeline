@@ -86,6 +86,9 @@ Input B — image_analysis.json:
 
 Return JSON with:
 - product_name
+- product_type: literal product class visible in the source images (for example sleeping bag, folding chair, trekking pole); never replace it with the nearest supported category
+- recommended_v2_category: exactly one of apparel, jewelry, electronics, home-tools, pet-tools, furniture, or needs_new_category. Use needs_new_category when the category checklist would describe a different product family.
+- category_reason: visible/source-backed reason for that category decision
 - confidence: high/medium/low and why
 - confirmed_identity: exact visual traits that must be preserved
 - confirmed_selling_points: factual selling points from the page
@@ -98,6 +101,12 @@ Return JSON with:
 - misuse_risks_to_avoid: likely wrong usages, impossible demos, or model hallucinations to avoid
 - hallucination_defense: structured defense against VEO/image-model hallucinations. Include: phantom_parts (list what product does NOT have), shape_preservation (exact silhouette rules), material_texture_lock (surface/color constraints), action_bounds (what product can and cannot do), context_contamination (scene elements training data might wrongly inject), scale_anchor (realistic size reference)
 - video_prompt_rules: strict rules a video prompt must follow
+- state_change_contract: always return this object. Set required=false with a product-specific not_applicable_reason when the product has no folding, unfolding, assembly, installation, attachment, extension, opening/closing, zipping, or other configuration change. When required=true include:
+  - mechanism_type
+  - part_invariants: exact visible parts/counts that remain the same across states, each with source evidence
+  - connections: part-to-part connection, joint, insertion, zipper, latch or support relationships that are source-backed; empty only when the transformation has no connection interface
+  - states: at least two ordered objects with state_id, visible_configuration, and evidence naming exact local paths/page fields
+  - transitions: objects with transition_id, from_state, to_state, evidence_level, render_policy, evidence, and forbidden_intermediates. evidence_level must be direct_motion, instruction_diagram, or state_pair_only. render_policy must be continuous_allowed, hard_cut_only, or omit_transition. Static photos of only the endpoints are state_pair_only and MUST use hard_cut_only or omit_transition; never infer or animate an unseen midpoint. For direct_motion/instruction_diagram also include actor_action, contact_points, moving_parts, fixed_parts, and completion_cue.
 
 The brief is used to write prompts. If you are unsure about how the product works, say so and create a conservative demo rather than inventing.
 """.strip()
@@ -131,6 +140,7 @@ def render_materials_with_brief(product_dir: Path, manifest: dict[str, Any], ima
         ("Proof Moments", "proof_moments"),
         ("Misuse Risks To Avoid", "misuse_risks_to_avoid"),
         ("Video Prompt Rules", "video_prompt_rules"),
+        ("State Change Contract", "state_change_contract"),
     ]
     for title, key in sections:
         lines.extend(["", f"### {title}", ""])

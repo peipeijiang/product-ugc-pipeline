@@ -2,15 +2,17 @@
 """
 Product Category Classifier for UGC Pipeline v2
 
-Automatically classifies products into one of 5 categories:
+Automatically classifies products into one of 6 categories, or stops as unclassified:
 - apparel (服装): tops, pants, dresses, etc.
 - jewelry (首饰): rings, necklaces, earrings, etc.
 - electronics (电子产品/玩具): earbuds, speakers, toy blocks, etc.
 - home-tools (厨房/家居工具): knife, peeler, spatula, etc.
 - pet-tools (宠物工具): brush, leash, collar, etc.
+- furniture (家具): chairs, loungers, cots, stools, tables
 """
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -28,6 +30,15 @@ def save_json(path: Path, data: dict) -> None:
 def classify_by_keywords(title: str) -> tuple[str | None, float]:
     """Classify by keyword matching"""
     title_lower = title.lower()
+
+    def matches(keywords: list[str]) -> bool:
+        for keyword in keywords:
+            if keyword.isascii():
+                if re.search(rf"(?<!\w){re.escape(keyword)}(?!\w)", title_lower):
+                    return True
+            elif keyword in title_lower:
+                return True
+        return False
     
     # 服装关键词
     apparel_keywords = [
@@ -67,23 +78,31 @@ def classify_by_keywords(title: str) -> tuple[str | None, float]:
         "pet bowl", "pet toy", "grooming", "de-shedding", "cat", "dog",
         "宠物梳", "宠物指甲剪", "牵引绳", "宠物项圈", "宠物碗", "宠物玩具", "猫", "狗", "猫咪", "脱毛"
     ]
+
+    furniture_keywords = [
+        "folding chair", "foldable chair", "reclining chair", "lounge chair", "camp chair", "moon chair",
+        "camping cot", "folding cot", "camp cot", "stool", "folding table", "recliner", "折叠椅", "折りたたみチェア",
+        "リクライニングチェア", "躺椅", "月亮椅", "行军床", "折叠桌",
+    ]
     
     # 检查匹配
-    if any(kw in title_lower for kw in apparel_keywords):
+    if matches(apparel_keywords):
         return "apparel", 0.95
-    elif any(kw in title_lower for kw in jewelry_keywords):
+    elif matches(jewelry_keywords):
         return "jewelry", 0.95
-    elif any(kw in title_lower for kw in electronics_keywords + toy_keywords):
+    elif matches(furniture_keywords):
+        return "furniture", 0.95
+    elif matches(electronics_keywords + toy_keywords):
         return "electronics", 0.95
-    elif any(kw in title_lower for kw in home_tools_keywords):
+    elif matches(home_tools_keywords):
         return "home-tools", 0.95
-    elif any(kw in title_lower for kw in pet_tools_keywords):
+    elif matches(pet_tools_keywords):
         return "pet-tools", 0.95
     
     return None, 0.0
 
 
-def classify_by_image_features(product_folder: Path) -> tuple[str, float]:
+def classify_by_image_features(product_folder: Path) -> tuple[str | None, float]:
     """
     Fallback: classify by image analysis features
     
@@ -92,25 +111,23 @@ def classify_by_image_features(product_folder: Path) -> tuple[str, float]:
     image_analysis_path = product_folder / "image_analysis.json"
     
     if not image_analysis_path.exists():
-        # Default to electronics if no image analysis available
-        return "electronics", 0.50
+        return None, 0.0
     
     analysis = load_json(image_analysis_path)
     
     # 简单启发式：根据材质和形状猜测
     materials = str(analysis.get("materials", "")).lower()
     
-    if "fabric" in materials or "cotton" in materials or "polyester" in materials:
-        return "apparel", 0.70
-    elif "metal" in materials and ("ring" in materials or "chain" in materials):
+    # Generic fabric and generic plastic are not category evidence: sleeping bags,
+    # tents, chairs and cases would otherwise become apparel/electronics.
+    if "metal" in materials and ("ring" in materials or "chain" in materials):
         return "jewelry", 0.70
     elif "stainless steel" in materials and ("blade" in materials or "handle" in materials):
         return "home-tools", 0.70
-    elif "plastic" in materials and ("button" in materials or "led" in materials):
-        return "electronics", 0.70
     
-    # 默认分类
-    return "electronics", 0.60
+    # Unknown is safer than routing a sleeping bag, tent, pole or other unsupported
+    # product through an electronics checklist and paying for the wrong identity grid.
+    return None, 0.0
 
 
 def classify_product(product_folder: Path, force: bool = False) -> dict:
@@ -143,15 +160,19 @@ def classify_product(product_folder: Path, force: bool = False) -> dict:
     
     # 保存结果
     result = {
-        "category": category,
+        "category": category or "unclassified",
         "detected_from": detected_from,
         "confidence": confidence,
-        "product_name": title
+        "product_name": title,
+        "requires_manual_category": category is None,
     }
     
     save_json(category_file, result)
     
-    print(f"  分类为: {category} (confidence: {confidence:.2f}, from: {detected_from})")
+    if category is None:
+        print("  未匹配现有类目：请显式选择或新增真实类目，身份图生成会保持阻断")
+    else:
+        print(f"  分类为: {category} (confidence: {confidence:.2f}, from: {detected_from})")
     
     return result
 
@@ -200,4 +221,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

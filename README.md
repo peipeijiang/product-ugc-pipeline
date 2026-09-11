@@ -1,6 +1,6 @@
 # Product UGC Pipeline v2
 
-从商品资料到带货视频：先用真实产品图生成**一张多宫格参考图**，再生成正常单画面的场景首尾帧，最后交给原有 VEO 3.1 / Omni Flash 视频接口。
+从商品资料到带货视频：先用真实产品图生成身份宫格；若商品需要折叠、组装、安装或伸缩，再自动生成一张有证据约束的状态转换宫格。随后生成正常单画面的场景首尾帧，最后交给原有 VEO 3.1 / Omni Flash 视频接口。
 
 三个 v2 核心脚本现已实现并接入现有流程。软件回归测试使用模拟 API；尚未完成五类商品的真实付费视频质量评测，不能据此宣称降低多少翻车率。
 
@@ -10,7 +10,7 @@
 |---|---|---|
 | 产品认知 | 分析原图、核对外观和操作依据 | image_analysis.json、product_brief.json；沿用原视觉/文本模型 |
 | 身份参考 | 将同一商品多个角度和使用关系放入一张图 | identity_lock/reference_sheet.png；GPT-Image-2 |
-| 使用账本 | 记录有依据的动作顺序，默认复用身份宫格 | usage_poses/manifest.json；默认无额外模型调用 |
+| 状态与使用 | 记录有依据的动作；变形商品另生成端点/转换宫格 | usage_poses/manifest.json；静态商品默认无额外调用 |
 | 宫格质检 | 对比真实原图检查身份、比例、接触位置 | qc/identity.json；可配置视觉模型，默认 gpt-5.2 |
 | 场景首尾帧 | 原图和宫格指导单画面生图；尾帧另参考首帧 | generated_images/variant-XX-start/end.png；GPT-Image-2 |
 | 帧质检与视频 | 检查当前参考链和首尾帧，通过后提交视频 | 原有 VEO 3.1 / Omni Flash |
@@ -32,7 +32,7 @@ product category that does not exist yet”自行补充类目，不要硬塞进�
 | 宠物工具 pet-tools | 1 张，上 3 下 2 | 接触位置、毛发/皮肤关系、宠物体型、姿态 |
 | 家具 furniture | 1 张，上 3 下 2 | 结构、铰链与调节机构、重力与承重路径、人与家具的接触位置和比例 |
 
-默认每个商品只新增 1 张宫格，三个广告共用；每个视频仍需要自己的场景首尾帧。仅显式传入 `--separate-sheet` 时再新增 1 张使用姿态宫格。首饰使用 1536×1024 画布内三格布局，避免旧文档中未经适配的 1536×512 请求尺寸。
+静态商品默认只新增 1 张身份宫格，三个广告共用。需要折叠、组装、安装、伸缩或开合的商品必须在 `product_brief.json` 中提供 `state_change_contract`，流程会自动再生成 1 张状态转换宫格；只有端点图证据时只画端点并强制硬切，不能臆造中间动作。静态商品仅在显式传入 `--separate-sheet` 时新增使用姿态宫格。每个视频仍需要自己的场景首尾帧。
 
 ## 安装与运行
 
@@ -56,6 +56,7 @@ python scripts/build_product_brief.py output
 python scripts/generate_product_identity_lock.py output
 python scripts/generate_usage_pose_sheet.py output
 python scripts/qc_dual_consistency.py output --stage identity
+python scripts/qc_dual_consistency.py output --stage usage  # 仅当生成了独立使用/状态宫格
 
 python scripts/generate_ugc_prompts.py output --count 3
 python scripts/generate_images.py output --variants 1-3 --keyframes
@@ -78,7 +79,7 @@ Omni Flash 是显式选择，沿用原接口：
 python scripts/generate_videos_lk888.py output --variants 1-3 --model omni-flash --base-url https://api.lk888.ai --status-endpoint /v1/media/status --reference-mode first-last
 ```
 
-`omni-flash` 在本技能中默认生成 10 秒视频，支持 4/6/8/10 秒。图片输入有两种明确模式：`--reference-mode first-last` 使用已生成并通过 QC 的首帧和尾帧；v2 的 `--reference-mode omni-reference` 固定使用两张全能参考图——Image2 生成并通过关键帧 QC 的时序故事板 + 当前通过身份 QC 的产品锁定宫格。真实主商品图用于生成和校验锁定宫格，不再作为第三张视频参考图。提示词会自动压缩到 Updrama 的 4,000 字符上限内。只有需要非默认时长时才显式传 `--duration`。
+`omni-flash` 在本技能中默认生成 10 秒视频，支持 4/6/8/10 秒。`--reference-mode first-last` 使用已生成并通过 QC 的首帧和尾帧；`--reference-mode omni-reference` 至少使用 Image2 时序故事板 + 当前产品身份宫格。若该商品生成了状态转换宫格，适配器会在其通过 usage QC 后自动作为第 3 张参考图。真实主图仍是上游商品真值。提示词会自动压缩到 Updrama 的 4,000 字符上限内。
 
 新脚本均可传入批次目录或单个商品目录；`--products 01,03` 选择批次内商品。新身份脚本支持 `--category electronics` 显式指定类目。旧分类器是关键词/启发式规则，confidence 不是统计准确率。
 
@@ -96,7 +97,7 @@ python scripts/generate_videos_lk888.py output --variants 1-3 --model omni-flash
 python3 -m unittest discover -s tests -p 'test_v2*.py' -v
 ```
 
-[实现与字段说明](README_V2.md) · [五类产品测试用例](tests/five-products/README.md) · [Skill 规范](SKILL.md)
+[实现与字段说明](README_V2.md) · [状态转换商品规范](references/state-change-products.md) · [五类产品测试用例](tests/five-products/README.md) · [Skill 规范](SKILL.md)
 
 ## 来源与许可
 

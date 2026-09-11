@@ -56,13 +56,15 @@ python scripts/qc_dual_consistency.py output --stage usage
 
 ## 接入现有流程
 
-生成首帧时传入：真实主商品图 + 已质检宫格。生成尾帧时传入：场景首帧 + 真实主商品图 + 已质检宫格。若启用独立姿态宫格，再加入该图。v2 的必要引用不受旧 `--max-reference-images 1` 默认值裁掉。
+生成首帧时，静态商品传入真实主商品图 + 已质检身份宫格；状态转换商品再加入已质检状态宫格。生成尾帧时最多保留三个输入：场景首帧 + 真实主商品图 + 状态宫格；状态宫格由当前身份宫格生成并单独接受一致性质检。v2 的必要引用不受旧 `--max-reference-images 1` 默认值裁掉。
 
 每张场景图输出对应的 `.provenance.json`，保存实际参考文件摘要、完整提示词、图片模型和供应商。图片提示词明确只输出一张正常的竖版照片，不复制宫格布局。
 
-VEO 继续接收场景首尾帧。Omni Flash 默认 10 秒，并提供两种显式模式：`first-last` 使用场景首尾帧；v2 的 `omni-reference` 固定使用两张全能参考图，顺序为“Image2 时序故事板 + 产品锁定宫格”。故事板必须有当前 provenance 并通过关键帧 QC，锁定宫格必须通过身份 QC。真实主商品图只负责生成和校验锁定宫格，不传给 Omni 作为第三张参考图。三个视频入口在 v2 中都先检查参考来源和相应 QC。`parallel_pipeline.py` 当前是已有关键帧的 VEO 批量提交器，不会自动生成宫格或首尾帧；Omni 请用 `generate_videos_lk888.py`。
+VEO 继续接收场景首尾帧。Omni Flash 默认 10 秒，并提供两种显式模式：`first-last` 使用场景首尾帧；`omni-reference` 使用“Image2 时序故事板 + 产品身份宫格”，状态转换商品再自动追加已质检的状态宫格作为第 3 张。故事板必须有当前 provenance 并通过关键帧 QC，身份宫格和状态宫格分别通过对应 QC。真实主图只负责生成和校验这些参考，不直接传给 Omni。三个视频入口在 v2 中都先检查参考来源和相应 QC。
 
-使用 `omni-reference` 时，在单个变体的 `reference_images` 中指定 Image2 生成的时序故事板即可；适配器会自动把当前产品锁定宫格作为第二张参考，并忽略其他视频参考候选。故事板需保存 provenance 并通过 `qc_dual_consistency.py --stage keyframes --target <path>`；每格只能出现一台实体产品。真实主图仍是上游商品真值：如果故事板或锁定宫格与真实主图冲突，应先修正相关生成图再提交视频。
+使用 `omni-reference` 时，在单个变体的 `reference_images` 中指定 Image2 生成的时序故事板即可；适配器会自动加入当前产品身份宫格和已有状态宫格。Omni 最多接收 3 张图，超出的显式候选会在付费提交前报错。故事板需保存 provenance 并通过 `qc_dual_consistency.py --stage keyframes --target <path>`；每格只能出现一台实体产品。
+
+折叠、组装和安装商品的字段、证据等级、硬切规则与错误类型见 [references/state-change-products.md](references/state-change-products.md)。
 
 ## 双重一致性质检
 

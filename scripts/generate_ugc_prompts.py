@@ -737,12 +737,42 @@ def build_hallucination_defense_block(product_brief: dict[str, Any] | None = Non
 
 def product_fidelity_block(product_name: str, product_brief: dict[str, Any] | None = None) -> str:
     defense_block = build_hallucination_defense_block(product_brief)
+    state_block = state_change_prompt_block(product_brief)
     return (
         f"CANONICAL PRODUCT: {product_name}. Use the provided product reference image as the source of truth. "
         "Preserve exact product shape, proportions, color, material, texture, visible mechanisms, logo/text, packaging, and distinctive silhouette. "
         "Do not redesign, recolor, simplify, distort, or replace the product. "
         "Do not add any feature that is not visible in the reference image: no new lid, cap, hinge, latch, transparent chamber, water tank, handle, button, blade, motor, brand text, embossed text, container body, or storage compartment unless that exact feature already exists in the reference. "
-        f"\n{defense_block}"
+        f"\n{defense_block}{state_block}"
+    )
+
+
+def state_change_prompt_block(product_brief: dict[str, Any] | None = None) -> str:
+    contract = (product_brief or {}).get("state_change_contract")
+    if not isinstance(contract, dict) or contract.get("required") is not True:
+        return ""
+    states = [
+        {"state_id": item.get("state_id"), "visible_configuration": item.get("visible_configuration")}
+        for item in contract.get("states", [])[:4] if isinstance(item, dict)
+    ]
+    transitions = []
+    for item in contract.get("transitions", [])[:3]:
+        if not isinstance(item, dict):
+            continue
+        transitions.append({key: item.get(key) for key in (
+            "transition_id", "from_state", "to_state", "evidence_level", "render_policy",
+            "actor_action", "contact_points", "moving_parts", "fixed_parts", "completion_cue",
+            "forbidden_intermediates",
+        ) if item.get(key)})
+    return (
+        "\nSTATE-CHANGE CONTRACT: Preserve this exact part inventory across every state: "
+        + json.dumps(contract.get("part_invariants", []), ensure_ascii=False)
+        + ". Endpoint states: " + json.dumps(states, ensure_ascii=False)
+        + ". Transitions: " + json.dumps(transitions, ensure_ascii=False)
+        + ". A state_pair_only transition is never shown as continuous motion. If its policy is hard_cut_only, "
+        "hold the first evidenced endpoint, make a clean hard cut, then show the second evidenced endpoint in "
+        "matching framing. Never morph, interpolate, multiply, detach, cross, bend, fan, teleport or invent hidden "
+        "mechanics between states."
     )
 
 

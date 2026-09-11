@@ -40,9 +40,9 @@ def generate(folder: Path, api_key: str, args: argparse.Namespace) -> dict:
     compact_brief = {
         key: ctx["brief"].get(key)
         for key in (
-            "product_name", "confirmed_identity", "confirmed_selling_points",
+            "product_name", "product_type", "recommended_v2_category", "confirmed_identity", "confirmed_selling_points",
             "canonical_reference_images", "misuse_risks_to_avoid",
-            "hallucination_defense", "identity_panel_overrides", "dimensions_mm",
+            "hallucination_defense", "identity_panel_overrides", "dimensions_mm", "state_change_contract",
         )
     }
     panel_overrides = ctx["brief"].get("identity_panel_overrides") or {}

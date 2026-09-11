@@ -127,7 +127,8 @@ def review(folder: Path, target: Path, identity: dict, key: str, args) -> dict:
     # Identity QC with 19-image manifests and 9KB briefs exceeds connection limits.
     # Slim the brief to core identity + risks only; analysis is redundant with the real photos.
     slim_brief = {k: v for k, v in brief.items() if k in {
-        "product_name", "confirmed_identity", "misuse_risks_to_avoid",
+        "product_name", "product_type", "recommended_v2_category", "category_reason",
+        "confirmed_identity", "misuse_risks_to_avoid", "state_change_contract",
         "dimensions_mm", "identity_panel_overrides",
         "confirmed_selling_points", "step_by_step_usage", "video_prompt_rules",
     }}
@@ -137,14 +138,15 @@ def review(folder: Path, target: Path, identity: dict, key: str, args) -> dict:
         originals = originals[:2]
     dependencies = originals + [folder / "product_brief.json", folder / "identity_lock/manifest.json"]
     visuals = [(f"Real source product {i + 1}", path) for i, path in enumerate(originals)]
-    if args.stage in {"keyframes", "videos"}:
+    if args.stage in {"usage", "keyframes", "videos"}:
         usage = load_usage(folder)
         dependencies.append(folder / "usage_poses/manifest.json")
         sheet = local_file(folder, identity["output_path"])
-        visuals.append(("Secondary generated identity guidance (not evidence)", sheet))
-        dependencies.append(sheet)
+        if args.stage != "usage":
+            visuals.append(("Secondary generated identity guidance (not evidence)", sheet))
+            dependencies.append(sheet)
         usage_sheet = local_file(folder, usage["output_path"])
-        if usage_sheet != sheet:
+        if usage_sheet != sheet and args.stage != "usage":
             visuals.append(("Secondary usage guidance", usage_sheet))
             dependencies.append(usage_sheet)
     variant = {}
@@ -195,6 +197,10 @@ def review(folder: Path, target: Path, identity: dict, key: str, args) -> dict:
         if args.stage == "identity":
             role_instruction = (
                 "This TARGET is a static product identity grid, not a scene or a video. "
+                "FIRST identify the literal product class in every REAL SOURCE image and in every TARGET panel. "
+                "If the real source is a sleeping bag, chair, lamp, pole, tool or another product class and the "
+                "TARGET is a different class, identity and category_specific MUST fail even when colours look similar. "
+                "The category checklist never overrides the visible source product type. "
                 "Operation and continuity cannot be evidenced from it: mark BOTH of those checks "
                 "not_applicable and explain that a still identity grid carries no control action and no "
                 "ordered scene chain. Do not mark them unknown. Judge identity, scale, placement and "
@@ -206,6 +212,16 @@ def review(folder: Path, target: Path, identity: dict, key: str, args) -> dict:
                 "contact is not evidence this stage can obtain: when the only gap is scene/ground contact, "
                 "mark placement not_applicable with that reason instead of unknown. Use unknown only when "
                 "a part relationship that should be visible is genuinely occluded. "
+            )
+        elif args.stage == "usage":
+            role_instruction = (
+                "This TARGET is a state-change or usage reference grid. Compare every panel to the real source and "
+                "the state_change_contract. Identity must preserve the exact product/kit and part inventory. "
+                "For operation, verify endpoint configurations, connection locations, contact points, moving versus "
+                "fixed parts, completion cues and forbidden intermediate shapes. For continuity, verify that parts do "
+                "not multiply, disappear, recolour, swap sides or change identity across panels. A transition marked "
+                "hard_cut_only or omit_transition must show endpoints only and MUST fail if the grid invents a midpoint. "
+                "A repeated depiction across panels is expected; fail duplicates only inside a single panel. "
             )
         if frame_role == "start":
             role_instruction = "This TARGET is the START frame. Evaluate the setup/friction state; do not require the end-state action or product placement yet. Mark continuity not_applicable because no earlier scene exists and the end frame is intentionally not supplied for this check. Mark operation not_applicable as well: a single still photograph cannot evidence an ordered multi-step mechanism sequence, so judge only whether the depicted product state and posture are consistent with the documented operation and mark the stepped sequence itself not_applicable with that reason. "

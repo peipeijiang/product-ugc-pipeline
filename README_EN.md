@@ -188,7 +188,7 @@ python scripts/generate_videos_lk888.py product-ugc-output \
   --generation-mode fast
 ```
 
-For `omni-flash`, this skill defaults to a 10-second video (the provider supports 4/6/8/10 seconds). Choose `--reference-mode first-last` for an exact generated start/end pair. In v2, `--reference-mode omni-reference` always uses exactly two all-purpose references: an Image2-generated chronological storyboard that passed keyframe QC, followed by the current identity grid that passed identity QC. The canonical real product photo is upstream evidence for generating and checking the identity grid; it is not sent as a third video reference. Omni prompts are compacted to the provider's 4,000-character limit. Pass `--duration` only when overriding the 10-second default.
+For `omni-flash`, this skill defaults to a 10-second video (the provider supports 4/6/8/10 seconds). Choose `--reference-mode first-last` for an exact generated start/end pair. In v2, `--reference-mode omni-reference` uses an Image2 chronological storyboard and the current identity grid. A folding, assembly, installation, extension, or other state-changing product automatically adds its QC-passed state-change grid as image 3. The canonical product photo remains upstream evidence. Omni prompts are compacted to the provider's 4,000-character limit.
 
 ### 6. Run the parallel image-to-video pipeline
 

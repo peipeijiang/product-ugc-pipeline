@@ -16,10 +16,12 @@ from generate_product_identity_lock import generate, parser
 from generate_usage_pose_sheet import generate as usage
 from generate_images import generate_image_file, generate_one_image, keyframe_references
 from generate_videos_lk888 import omni_storyboard_identity_paths
+from classify_product_category import classify_by_keywords, classify_product
 from qc_dual_consistency import CHECKS, verdict, review, targets
 from v2_contract import (SPECS, action_ledger, check_existing_video, digest, hashes,
                          context, load_identity, record_video, require_qc, validate_scene_chain,
-                         validate_video_chain, video_contract)
+                         validate_video_chain, video_contract, needs_state_change_contract,
+                         scene_references, state_change_contract, state_change_panel_plan)
 
 
 class PipelineTests(unittest.TestCase):
@@ -76,6 +78,28 @@ class PipelineTests(unittest.TestCase):
         self.approve(folder, "identity", [folder / "identity_lock/reference_sheet.png"])
         return folder, args
 
+    def transform_contract(self, render_policy="hard_cut_only", evidence_level="state_pair_only"):
+        transition = {
+            "transition_id": "deploy", "from_state": "folded", "to_state": "open",
+            "evidence_level": evidence_level, "render_policy": render_policy,
+            "evidence": "images/source.png shows both documented endpoint states",
+            "forbidden_intermediates": ["crossed tubes", "duplicated frame"],
+        }
+        if evidence_level != "state_pair_only":
+            transition.update({"actor_action": "pull frame open", "contact_points": ["side rails"],
+                               "moving_parts": ["cross braces"], "fixed_parts": ["seat"],
+                               "completion_cue": "all feet contact the floor"})
+        return {
+            "required": True, "mechanism_type": "folding",
+            "part_invariants": [{"part": "frame", "count": 1, "evidence": "images/source.png"}],
+            "connections": [{"parts": ["rail", "brace"], "type": "pivot", "evidence": "images/source.png"}],
+            "states": [
+                {"state_id": "folded", "visible_configuration": "rails packed together", "evidence": "images/source.png"},
+                {"state_id": "open", "visible_configuration": "frame open on four feet", "evidence": "images/source.png"},
+            ],
+            "transitions": [transition],
+        }
+
     def test_five_categories_single_grid_reuse_and_scene_chain(self):
         for category, (_, _, panels) in SPECS.items():
             with self.subTest(category=category):
@@ -104,6 +128,68 @@ class PipelineTests(unittest.TestCase):
         for step in ("press button", {"action": "press"}, {"action": "press", "evidence": "inference"}):
             with self.assertRaises(RuntimeError):
                 action_ledger({"step_by_step_usage": [step]})
+
+    def test_state_change_contract_requires_evidence_and_never_invents_midpoint(self):
+        brief = {"product_name": "folding chair", "step_by_step_usage": [
+            {"action": "Unfold chair", "evidence": "images/source.png"}
+        ]}
+        self.assertTrue(needs_state_change_contract(brief))
+        with self.assertRaisesRegex(RuntimeError, "no state_change_contract"):
+            state_change_contract(brief)
+
+        brief["state_change_contract"] = self.transform_contract()
+        contract = state_change_contract(brief)
+        self.assertEqual([item["kind"] for item in state_change_panel_plan(contract)], ["state", "state"])
+
+        brief["state_change_contract"] = self.transform_contract(render_policy="continuous_allowed")
+        with self.assertRaisesRegex(RuntimeError, "cannot allow continuous"):
+            state_change_contract(brief)
+
+    def test_direct_motion_contract_may_add_evidenced_transition_panel(self):
+        contract = state_change_contract({"state_change_contract": self.transform_contract(
+            render_policy="continuous_allowed", evidence_level="direct_motion"
+        )})
+        self.assertEqual(
+            [item["kind"] for item in state_change_panel_plan(contract)],
+            ["state", "evidenced_transition", "state"],
+        )
+
+    def test_state_change_product_auto_generates_operation_sheet(self):
+        folder = self.fixture("furniture")
+        brief = load_json(folder / "product_brief.json")
+        brief["product_name"] = "folding chair"
+        brief["step_by_step_usage"] = [{"action": "Unfold chair", "evidence": "images/source.png"}]
+        brief["state_change_contract"] = self.transform_contract()
+        write_json(folder / "product_brief.json", brief)
+        args = self.args(folder)
+        with patch("generate_images.multipart_request", return_value=self.response):
+            generate(folder, "test", args)
+        self.approve(folder, "identity", [folder / "identity_lock/reference_sheet.png"])
+        with patch("generate_images.multipart_request", return_value=self.response) as api:
+            result = usage(folder, "test", args)
+        self.assertEqual(api.call_count, 1)
+        self.assertEqual(result["mode"], "state_change_sheet")
+        operation_sheet = folder / result["output_path"]
+        self.approve(folder, "usage", [operation_sheet])
+        self.assertEqual(len(scene_references(folder, "start", 1)), 3)
+
+        with patch("generate_images.multipart_request", return_value=self.response):
+            generate_one_image("test", folder, {"variant_id": 1}, args)
+        frames = [folder / "generated_images" / f"variant-01-{role}.png" for role in ("start", "end")]
+        validate_scene_chain(folder, frames)
+        end_refs = scene_references(folder, "end", 1)
+        self.assertEqual(len(end_refs), 3)
+        self.assertTrue(end_refs[0].name.endswith("-start.png"))
+        self.assertEqual(end_refs[-1], operation_sheet)
+
+        storyboard = folder / "runs/test/storyboard/variant-01-storyboard.png"
+        storyboard.parent.mkdir(parents=True)
+        Image.new("RGB", (64, 64), "blue").save(storyboard)
+        write_json(storyboard.with_suffix(".provenance.json"), {"type": "image2_chronological_storyboard"})
+        omni_refs = omni_storyboard_identity_paths(folder, {
+            "reference_images": [str(storyboard.relative_to(folder))]
+        })
+        self.assertEqual(omni_refs, [storyboard, folder / "identity_lock/reference_sheet.png", operation_sheet])
 
     def test_source_change_invalidates_identity(self):
         folder, _ = self.setup_identity()
@@ -274,7 +360,7 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             validate_video_chain(folder, video)
 
-    def test_omni_reference_uses_only_storyboard_and_identity_grid(self):
+    def test_omni_reference_uses_storyboard_identity_and_one_optional_extra(self):
         folder, _ = self.setup_identity()
         storyboard = folder / "runs/test/storyboard/variant-03-storyboard.png"
         storyboard.parent.mkdir(parents=True)
@@ -295,6 +381,24 @@ class PipelineTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "chronological storyboard"):
             omni_storyboard_identity_paths(folder, {"reference_images": ["identity_lock/reference_sheet.png"]})
+
+        extra = folder / "images/extra.png"
+        Image.new("RGB", (64, 64), "green").save(extra)
+        with self.assertRaisesRegex(RuntimeError, "at most three images"):
+            omni_storyboard_identity_paths(folder, {"reference_images": [
+                str(storyboard.relative_to(folder)), "images/source.png", "images/extra.png"
+            ]})
+
+    def test_classifier_routes_furniture_and_stops_unknown_products(self):
+        self.assertEqual(classify_by_keywords("Portable folding chair")[0], "furniture")
+        self.assertIsNone(classify_by_keywords("Cotton sleeping bag")[0])
+        folder = self.root / "unknown-product"
+        folder.mkdir()
+        write_json(folder / "product_manifest.json", {"product_name": "Ultralight sleeping bag"})
+        write_json(folder / "image_analysis.json", {"materials": "polyester fabric shell"})
+        result = classify_product(folder, force=True)
+        self.assertEqual(result["category"], "unclassified")
+        self.assertTrue(result["requires_manual_category"])
 
 
 if __name__ == "__main__":
