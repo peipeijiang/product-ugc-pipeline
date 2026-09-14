@@ -550,10 +550,14 @@ def build_model_params(args: argparse.Namespace, image_urls: list[str]) -> dict[
             "images": image_urls,
             "enhance_prompt": args.enhance_prompt,
         }
-    if args.model in {"omni-flash", "omni_flash-10s"}:
+    if args.model in {"omni-flash", "omni_flash-10s", "omni_flash-10s-fl"}:
         params = {
             "aspect_ratio": args.aspect_ratio,
-            "images": image_urls[:7] if args.model == "omni_flash-10s" else image_urls[:3],
+            "images": (
+                image_urls[:2] if args.model == "omni_flash-10s-fl"
+                else image_urls[:7] if args.model == "omni_flash-10s"
+                else image_urls[:3]
+            ),
         }
         if args.model == "omni-flash":
             params["duration"] = str(args.duration)
@@ -593,7 +597,8 @@ def normalize_status(status_response: dict[str, Any]) -> dict[str, Any]:
 
 
 OMNI_PROMPT_CHAR_LIMIT = 4000
-OMNI_MODELS = {"omni-flash", "omni_flash-10s"}
+OMNI_MODELS = {"omni-flash", "omni_flash-10s", "omni_flash-10s-fl"}
+OMNI_FIRST_LAST_MODELS = {"omni_flash-10s-fl"}
 
 
 def enforce_prompt_char_limit(prompt: str, limit: int = OMNI_PROMPT_CHAR_LIMIT, label: str = "Omni") -> str:
@@ -781,7 +786,12 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
                 "Run generate_images.py with --keyframes for this variant before submitting VEO."
             )
         reference_images = [start_frame, end_frame]
-    elif args.model in {"omni-flash", "omni_flash-10s"} and args.reference_mode == "first-last":
+    elif args.model in OMNI_FIRST_LAST_MODELS and args.reference_mode != "first-last":
+        raise RuntimeError(
+            f"{product_dir.name} variant {variant_id:02d}: {args.model} only supports first-last mode; "
+            "provide both generated start and end keyframes."
+        )
+    elif args.model in {"omni-flash", "omni_flash-10s", "omni_flash-10s-fl"} and args.reference_mode == "first-last":
         start_frame, end_frame = generated_start_end_paths(product_dir, variant_id)
         missing = [path.name for path in (start_frame, end_frame) if not path.exists()]
         if missing:
@@ -818,7 +828,12 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
         validate_scene_chain(product_dir, scene_refs)
         require_qc(product_dir, scene_refs, "keyframes",
                    override=bool(getattr(args, "allow_unverified_references", False)))
-    reference_limit = 7 if args.model == "omni_flash-10s" else 3 if args.model == "omni-flash" else 2
+    reference_limit = (
+        2 if args.model == "omni_flash-10s-fl"
+        else 7 if args.model == "omni_flash-10s"
+        else 3 if args.model == "omni-flash"
+        else 2
+    )
     scale_lock = str(variant.get("_physical_scale_lock") or "").strip()
     scale_suffix = (" STRICT PHYSICAL SCALE THROUGHOUT: " + scale_lock) if scale_lock else ""
     omni_limited = args.model in OMNI_MODELS
@@ -879,7 +894,10 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
         # can still push an otherwise-fitting prompt past the provider cap.
         prompt = enforce_prompt_char_limit(prompt)
     params = build_model_params(args, [item["url"] for item in uploads])
-    payload = {"model": args.model, "prompt": prompt, "params": params, "count": 1}
+    # Omni's v1 contract accepts exactly model, prompt and params.
+    payload = {"model": args.model, "prompt": prompt, "params": params}
+    if args.model not in OMNI_MODELS:
+        payload["count"] = 1
     print(
         f"[params] aspect_ratio={args.aspect_ratio} duration={args.duration} "
         f"reference_mode={args.reference_mode} images={len(params.get('images') or [])}",
@@ -1052,8 +1070,12 @@ def main() -> None:
         args.duration = "10"
     if args.audio_duration is None:
         args.audio_duration = str(args.duration)
+    if args.model == "omni_flash-10s-fl" and str(args.duration) != "10":
+        raise SystemExit("omni_flash-10s-fl has a fixed 10-second duration")
     if args.model in {"omni-flash", "omni_flash-10s"} and str(args.duration) not in {"4", "6", "8", "10"}:
         raise SystemExit("Omni duration must be one of 4, 6, 8, or 10 seconds")
+    if args.model == "omni_flash-10s-fl" and args.reference_mode != "first-last":
+        raise SystemExit("omni_flash-10s-fl requires --reference-mode first-last")
     if args.single_reference:
         args.reference_mode = "omni-reference"
     if args.aspect_ratio != DEFAULT_ASPECT_RATIO and not args.allow_landscape:

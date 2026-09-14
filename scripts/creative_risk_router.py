@@ -18,6 +18,8 @@ MODEL_ALIASES = {
     "omni-flash": "omni-flash",
     "omni_flash": "omni-flash",
     "omni-fast": "omni-flash",
+    "omni_flash-10s-fl": "omni_flash-10s-fl",
+    "omni-flash-10s-fl": "omni_flash-10s-fl",
     "veo3.1": "veo3.1",
     "veo-3.1": "veo3.1",
     "veo-3.1-fast-fl": "veo3.1",
@@ -35,6 +37,10 @@ MODEL_PROFILES = {
     "omni-flash": {
         "motion_budget": "low product motion and one gentle camera move",
         "reference_strategy": "Use the chronological storyboard, identity grid and QC-passed operation grid; keep within the three-image adapter limit.",
+    },
+    "omni_flash-10s-fl": {
+        "motion_budget": "low product motion and one gentle camera move between locked endpoints",
+        "reference_strategy": "Use exactly the actual preceding last frame and the target last frame, in that order; both endpoints must share invariant wardrobe, SKU and camera fields.",
     },
     "veo3.1": {
         "motion_budget": "one simple supported interaction",

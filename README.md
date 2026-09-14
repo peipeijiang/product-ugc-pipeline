@@ -76,10 +76,13 @@ python scripts/generate_images.py output --variants 1-3 --keyframes \
   --image-provider laozhang-image2 --image-fallback none --model gpt-image-2-vip --size 1024x1536
 ```
 
-Omni Flash 是显式选择，沿用原接口：
+Omni Flash 是显式选择，沿用原接口。首段可使用 `omni_flash-10s` 或 `omni-flash`；后续连续段使用 `omni_flash-10s-fl` 首尾帧模式：
 
 ```bash
 python scripts/generate_videos_lk888.py output --variants 1-3 --model omni-flash --base-url https://api.lk888.ai --status-endpoint /v1/media/status --reference-mode first-last
+
+# continuation containers: actual preceding last frame + target end frame
+python scripts/generate_videos_lk888.py output --variants 1-3 --model omni_flash-10s-fl --base-url https://api.lk888.ai --status-endpoint /v1/media/status --reference-mode first-last
 ```
 
 本技能现在统一使用 10 秒生产契约：`storyboard_10s`、`voiceover_script_10s`、视频提示词和视频提交默认值保持一致。`--reference-mode first-last` 使用已生成并通过 QC 的首帧和尾帧；`--reference-mode omni-reference` 至少使用 Image2 时序故事板 + 当前产品身份宫格。非保护路线会把已通过 usage QC 的状态转换宫格作为第 3 张参考图；高风险/严重风险保护路线会省略它，只使用重新生成的完成态故事板和身份宫格。真实主图仍是上游商品真值。Omni 提示词会自动压缩到 Updrama 的 4,000 字符上限内。

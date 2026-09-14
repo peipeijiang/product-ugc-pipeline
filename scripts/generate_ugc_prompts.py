@@ -1671,7 +1671,7 @@ def main() -> None:
     parser.add_argument(
         "--target-video-model",
         default=os.getenv("PRODUCT_UGC_VIDEO_MODEL", "veo3.1"),
-        help="Video model used for risk routing, e.g. seedance-2.0 (sd2.0), minimax-h3, omni-flash, or veo3.1.",
+        help="Video model used for risk routing, e.g. seedance-2.0 (sd2.0), minimax-h3, omni-flash, omni_flash-10s-fl, or veo3.1.",
     )
     parser.add_argument("--base-url", default="https://api.laozhang.ai/v1")
     parser.add_argument("--timeout", type=int, default=420)

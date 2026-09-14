@@ -188,7 +188,7 @@ python scripts/generate_videos_lk888.py product-ugc-output \
   --generation-mode fast
 ```
 
-Every production model now uses the same 10-second contract: `storyboard_10s`, `voiceover_script_10s`, generated prompts, and submission parameters agree. Choose `--reference-mode first-last` for an exact generated start/end pair. In v2, `--reference-mode omni-reference` uses an Image2 chronological storyboard and the current identity grid. A non-protected route may add its QC-passed state-change grid as image 3; a high/critical protected route omits it. The canonical product photo remains upstream evidence. Omni prompts are compacted to the provider's 4,000-character limit.
+Every production model now uses the same 10-second contract: `storyboard_10s`, `voiceover_script_10s`, generated prompts, and submission parameters agree. For Omni, use `omni_flash-10s` or `omni-flash` for the first container; use `omni_flash-10s-fl` with `--reference-mode first-last` for continuation containers that must preserve the prior state. The latter accepts one or two ordered first/last images and is endpoint-conditioned, not a pixel-perfect intermediate-frame guarantee, so L2 must reject wardrobe or product drift before continuation. `omni-reference` remains for the multi-reference Omni models. The canonical product photo remains upstream evidence. Omni prompts are compacted to the provider's 4,000-character limit.
 
 ### 6. Run the parallel image-to-video pipeline
 
