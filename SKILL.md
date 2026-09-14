@@ -1,6 +1,6 @@
 ---
 name: product-ugc-pipeline
-description: Build product UGC ad-production pipelines from ecommerce product URLs. Use when Codex needs to scrape product pages, save product image/material folders, analyze image assets with a vision model, generate multiple short-form ecommerce UGC prompts, create product-faithful reference images with upDrama TT Image 2.5 (GPT-Image-2 fallback), or create VEO 3.1 / Omni Flash product videos through LaoZhang or LK888/updrama APIs.
+description: Build product UGC ad-production pipelines from ecommerce product URLs. Use when Codex needs to scrape product pages, analyze product assets, choose low-risk directions for Seedance 2.0, MiniMax H3, Omni Flash or VEO, generate short-form ecommerce prompts and product-faithful reference images, or create videos through LaoZhang or LK888/updrama APIs.
 ---
 
 # Product UGC Pipeline
@@ -45,7 +45,7 @@ Product references lock the product, not the whole source photo. Use source imag
 2. Run `scripts/scrape_products.py` to create numbered product folders and download the complete product asset set: every main-gallery/SKU image and every detail-description image. The same completeness requirement applies when extraction uses `ego-browser`, another browser, page APIs, or a custom scraper.
 3. Vision-analyze every downloaded candidate before writing any product document. **Vision priority is built-in model vision first.** In an interactive Codex run, look at every local file with the model's own vision and record the per-image result in `image_analysis.json`; do not call MiniMax for image understanding or QC. Only when the host cannot feed images to the model at all — for example a vision sidecar that returns a provider error for every image — fall back to a provider vision model through the configured keys, in this order: LaoZhang vision (`scripts/analyze_materials.py --limit-images 0`), then LK888/updrama vision (`--base-url` pointed at the LK888-compatible endpoint with that key). Record in the analysis log which engine actually produced the observations, and say so in the hand-off: a provider fallback is a valid vision run but it is not equivalent to built-in vision. For provider-backed CLI automation, run `scripts/analyze_materials.py --limit-images 0`.
 4. Run `scripts/build_product_brief.py` to synthesize product usage cognition from `product_manifest.json` + `image_analysis.json`.
-5. Run `scripts/generate_ugc_prompts.py` to create UGC prompt variants grounded in the product brief. This step must first build a benefit ladder from the highest-priority commercial promise, then write the hook, voiceover, storyboard, keyframe prompts, and VEO prompt around that ladder.
+5. Run `scripts/generate_ugc_prompts.py` to create UGC prompt variants grounded in the product brief. Pass the intended generator with `--target-video-model`. This step must first run `scripts/creative_risk_router.py`, rank useful directions by physical-generation risk, then build a benefit ladder and write the hook, voiceover, storyboard, keyframe prompts, and video prompt around the safest useful direction.
 6. Run `scripts/generate_images.py` to create image-to-image “pad images” or start/end keyframes. The default image provider is upDrama `tt-image-2.5` on LK888; if it fails the script automatically falls back to the OpenAI-compatible GPT-Image-2 route.
 7. Run `scripts/generate_videos_lk888.py` to send public start/end keyframe URLs to LK888/updrama VEO. Production default video generation is LK888 `veo3.1`.
 8. Use `scripts/generate_videos.py` for LaoZhang VEO only when the user explicitly asks for LaoZhang or LK888 is not the requested provider.
@@ -212,6 +212,8 @@ These lessons are hard production rules, not preferences:
 20. **Submit every batch in parallel and never let one variant stall the rest.** Both runs/<batch>/generate_storyboards.py and scripts/generate_videos_lk888.py already expose --workers N; pass a number at least equal to the variant count and let the executor submit everything inside one process so transient failures and rate limits stay on the single live machine. The storyboard script writes per-variant provenance after every save and never crashes the batch on a single failure; the video script does the same with variant-XX.task.json plus the final result manifest. Heartbeat automations are only for retries of a single known-bad variant after a batch has been processed, and they must be PAUSED or pointed at a no-op prompt the moment the consolidated run is queued so they do not double-submit. When --workers 1 is left at the default, a 10-variant batch waits 10x longer than it should: explicitly set --workers 10 (or higher) for omni-flash submission and --workers 5 to 7 for storyboard keyframes, and keep the workers inside one Python process so stdout, the upload lifecycle, and the persisted manifests stay together.
 
 21. **State-changing products need a part/state/transition contract before paid generation.** An identity grid can lock appearance but cannot prove how a chair unfolds, a pole telescopes, or two parts install. Record part counts, connections, evidenced endpoint states, transition evidence level, moving/fixed parts, contact points, completion cues and forbidden intermediate shapes in `product_brief.json`. If only endpoint images exist, set `evidence_level=state_pair_only` and `render_policy=hard_cut_only` or `omit_transition`; never ask a model to interpolate the missing mechanism. `generate_usage_pose_sheet.py` creates the operation grid automatically, scene generation uses it within the three-image fallback cap, and Omni adds it as image 3 after usage QC. Read `references/state-change-products.md` for the schema and mistake taxonomy.
+
+22. **Choose the lowest-risk useful direction before writing the storyboard.** `generate_ugc_prompts.py` must create `video_feasibility_plan` with `creative_risk_router.py` before it calls the prompt model. Score the advertised actions, not the product category: connection/topology changes such as installation, assembly, insertion, detachment and joining are highest risk; reversal, folding, deformable materials, precision contact and multiple dependent steps add risk. For high/critical routes, keep the product in one verified ready-to-use configuration in both keyframes and every generated video frame. Sell the result through ready-state use, detail/scale proof, camera motion and creator reaction. A hard cut is performed in editing between separate endpoint assets or real source footage; it is never a prompt asking the generator to invent or interpolate the missing transition. Model profiles for Seedance 2.0 (`sd2.0`), MiniMax H3, Omni Flash and VEO only adjust creator/camera motion budgets. Read `references/low-risk-video-direction.md` for the ladder and research basis.
 
 ## Parallel Pipeline (Fire-and-Forget + Auto-Cascade)
 
@@ -550,6 +552,7 @@ belongs to none of them, add a category rather than force-fitting it — see
 - `scripts/classify_product_category.py` - Heuristic auto-classifier (keyword/image cues; a mislabelled product is expected, so confirm or override the category before identity generation)
 - `scripts/generate_product_identity_lock.py` - Generate one category-specific multi-panel grid reference sheet
 - `scripts/generate_usage_pose_sheet.py` - Source-backed action ledger; automatically creates an operation grid for state-changing products
+- `scripts/creative_risk_router.py` - Rank useful directions by physical-generation risk and route fragile actions to ready-state/result proof
 - `scripts/qc_dual_consistency.py` - Category-specific QC checks
 - `scripts/create_test_cases.py` - Create 5-product test suite
 
@@ -561,6 +564,7 @@ belongs to none of them, add a category rather than force-fitting it — see
 - `references/category-electronics.md` - Electronics complete spec
 - `references/category-furniture.md` - Furniture / outdoor folding furniture complete spec
 - `references/state-change-products.md` - Part/state/transition contract for folding, assembly and installation
+- `references/low-risk-video-direction.md` - Cross-model risk ladder, routing rules and benchmark basis
 
 ### Usage Example
 
@@ -577,7 +581,8 @@ LAOZHANG_API_KEY=sk-xxx python scripts/generate_product_identity_lock.py product
 python scripts/generate_usage_pose_sheet.py product-ugc-output
 LAOZHANG_API_KEY=sk-xxx python scripts/qc_dual_consistency.py product-ugc-output --stage identity
 
-# Continue with prompts, --keyframes, keyframe QC, video, sampled-video QC (README.md).
+# Route for the intended video generator, then continue with keyframes and QC.
+LAOZHANG_API_KEY=sk-xxx python scripts/generate_ugc_prompts.py product-ugc-output --count 10 --target-video-model seedance-2.0
 ```
 
 See `README_V2.md` for complete documentation.

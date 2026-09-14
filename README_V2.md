@@ -56,6 +56,10 @@ python scripts/qc_dual_consistency.py output --stage usage
 
 ## 接入现有流程
 
+`generate_ugc_prompts.py` 在写脚本前先调用 `creative_risk_router.py`。它从确认卖点、使用场景和证明点中筛选候选方向，并对安装、连接、插入、反转、折叠、精确接触、材料变形和多步骤操作计分。输出保存在 `ugc_prompts.json.video_feasibility_plan`，每个变体还记录 `generation_risk`、`safe_demo_direction`、`editing_strategy` 和 `unsafe_actions_omitted`。用 `--target-video-model seedance-2.0|minimax-h3|omni-flash|veo3.1` 指定后续生成器；模型档案只改变人物/镜头运动预算。
+
+高风险和严重风险路线会重写镜头：商品从第一帧开始就是已验证的完成态，首尾帧保持相同拓扑、连接和零件数量，画面只改变人物姿势、镜头、使用结果或反应。若安装过程本身必须出现，使用真实来源视频；若只需表达前后关系，分别生成端点素材后在剪辑中硬切。不能把两个不同结构的首尾帧交给视频模型再要求“硬切”，因为生成器仍可能插值出错误中间态。完整规则与研究来源见 [references/low-risk-video-direction.md](references/low-risk-video-direction.md)。
+
 生成首帧时，静态商品传入真实主商品图 + 已质检身份宫格；状态转换商品再加入已质检状态宫格。生成尾帧时最多保留三个输入：场景首帧 + 真实主商品图 + 状态宫格；状态宫格由当前身份宫格生成并单独接受一致性质检。v2 的必要引用不受旧 `--max-reference-images 1` 默认值裁掉。
 
 每张场景图输出对应的 `.provenance.json`，保存实际参考文件摘要、完整提示词、图片模型和供应商。图片提示词明确只输出一张正常的竖版照片，不复制宫格布局。

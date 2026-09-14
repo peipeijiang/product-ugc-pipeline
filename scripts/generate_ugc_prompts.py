@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from common import load_json, request_json, require_api_key_for_base_url, selected_product_dirs, write_json
+from creative_risk_router import apply_feasibility_route, build_video_feasibility_plan
 
 
 UGC_SYSTEM_PROMPT = """You are a senior UGC creative director and ecommerce offer strategist for short-form product video.
@@ -635,6 +636,9 @@ def normalize_variants(
         clean_variant.setdefault("buyer_result", benefit_ladder["buyer_result"])
         if not str(clean_variant.get("buyer_effect") or "").strip():
             clean_variant["buyer_effect"] = benefit_ladder["buyer_result"]
+        feasibility_plan = (product_brief or {}).get("video_feasibility_plan") or {}
+        if feasibility_plan:
+            clean_variant = apply_feasibility_route(clean_variant, feasibility_plan, matrix_index)
         clean_variant.setdefault("negative_prompt", "Do not alter product geometry, color, material, logo/text, silhouette, or invent extra parts.")
         clean_variant.setdefault("function_intro_prompt", build_function_intro_prompt(product_name, feature_summary, clean_variant.get("hook", "")))
         clean_variant["voiceover_script_8s"] = normalize_voiceover_script_8s(
@@ -748,9 +752,11 @@ def product_fidelity_block(product_name: str, product_brief: dict[str, Any] | No
 
 
 def state_change_prompt_block(product_brief: dict[str, Any] | None = None) -> str:
-    contract = (product_brief or {}).get("state_change_contract")
+    brief = product_brief or {}
+    contract = brief.get("state_change_contract")
     if not isinstance(contract, dict) or contract.get("required") is not True:
         return ""
+    feasibility = brief.get("video_feasibility_plan") if isinstance(brief.get("video_feasibility_plan"), dict) else {}
     states = [
         {"state_id": item.get("state_id"), "visible_configuration": item.get("visible_configuration")}
         for item in contract.get("states", [])[:4] if isinstance(item, dict)
@@ -764,15 +770,24 @@ def state_change_prompt_block(product_brief: dict[str, Any] | None = None) -> st
             "actor_action", "contact_points", "moving_parts", "fixed_parts", "completion_cue",
             "forbidden_intermediates",
         ) if item.get(key)})
+    if feasibility.get("protect_product_configuration") is True:
+        transition_rule = (
+            ". This generated asset uses only one verified ready-to-use endpoint. Keep the same topology, connections and part inventory throughout. "
+            "Do not show both endpoint configurations in one generated clip and do not generate, morph, interpolate or hard-cut the transition. "
+            "Any endpoint-to-endpoint hard cut belongs in external editing between separately generated assets or real source footage."
+        )
+    else:
+        transition_rule = (
+            ". A state_pair_only transition is never shown as continuous motion. If its policy is hard_cut_only, "
+            "hold the first evidenced endpoint, make a clean hard cut, then show the second evidenced endpoint in "
+            "matching framing. Never morph, interpolate, multiply, detach, cross, bend, fan, teleport or invent hidden mechanics between states."
+        )
     return (
         "\nSTATE-CHANGE CONTRACT: Preserve this exact part inventory across every state: "
         + json.dumps(contract.get("part_invariants", []), ensure_ascii=False)
         + ". Endpoint states: " + json.dumps(states, ensure_ascii=False)
         + ". Transitions: " + json.dumps(transitions, ensure_ascii=False)
-        + ". A state_pair_only transition is never shown as continuous motion. If its policy is hard_cut_only, "
-        "hold the first evidenced endpoint, make a clean hard cut, then show the second evidenced endpoint in "
-        "matching framing. Never morph, interpolate, multiply, detach, cross, bend, fan, teleport or invent hidden "
-        "mechanics between states."
+        + transition_rule
     )
 
 
@@ -1200,6 +1215,8 @@ def usage_keyframe_prompt(
     frame_role: str = "start",
 ) -> str:
     brief = product_brief or {}
+    feasibility = brief.get("video_feasibility_plan") if isinstance(brief.get("video_feasibility_plan"), dict) else {}
+    protect_configuration = feasibility.get("protect_product_configuration") is True
     references = variant.get("selected_reference_images") or _brief_paths(brief, ["canonical_reference_images", "reference_image_strategy"])
     reference_scope = variant.get("reference_scope") or reference_scope_note(references)
     scene_imagination = build_scene_imagination(variant, brief)
@@ -1240,6 +1257,16 @@ def usage_keyframe_prompt(
     if not scene_hint:
         scene_hint = "a realistic use environment for this exact product"
     scene_hint = sanitize_single_photo_prompt_text(scene_hint)
+    if protect_configuration:
+        frame_change_rule = (
+            "The start and end photos must keep the product in the same verified ready-to-use configuration. "
+            "Keep its topology, connections, part count and geometry unchanged; advance only the creator pose, camera framing, use result or reaction. "
+            "Do not depict installation, assembly, insertion, reversal, folding or any missing intermediate mechanism in either keyframe."
+        )
+    else:
+        frame_change_rule = (
+            "The start and end photos must not be near-duplicates: keep product identity stable, but clearly change only the visible action state for this selected moment."
+        )
     phone_geometry = phone_geometry_constraints_for_prompt(
         " ".join(
             str(variant.get(key) or "")
@@ -1267,7 +1294,7 @@ def usage_keyframe_prompt(
         f"Scene imagination: {scene_imagination} "
         "The lifestyle environment may differ from the original product photo; preserve the product, not the source-photo background. "
         f"{continuity} "
-        "The start and end photos must not be near-duplicates: keep product identity stable, but clearly change only the visible action state for this selected moment. "
+        f"LOW-RISK DIRECTION: {feasibility.get('selected_direction', {})}. {frame_change_rule} "
         "Do not switch to a different room, outlet style, table surface, camera distance, person, wardrobe, or product position between start and end. "
         "Adult hands only if needed, natural phone-shot lighting, no subtitles, no transcript captions, no platform UI, no icons, no extra branding. "
         f"{phone_geometry} "
@@ -1282,6 +1309,8 @@ def usage_keyframe_prompt(
 
 def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, Any] | None = None) -> str:
     brief = product_brief or {}
+    feasibility = brief.get("video_feasibility_plan") if isinstance(brief.get("video_feasibility_plan"), dict) else {}
+    protect_configuration = feasibility.get("protect_product_configuration") is True
     buyer_effect = buyer_effect_summary(variant, brief)
     benefit_ladder = variant.get("benefit_ladder") if isinstance(variant.get("benefit_ladder"), dict) else {}
     core_selling_claim = _plain_brief_list(
@@ -1355,6 +1384,25 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
             )
         )
     )
+    if protect_configuration:
+        action_arc = (
+            "Show the need, then use the product already in its verified ready-to-use state, then show the benefit. "
+            "The product topology, connections, part count and geometry must remain unchanged for the full generated clip. "
+            "Do not generate setup, installation, assembly, insertion, reversal, folding or an interpolated transition."
+        )
+    else:
+        action_arc = (
+            "Use a clear problem-before, product-intervention, benefit-after arc: show the need or frustration, "
+            "show one supported product action, then show the improved outcome, calmer routine, saved effort, comfort, confidence, or other confirmed benefit."
+        )
+    feasibility_block = (
+        f"LOW-RISK GENERATION ROUTE: target model = {feasibility.get('target_model', 'model-agnostic')}; "
+        f"risk = {feasibility.get('risk_level', 'unknown')} ({feasibility.get('risk_score', 0)}); "
+        f"direction = {variant.get('safe_demo_direction') or feasibility.get('selected_direction', {})}; "
+        f"allowed motion = {feasibility.get('allowed_motion', 'one simple supported interaction')}; "
+        f"editing strategy = {variant.get('editing_strategy') or feasibility.get('editing_strategy', '')}; "
+        f"forbidden generation = {variant.get('unsafe_actions_omitted') or feasibility.get('forbidden_generation', [])}. "
+    )
     return (
         "Create an 8-second vertical stylish creator-ad product-use clip using the provided reference frame or start/end keyframes. "
         "If two reference images are provided, use image 1 as the first frame and image 2 as the final frame, keeping the same subject, room, lighting, wardrobe, and camera geometry unless the storyboard intentionally moves within that same scene. "
@@ -1362,7 +1410,7 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
         f"Core buyer reason to buy: {core_selling_claim}. "
         f"Benefit ladder: problem/desire = {buyer_problem}; product action = {product_intervention}; result/proof = {buyer_result}. "
         f"Buyer-visible effect to dramatize: {buyer_effect}. "
-        "Use a clear problem-before, product-intervention, benefit-after arc: show the need or frustration, show the product being used correctly, then show the improved outcome, calmer routine, saved effort, comfort, confidence, or other confirmed benefit. "
+        f"{feasibility_block}{action_arc} "
         f"Follow this exact 0-8s storyboard with visual beat, spoken line, and sparse feature overlay for each beat: {storyboard} "
         f"Supported product action: {usage_context}. "
         f"Scene context: {scene_context}. "
@@ -1415,6 +1463,9 @@ Image analysis:
 Product usage cognition brief:
 {json.dumps(product_brief, ensure_ascii=False)[:12000]}
 
+VIDEO GENERATION FEASIBILITY ROUTE:
+{json.dumps(product_brief.get("video_feasibility_plan", {}), ensure_ascii=False, indent=2)}
+
 Preferred local reference images:
 {json.dumps(references, ensure_ascii=False)}
 
@@ -1451,8 +1502,12 @@ Each variant must include:
 - selling_angle: one focused buyer benefit for this variant
 - scene_imagination: a realistic lifestyle scene derived from the product function and selling angle, not merely copied from source product photos
 - image_prompt in English for GPT-Image-2 image-to-image
-- video_prompt in English for VEO 3.1 image-to-video
+- video_prompt in English for the target video model
 - negative_prompt
+- generation_risk: the router-provided level, score and hazards; do not lower it
+- safe_demo_direction: the router-selected commercially useful low-risk direction
+- editing_strategy: how any omitted setup/state change is conveyed outside the generated clip
+- unsafe_actions_omitted: fragile physical actions that must not be generated
 
 Critical:
 1. Start from the HIGH-PRIORITY COMMERCIAL PROMISE SIGNALS, product_brief.confirmed_selling_points, manifest.selling_points, URL/product-title language, and the product title to identify the buyer's main reason to care. Write the benefit_ladder first. Then use product_brief.step_by_step_usage / confirmed_use_cases only to keep the demo mechanically correct.
@@ -1474,6 +1529,9 @@ Critical:
 15b. Use the CREATIVE MATRIX CONTRACT as the diversity source of truth. A variant fails if its creative_matrix_slot is not reflected in its hook, shot_plan, storyboard_8s, start_frame_prompt, end_frame_prompt, and video_prompt.
 16. Before writing the variants, allocate one primary_function_focus per variant from the high-priority commercial promise, confirmed_selling_points, manifest selling_points, confirmed_use_cases, step_by_step_usage, and proof_moments. Do not let minor hardware details or materials become the lead selling angle when the product title/page/URL clearly sells a higher-level benefit. Hardware details such as buckle, slider, material, color, pattern, button, cable, LED, or case should support the main promise rather than replace it. For multifunction wearables such as smart rings, do not default every variant to photo-taking/remote shutter; split confirmed functions across health/app checks, charging, status display, touch control, activity tracking, waterproof daily wear, or fit/detail as supported by the brief.
 17. If a phone appears, make its orientation physically possible. For selfie/timer/remote-shutter demos, the phone screen faces the creator and the lens points toward the creator; the viewer sees phone back/side, mirror, or over-shoulder composition. For app-screen proof, use over-shoulder/tabletop/second-device geometry. For wireless charging, the phone lies flat screen-up on the charger unless the real product is a stand.
+18. Follow VIDEO GENERATION FEASIBILITY ROUTE before choosing the storyboard action. Use its lowest-risk useful direction and motion budget. Model capability claims never override product evidence or topology risk.
+19. If protect_product_configuration is true, every generated frame must keep one verified ready-state topology, connection graph and part inventory. Do not depict continuous installation, assembly, insertion, reversal, folding or other configuration changes. Show the buyer result, detail proof and creator reaction instead.
+20. A clean editor hard cut is an editing instruction, not a generated transition. If setup must be communicated, use separately generated endpoint assets or real source footage; never give the video model conflicting product configurations and ask it to interpolate between them.
 """.strip()
     payload = {
         "model": model,
@@ -1501,6 +1559,13 @@ def process_product(product_dir: Path, api_key: str, args: argparse.Namespace) -
     if active(product_dir):
         product_brief = {**product_brief, "v2_reference_contract": guidance(product_dir),
                          "v2_action_ledger": load_usage(product_dir)["actions"]}
+    routing_brief = {
+        **product_brief,
+        "product_name": manifest.get("product_name") or product_brief.get("product_name"),
+        "manifest_selling_points": manifest.get("selling_points") or [],
+    }
+    feasibility_plan = build_video_feasibility_plan(routing_brief, args.target_video_model)
+    product_brief = {**product_brief, "video_feasibility_plan": feasibility_plan}
     references = best_reference_images(image_analysis, product_brief, limit=4)
     canonical_prompt_path = product_dir / "ugc_prompts.json"
     history_glob = "ugc_prompts.json" if args.output_file == "ugc_prompts.json" and canonical_prompt_path.exists() else args.history_glob
@@ -1521,6 +1586,8 @@ def process_product(product_dir: Path, api_key: str, args: argparse.Namespace) -
     )
     output = normalize_variants(output, manifest, references, args.count, product_brief, creative_matrix)
     output["selected_reference_images"] = references
+    output["target_video_model"] = feasibility_plan["target_model"]
+    output["video_feasibility_plan"] = feasibility_plan
     output["start_variant_id"] = args.start_variant_id
     output["source_manifest"] = "product_manifest.json"
     output["source_image_analysis"] = "image_analysis.json"
@@ -1593,6 +1660,11 @@ def main() -> None:
     parser.add_argument("--history-glob", default="ugc_prompts*.json")
     parser.add_argument("--ignore-history", action="store_true")
     parser.add_argument("--model", default=os.getenv("PRODUCT_UGC_PROMPT_MODEL", "gpt-5.2"))
+    parser.add_argument(
+        "--target-video-model",
+        default=os.getenv("PRODUCT_UGC_VIDEO_MODEL", "veo3.1"),
+        help="Video model used for risk routing, e.g. seedance-2.0 (sd2.0), minimax-h3, omni-flash, or veo3.1.",
+    )
     parser.add_argument("--base-url", default="https://api.laozhang.ai/v1")
     parser.add_argument("--timeout", type=int, default=420)
     parser.add_argument("--products", default="", help="Comma-separated product selectors, e.g. 01 or 01-flower")

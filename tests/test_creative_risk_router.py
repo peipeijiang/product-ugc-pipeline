@@ -1,0 +1,118 @@
+"""Offline tests for conservative video-direction routing."""
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+
+from creative_risk_router import (
+    apply_feasibility_route,
+    build_video_feasibility_plan,
+    normalize_model_profile,
+    rank_video_directions,
+)
+from generate_ugc_prompts import usage_demo_video_prompt, usage_keyframe_prompt
+
+
+class CreativeRiskRouterTests(unittest.TestCase):
+    def high_risk_brief(self):
+        return {
+            "product_name": "portable folding chair",
+            "confirmed_selling_points": [
+                "Fast installation with an insert-and-lock frame",
+                "Stable support and comfortable seated rest",
+            ],
+            "step_by_step_usage": [
+                {"action": "unfold the frame", "evidence": "source sequence"},
+                {"action": "insert the support pin and lock the buckle", "evidence": "manual"},
+            ],
+            "state_change_contract": {
+                "required": True,
+                "states": [
+                    {"state_id": "folded", "visible_configuration": "frame folded"},
+                    {"state_id": "open", "visible_configuration": "chair ready for sitting"},
+                ],
+                "transitions": [{
+                    "transition_id": "deploy",
+                    "evidence_level": "state_pair_only",
+                    "render_policy": "hard_cut_only",
+                }],
+            },
+        }
+
+    def variant(self):
+        return {
+            "variant_id": 1,
+            "title": "Ready to rest",
+            "hook": "A long day outdoors",
+            "selling_angle": "comfortable support",
+            "buyer_result": "The creator relaxes comfortably.",
+            "shot_plan": [
+                {"time": "0-2s", "visual": "Unfold the chair."},
+                {"time": "2-5s", "visual": "Insert the pin."},
+                {"time": "5-8s", "visual": "Sit down."},
+            ],
+            "voiceover_script_8s": [
+                {"time": "0-2s", "line": "Long day?"},
+                {"time": "2-5s", "line": "This chair gives stable support"},
+                {"time": "5-8s", "line": "wherever I stop."},
+            ],
+            "selected_reference_images": ["images/chair.png"],
+        }
+
+    def test_aliases_are_normalized(self):
+        self.assertEqual(normalize_model_profile("sd2.0"), "seedance-2.0")
+        self.assertEqual(normalize_model_profile("H3"), "minimax-h3")
+        self.assertEqual(normalize_model_profile("omni_flash"), "omni-flash")
+
+    def test_lowest_risk_commercial_direction_wins(self):
+        ranked = rank_video_directions(self.high_risk_brief())
+        self.assertEqual(ranked[0]["direction"], "Stable support and comfortable seated rest")
+        self.assertEqual(ranked[0]["risk_score"], 0)
+        self.assertGreater(ranked[1]["risk_score"], ranked[0]["risk_score"])
+
+    def test_all_fragile_candidates_get_a_ready_state_fallback(self):
+        ranked = rank_video_directions({
+            "product_name": "modular shelf",
+            "confirmed_selling_points": ["Quick setup: insert and connect every shelf panel"],
+        })
+        self.assertEqual(ranked[0]["risk_score"], 0)
+        self.assertIn("ready-to-use state", ranked[0]["direction"])
+
+    def test_state_pair_routes_to_ready_state_without_generated_setup(self):
+        brief = self.high_risk_brief()
+        plan = build_video_feasibility_plan(brief, "sd2.0")
+        self.assertEqual(plan["target_model"], "seedance-2.0")
+        self.assertEqual(plan["risk_level"], "critical")
+        self.assertTrue(plan["protect_product_configuration"])
+        self.assertFalse(plan["continuous_product_state_change_allowed"])
+
+        routed = apply_feasibility_route(self.variant(), plan)
+        rendered_storyboard = str(routed["storyboard_8s"]).lower()
+        self.assertNotIn("unfold", rendered_storyboard)
+        self.assertNotIn("insert", rendered_storyboard)
+        self.assertIn("ready-state", rendered_storyboard)
+        self.assertIn("stable support", routed["safe_demo_direction"]["direction"].lower())
+
+        brief["video_feasibility_plan"] = plan
+        video_prompt = usage_demo_video_prompt(routed, brief)
+        keyframe_prompt = usage_keyframe_prompt("portable folding chair", routed, brief, "end")
+        self.assertIn("Do not generate setup", video_prompt)
+        self.assertIn("topology, connections, part count and geometry must remain unchanged", video_prompt)
+        self.assertIn("do not generate, morph, interpolate or hard-cut the transition", video_prompt)
+        self.assertIn("same verified ready-to-use configuration", keyframe_prompt)
+
+    def test_simple_ready_state_demo_remains_continuous(self):
+        brief = {
+            "product_name": "desk organizer",
+            "confirmed_selling_points": ["Keeps the desk clean and organized"],
+            "step_by_step_usage": [{"action": "place it on the desk", "evidence": "source image"}],
+        }
+        plan = build_video_feasibility_plan(brief, "omni-flash")
+        self.assertEqual(plan["risk_level"], "low")
+        self.assertFalse(plan["protect_product_configuration"])
+        self.assertTrue(plan["continuous_product_state_change_allowed"])
+
+
+if __name__ == "__main__":
+    unittest.main()

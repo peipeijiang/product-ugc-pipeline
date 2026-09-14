@@ -12,6 +12,7 @@
 | 身份参考 | 将同一商品多个角度和使用关系放入一张图 | identity_lock/reference_sheet.png；GPT-Image-2 |
 | 状态与使用 | 记录有依据的动作；变形商品另生成端点/转换宫格 | usage_poses/manifest.json；静态商品默认无额外调用 |
 | 宫格质检 | 对比真实原图检查身份、比例、接触位置 | qc/identity.json；可配置视觉模型，默认 gpt-5.2 |
+| 低风险方向 | 给动作评分，优先选择完成态、结果或细节证明 | ugc_prompts.json 中的 video_feasibility_plan |
 | 场景首尾帧 | 原图和宫格指导单画面生图；尾帧另参考首帧 | generated_images/variant-XX-start/end.png；GPT-Image-2 |
 | 帧质检与视频 | 检查当前参考链和首尾帧，通过后提交视频 | 原有 VEO 3.1 / Omni Flash |
 | 成片质检 | 抽帧检查外观、比例、动作顺序和类目细节 | qc/videos.json；视觉模型，需 ffmpeg/ffprobe |
@@ -58,13 +59,15 @@ python scripts/generate_usage_pose_sheet.py output
 python scripts/qc_dual_consistency.py output --stage identity
 python scripts/qc_dual_consistency.py output --stage usage  # 仅当生成了独立使用/状态宫格
 
-python scripts/generate_ugc_prompts.py output --count 3
+python scripts/generate_ugc_prompts.py output --count 3 --target-video-model veo3.1
 python scripts/generate_images.py output --variants 1-3 --keyframes
 python scripts/qc_dual_consistency.py output --stage keyframes --variants 1-3
 
 python scripts/generate_videos_lk888.py output --variants 1-3 --model veo3.1
 python scripts/qc_dual_consistency.py output --stage videos --variants 1-3
 ```
+
+`--target-video-model` 支持 `seedance-2.0`（也可写 `sd2.0`）、`minimax-h3`、`omni-flash` 和 `veo3.1`。脚本会先检查安装、拼接、插入、反转、折叠、精确接触和多步骤动作，再从卖点、场景与证明点里选动作风险最低且仍能说明购买理由的方向。高风险/严重风险视频只生成同一完成态下的使用、细节和人物反应；安装过程用真实素材或两个独立端点素材在剪辑中硬切，不让视频模型补中间结构。
 
 图像默认走 upDrama 的 `tt-image-2.5` 媒体任务通道（`LK888_API_KEY` / `UPDRAMA_API_KEY`），失败时自动依次退到 `tt-image-2` 和 LaoZhang 的 GPT-Image-2 `/images/edits`。每张图的 `image_provider` 和 `provider_fallbacks` 记录在 `generated_images/image_generation_results.json`。需要强制单通道时：
 
@@ -97,10 +100,10 @@ python scripts/generate_videos_lk888.py output --variants 1-3 --model omni-flash
 python3 -m unittest discover -s tests -p 'test_v2*.py' -v
 ```
 
-[实现与字段说明](README_V2.md) · [状态转换商品规范](references/state-change-products.md) · [五类产品测试用例](tests/five-products/README.md) · [Skill 规范](SKILL.md)
+[实现与字段说明](README_V2.md) · [低风险方向路由](references/low-risk-video-direction.md) · [状态转换商品规范](references/state-change-products.md) · [五类产品测试用例](tests/five-products/README.md) · [Skill 规范](SKILL.md)
 
 ## 来源与许可
 
-方案参考 [Higgsfield AI Prompt Skill](https://github.com/OSideMedia/higgsfield-ai-prompt-skill)、[蓝书 AI Video Kit](https://github.com/cclank/lanshu-awesome-ai-video-kit) 和 [Virtual Try-On Video](https://github.com/fsn021920-prog/virtual-try-on-video) 的提示词、参考图和质检思路。这些不是三个自动运行的后端；本仓库使用自己的脚本与已有供应商接口，未新增模型服务。
+方案参考 [Higgsfield AI Prompt Skill](https://github.com/OSideMedia/higgsfield-ai-prompt-skill)、[蓝书 AI Video Kit](https://github.com/cclank/lanshu-awesome-ai-video-kit) 和 [Virtual Try-On Video](https://github.com/fsn021920-prog/virtual-try-on-video) 的提示词、参考图和质检思路。动作风险路由另参考 [OSCBench](https://github.com/iLearn-Lab/ACL26-OSCBench)、[VideoPhy](https://github.com/Hritikbansal/videophy)、[T2V-CompBench](https://github.com/KaiyueSun98/T2V-CompBench) 与 [WorldModelBench](https://github.com/WorldModelBench-Team/WorldModelBench) 的状态变化、物理一致性、动作绑定和物体交互评估维度。这些都不是自动运行的后端；本仓库没有引入其数据、权重或模型服务。
 
 本仓库代码见 [LICENSE](LICENSE)。外部项目的文件与使用条款由各自仓库管理；Virtual Try-On 的个人非商业限制不因本仓库许可证而改变。
