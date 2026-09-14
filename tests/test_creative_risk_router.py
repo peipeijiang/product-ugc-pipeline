@@ -12,6 +12,7 @@ from creative_risk_router import (
     rank_video_directions,
 )
 from generate_ugc_prompts import usage_demo_video_prompt, usage_keyframe_prompt
+from generate_videos_lk888 import compact_omni_prompt
 
 
 class CreativeRiskRouterTests(unittest.TestCase):
@@ -88,6 +89,8 @@ class CreativeRiskRouterTests(unittest.TestCase):
         self.assertFalse(plan["continuous_product_state_change_allowed"])
 
         routed = apply_feasibility_route(self.variant(), plan)
+        self.assertTrue(routed["protect_product_configuration"])
+        self.assertFalse(routed["continuous_product_state_change_allowed"])
         rendered_storyboard = str(routed["storyboard_8s"]).lower()
         self.assertNotIn("unfold", rendered_storyboard)
         self.assertNotIn("insert", rendered_storyboard)
@@ -99,8 +102,13 @@ class CreativeRiskRouterTests(unittest.TestCase):
         keyframe_prompt = usage_keyframe_prompt("portable folding chair", routed, brief, "end")
         self.assertIn("Do not generate setup", video_prompt)
         self.assertIn("topology, connections, part count and geometry must remain unchanged", video_prompt)
-        self.assertIn("do not generate, morph, interpolate or hard-cut the transition", video_prompt)
         self.assertIn("same verified ready-to-use configuration", keyframe_prompt)
+        self.assertIn("do not generate, morph, interpolate or hard-cut the transition", keyframe_prompt)
+
+        omni_prompt = compact_omni_prompt(routed, "10", "omni-reference")
+        self.assertIn("regenerated low-risk chronological storyboard", omni_prompt)
+        self.assertIn("LOW-RISK ROUTE", omni_prompt)
+        self.assertIn("topology, connections, geometry and part count never change", omni_prompt)
 
     def test_simple_ready_state_demo_remains_continuous(self):
         brief = {

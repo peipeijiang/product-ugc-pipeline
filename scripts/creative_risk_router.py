@@ -239,6 +239,10 @@ def apply_feasibility_route(variant: dict[str, Any], plan: dict[str, Any], index
     clean["safe_demo_direction"] = selected
     clean["editing_strategy"] = plan.get("editing_strategy")
     clean["unsafe_actions_omitted"] = plan.get("forbidden_generation", [])
+    clean["protect_product_configuration"] = bool(plan.get("protect_product_configuration"))
+    clean["continuous_product_state_change_allowed"] = bool(plan.get("continuous_product_state_change_allowed"))
+    clean["allowed_motion"] = plan.get("allowed_motion")
+    clean["reference_strategy"] = plan.get("reference_strategy")
     if not plan.get("protect_product_configuration"):
         return clean
 

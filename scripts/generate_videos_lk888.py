@@ -85,6 +85,13 @@ def unique_paths(paths: list[Path]) -> list[Path]:
     return unique
 
 
+def variant_protects_configuration(variant: dict[str, Any]) -> bool:
+    if variant.get("protect_product_configuration") is True:
+        return True
+    risk = variant.get("generation_risk")
+    return isinstance(risk, dict) and str(risk.get("level") or "").lower() in {"high", "critical"}
+
+
 def omni_storyboard_identity_paths(product_dir: Path, variant: dict[str, Any]) -> list[Path]:
     """Return v2 Omni references: storyboard, identity grid, optional operation grid.
 
@@ -117,10 +124,11 @@ def omni_storyboard_identity_paths(product_dir: Path, variant: dict[str, Any]) -
         )
     if not storyboard.with_suffix(".provenance.json").is_file():
         raise RuntimeError(f"Storyboard is missing provenance: {storyboard}")
+    protected_configuration = variant_protects_configuration(variant)
     usage = load_usage(product_dir)
     usage_sheet = local_file(product_dir, usage["output_path"])
     automatic_operation = None
-    if usage_sheet.resolve() != identity_sheet.resolve():
+    if usage_sheet.resolve() != identity_sheet.resolve() and not protected_configuration:
         require_qc(product_dir, [usage_sheet], "usage")
         automatic_operation = usage_sheet
     extra_references = [
@@ -128,14 +136,18 @@ def omni_storyboard_identity_paths(product_dir: Path, variant: dict[str, Any]) -
         for path in explicit_references
         if path.resolve() not in {
             storyboard.resolve(), identity_sheet.resolve(),
-            automatic_operation.resolve() if automatic_operation else identity_sheet.resolve(),
+            usage_sheet.resolve(),
         }
     ]
     references = [storyboard, identity_sheet]
     if automatic_operation:
         references.append(automatic_operation)
-    elif extra_references:
+    elif extra_references and not protected_configuration:
         references.append(extra_references.pop(0))
+    if protected_configuration and extra_references:
+        raise RuntimeError(
+            "Protected Omni route accepts only the regenerated low-risk storyboard and identity grid; remove operation/extra references"
+        )
     if extra_references:
         raise RuntimeError("Omni supports at most three images; remove extra variant references")
     return references
@@ -634,25 +646,34 @@ def compact_omni_prompt(
                 if visual:
                     beat = (f"{timing}: " if timing else "") + visual
                     beats.append(beat + (f"; spoken: {spoken}" if spoken else ""))
+    protected_configuration = variant_protects_configuration(variant)
     operation_sheet = False
     if product_dir and reference_mode == "omni-reference":
         try:
             from v2_contract import load_identity, load_usage, local_file
             identity_record = load_identity(product_dir)
             usage_record = load_usage(product_dir)
-            operation_sheet = (
+            operation_sheet = not protected_configuration and (
                 local_file(product_dir, usage_record["output_path"]).resolve()
                 != local_file(product_dir, identity_record["output_path"]).resolve()
             )
         except RuntimeError:
             operation_sheet = False
     mode_instruction = (
-        "Image 1 is the opening frame and image 2 is the final frame; interpolate a continuous action between them."
+        (
+            "Image 1 and image 2 are continuity references for the same verified ready-to-use product configuration. "
+            "Do not interpolate any product setup or topology change between them."
+            if protected_configuration else
+            "Image 1 is the opening frame and image 2 is the final frame; interpolate one supported continuous action between them."
+        )
         if reference_mode == "first-last"
         else (
-            "Use three all-purpose references: image 1 is the chronological storyboard, image 2 is the product identity grid, and image 3 is the evidence-safe state-change sheet. They are not a forced first/final-frame pair. Never invent a midpoint omitted from image 3."
-            if operation_sheet else
-            "Use two all-purpose references: image 1 is the chronological storyboard and image 2 is the product identity grid; they are not a forced first/final-frame pair."
+            "Use two all-purpose references: image 1 is the regenerated low-risk chronological storyboard and image 2 is the product identity grid. Keep the product in the same ready-to-use configuration shown in the storyboard; no operation grid or setup transition is used."
+            if protected_configuration else (
+                "Use three all-purpose references: image 1 is the chronological storyboard, image 2 is the product identity grid, and image 3 is the evidence-safe state-change sheet. They are not a forced first/final-frame pair. Never invent a midpoint omitted from image 3."
+                if operation_sheet else
+                "Use two all-purpose references: image 1 is the chronological storyboard and image 2 is the product identity grid; they are not a forced first/final-frame pair."
+            )
         )
     )
     voice_items = variant.get("voiceover_script_10s") or variant.get("voiceover_script_8s") or []
@@ -665,12 +686,21 @@ def compact_omni_prompt(
     power_line = power_connection_clause(brief, budget=720)
     identity = variant.get("product_fidelity_block") or brief.get("confirmed_identity") or []
     misuse = variant.get("negative_prompt") or brief.get("misuse_risks_to_avoid") or []
+    risk_direction = variant.get("safe_demo_direction") or {}
+    forbidden_actions = variant.get("unsafe_actions_omitted") or []
+    protected_rule = (
+        f"LOW-RISK ROUTE: {clipped(risk_direction, 360)}. The product starts and ends in one identical verified ready-to-use configuration. "
+        "Its topology, connections, geometry and part count never change. Show only ready-state use, result/detail proof, creator reaction and gentle camera motion. "
+        f"FORBIDDEN PRODUCT ACTIONS: {clipped(forbidden_actions, 420)}. "
+        if protected_configuration else ""
+    )
     def render(factor: float) -> str:
         return (
             f"Create exactly one {duration}-second vertical 9:16 realistic creator-style product video. {mode_instruction} "
             "Keep the same adult creator, room, wardrobe, lighting, camera geometry, props and the one physical product throughout. "
             "Show exactly ONE product; never duplicate it in hands, furniture, mirrors, reflections or screens. "
-            f"PRODUCT TRUTH AND IDENTITY LOCK: {scaled(identity, 700, factor)}. "
+            + protected_rule
+            + f"PRODUCT TRUTH AND IDENTITY LOCK: {scaled(identity, 700, factor)}. "
             "Match image 2 for silhouette, parts, proportions and controls; if SKU colours differ, use the single colourway shown in image 1. "
             f"MANDATORY SKU FOR THIS VIDEO: {clipped(variant.get('sku_colourway'), 240)}. "
             + (power_line + " " if power_line else "")

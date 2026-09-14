@@ -30,7 +30,9 @@ endpoint assets separately and make the cut in editing.
 
 Model profiles adjust creator and camera motion budgets, never the product-evidence
 rules. Seedance 2.0 and MiniMax H3 may receive moderate creator/camera motion;
-Omni Flash and VEO use a more conservative motion budget. No vendor capability
+Omni Flash and VEO use a more conservative motion budget. A protected Omni route
+uses only a regenerated ready-state storyboard and the identity grid; it omits the
+operation grid so conflicting configurations cannot steer the model. No vendor capability
 claim permits an unobserved connection or topology change.
 
 ## Research basis

@@ -82,7 +82,7 @@ Omni Flash 是显式选择，沿用原接口：
 python scripts/generate_videos_lk888.py output --variants 1-3 --model omni-flash --base-url https://api.lk888.ai --status-endpoint /v1/media/status --reference-mode first-last
 ```
 
-`omni-flash` 在本技能中默认生成 10 秒视频，支持 4/6/8/10 秒。`--reference-mode first-last` 使用已生成并通过 QC 的首帧和尾帧；`--reference-mode omni-reference` 至少使用 Image2 时序故事板 + 当前产品身份宫格。若该商品生成了状态转换宫格，适配器会在其通过 usage QC 后自动作为第 3 张参考图。真实主图仍是上游商品真值。提示词会自动压缩到 Updrama 的 4,000 字符上限内。
+`omni-flash` 在本技能中默认生成 10 秒视频，支持 4/6/8/10 秒。`--reference-mode first-last` 使用已生成并通过 QC 的首帧和尾帧；`--reference-mode omni-reference` 至少使用 Image2 时序故事板 + 当前产品身份宫格。非保护路线会把已通过 usage QC 的状态转换宫格作为第 3 张参考图；高风险/严重风险保护路线会省略它，只使用重新生成的完成态故事板和身份宫格。真实主图仍是上游商品真值。提示词会自动压缩到 Updrama 的 4,000 字符上限内。
 
 新脚本均可传入批次目录或单个商品目录；`--products 01,03` 选择批次内商品。新身份脚本支持 `--category electronics` 显式指定类目。旧分类器是关键词/启发式规则，confidence 不是统计准确率。
 

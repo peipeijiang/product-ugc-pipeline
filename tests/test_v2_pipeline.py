@@ -191,6 +191,13 @@ class PipelineTests(unittest.TestCase):
         })
         self.assertEqual(omni_refs, [storyboard, folder / "identity_lock/reference_sheet.png", operation_sheet])
 
+        protected_refs = omni_storyboard_identity_paths(folder, {
+            "reference_images": [str(storyboard.relative_to(folder))],
+            "protect_product_configuration": True,
+            "generation_risk": {"level": "critical"},
+        })
+        self.assertEqual(protected_refs, [storyboard, folder / "identity_lock/reference_sheet.png"])
+
     def test_source_change_invalidates_identity(self):
         folder, _ = self.setup_identity()
         write_json(folder / "product_brief.json", {"changed": True})
