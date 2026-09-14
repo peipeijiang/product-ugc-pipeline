@@ -130,7 +130,7 @@ def submit_image(prompt: str, ref_urls: list[str], size: str = "auto") -> str:
     return str(task_ids[0])
 
 
-def submit_video_veo(prompt: str, ref_urls: list[str], duration: str = "8") -> str:
+def submit_video_veo(prompt: str, ref_urls: list[str], duration: str = "10") -> str:
     """Submit VEO video gen to LK888, return task_id."""
     data = lk888_post("/v1/media/generate", {
         "model": "veo3.1",
@@ -408,7 +408,7 @@ if __name__ == "__main__":
     parser.add_argument("product_dir", type=Path)
     parser.add_argument("--variants", default="12-19")
     parser.add_argument("--video-model", default="veo3.1")
-    parser.add_argument("--duration", default="8")
+    parser.add_argument("--duration", default="10")
     parser.add_argument("--lk888-key", default=os.environ.get("LK888_API_KEY", ""))
     args = parser.parse_args()
 

@@ -17,8 +17,10 @@ MODEL_ALIASES = {
     "h3": "minimax-h3",
     "omni-flash": "omni-flash",
     "omni_flash": "omni-flash",
+    "omni-fast": "omni-flash",
     "veo3.1": "veo3.1",
     "veo-3.1": "veo3.1",
+    "veo-3.1-fast-fl": "veo3.1",
 }
 
 MODEL_PROFILES = {
@@ -261,9 +263,10 @@ def apply_feasibility_route(variant: dict[str, Any], plan: dict[str, Any], index
             "proof_moment": clean["proof_moment"],
         }
     clean["shot_plan"] = [
-        {"time": "0-2s", "visual": "Open on the buyer need with the complete ready-state product already clearly visible; no setup motion."},
-        {"time": "2-5s", "visual": f"Use one simple human or camera motion while product geometry stays fixed. Show: {direction}"},
-        {"time": "5-8s", "visual": "Hold on the unchanged product and the buyer-visible result; use a detail or reaction as proof."},
+        {"time": "0-3s", "visual": "Open on the buyer need with the complete ready-state product already clearly visible; no setup motion."},
+        {"time": "3-7s", "visual": f"Use one simple human or camera motion while product geometry stays fixed. Show: {direction}"},
+        {"time": "7-10s", "visual": "Hold on the unchanged product and the buyer-visible result; use a detail or reaction as proof."},
     ]
-    clean["storyboard_8s"] = [dict(item, spoken="", overlay="") for item in clean["shot_plan"]]
+    clean["storyboard_10s"] = [dict(item, spoken="", overlay="") for item in clean["shot_plan"]]
+    clean.pop("storyboard_8s", None)
     return clean

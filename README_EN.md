@@ -188,7 +188,7 @@ python scripts/generate_videos_lk888.py product-ugc-output \
   --generation-mode fast
 ```
 
-For `omni-flash`, this skill defaults to a 10-second video (the provider supports 4/6/8/10 seconds). Choose `--reference-mode first-last` for an exact generated start/end pair. In v2, `--reference-mode omni-reference` uses an Image2 chronological storyboard and the current identity grid. A folding, assembly, installation, extension, or other state-changing product automatically adds its QC-passed state-change grid as image 3. The canonical product photo remains upstream evidence. Omni prompts are compacted to the provider's 4,000-character limit.
+Every production model now uses the same 10-second contract: `storyboard_10s`, `voiceover_script_10s`, generated prompts, and submission parameters agree. Choose `--reference-mode first-last` for an exact generated start/end pair. In v2, `--reference-mode omni-reference` uses an Image2 chronological storyboard and the current identity grid. A non-protected route may add its QC-passed state-change grid as image 3; a high/critical protected route omits it. The canonical product photo remains upstream evidence. Omni prompts are compacted to the provider's 4,000-character limit.
 
 ### 6. Run the parallel image-to-video pipeline
 
@@ -197,7 +197,7 @@ LK888_API_KEY=$LK888_API_KEY \
 python scripts/parallel_pipeline.py product-ugc-output/01-product-name \
   --variants 1-10 \
   --video-model veo3.1 \
-  --duration 8
+  --duration 10
 ```
 
 This entry point reads the existing `ugc_prompts.json` and product references in the product directory, submits start frames, creates each end frame from its completed start frame, and submits the corresponding video as soon as the pair is ready.
@@ -264,7 +264,7 @@ The production workflow follows a fail-fast contract:
 - Do not generate keyframes without a core selling claim, proof moment, and fidelity rules.
 - Do not submit paid video tasks when keyframes fail product or continuity review.
 - Record VEO provider failures, timeouts, and balance errors without silently changing models.
-- Apply separate voiceover word budgets for 8-second and 10-second videos.
+- Use the 10-second voiceover budget: 18–22 words, with a hard maximum of 25.
 - No subtitles, platform icons, or social-media UI; only sparse non-caption feature tags are allowed.
 
 ## Historical v1 Production Snapshot

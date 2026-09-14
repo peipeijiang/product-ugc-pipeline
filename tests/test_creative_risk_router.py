@@ -1,4 +1,5 @@
 """Offline tests for conservative video-direction routing."""
+import argparse
 import sys
 import unittest
 from pathlib import Path
@@ -11,11 +12,38 @@ from creative_risk_router import (
     normalize_model_profile,
     rank_video_directions,
 )
-from generate_ugc_prompts import usage_demo_video_prompt, usage_keyframe_prompt
-from generate_videos_lk888 import compact_omni_prompt
+from generate_ugc_prompts import (
+    normalize_shot_plan_10s,
+    normalize_voiceover_script_10s,
+    usage_demo_video_prompt,
+    usage_keyframe_prompt,
+)
+from generate_videos_lk888 import build_model_params, compact_omni_prompt
 
 
 class CreativeRiskRouterTests(unittest.TestCase):
+    def test_ten_second_timeline_is_the_generation_contract(self):
+        voiceover = normalize_voiceover_script_10s(["Problem", "Product proof", "Buyer result"])
+        self.assertEqual([item["time"] for item in voiceover], ["0-3s", "3-7s", "7-10s"])
+        shots = normalize_shot_plan_10s(
+            ["Need", "Ready product", "Use", "Proof", "Result"],
+            {"hook": "Need", "selling_angle": "Result"},
+        )
+        self.assertEqual(shots[-1]["time"], "8.5-10.0s")
+
+        params = build_model_params(
+            argparse.Namespace(
+                model="veo3.1",
+                duration="10",
+                generation_mode="fast",
+                aspect_ratio="9:16",
+                enhance_prompt="false",
+                enable_upsample=None,
+            ),
+            ["https://example.invalid/start.png", "https://example.invalid/end.png"],
+        )
+        self.assertEqual(params["duration"], "10")
+
     def high_risk_brief(self):
         return {
             "product_name": "portable folding chair",
@@ -49,14 +77,14 @@ class CreativeRiskRouterTests(unittest.TestCase):
             "selling_angle": "comfortable support",
             "buyer_result": "The creator relaxes comfortably.",
             "shot_plan": [
-                {"time": "0-2s", "visual": "Unfold the chair."},
-                {"time": "2-5s", "visual": "Insert the pin."},
-                {"time": "5-8s", "visual": "Sit down."},
+                {"time": "0-3s", "visual": "Unfold the chair."},
+                {"time": "3-7s", "visual": "Insert the pin."},
+                {"time": "7-10s", "visual": "Sit down."},
             ],
-            "voiceover_script_8s": [
-                {"time": "0-2s", "line": "Long day?"},
-                {"time": "2-5s", "line": "This chair gives stable support"},
-                {"time": "5-8s", "line": "wherever I stop."},
+            "voiceover_script_10s": [
+                {"time": "0-3s", "line": "Long day?"},
+                {"time": "3-7s", "line": "This chair gives stable support"},
+                {"time": "7-10s", "line": "wherever I stop."},
             ],
             "selected_reference_images": ["images/chair.png"],
         }
@@ -91,7 +119,7 @@ class CreativeRiskRouterTests(unittest.TestCase):
         routed = apply_feasibility_route(self.variant(), plan)
         self.assertTrue(routed["protect_product_configuration"])
         self.assertFalse(routed["continuous_product_state_change_allowed"])
-        rendered_storyboard = str(routed["storyboard_8s"]).lower()
+        rendered_storyboard = str(routed["storyboard_10s"]).lower()
         self.assertNotIn("unfold", rendered_storyboard)
         self.assertNotIn("insert", rendered_storyboard)
         self.assertIn("ready-state", rendered_storyboard)

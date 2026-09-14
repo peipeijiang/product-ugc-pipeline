@@ -314,9 +314,9 @@ def append_native_audio_instruction(prompt: str, voice_lines: Any, locale: str =
         "No subtitles, no captions, no readable on-screen text, no labels, no social media icons, no platform logos, no camera/reel icons, no reaction icons, no app UI, no watermarks. "
     )
     if line:
-        audio_block += f"Spoken voiceover, complete within 8 seconds: \"{line}\""
+        audio_block += f"Spoken voiceover, complete within 10 seconds: \"{line}\""
     else:
-        audio_block += "Use a short natural product-demo voiceover that finishes within 8 seconds."
+        audio_block += "Use a short natural product-demo voiceover that finishes within 10 seconds."
     return prompt + audio_block
 
 
@@ -459,7 +459,7 @@ def append_safe_native_audio_instruction(prompt: str, voice_lines: Any, locale: 
 
 def append_mid_native_audio_instruction(prompt: str, voice_lines: Any, callouts: list[str], locale: str = "en-US") -> str:
     voice, language = voice_profile(locale)
-    safe_line = compact_voiceover_line(voice_lines, "Watch this tiny upgrade make the setup feel easier.", max_words=18)
+    safe_line = compact_voiceover_line(voice_lines, "Watch this tiny upgrade make the setup feel easier.", max_words=22)
     overlay_block = ""
     if callouts:
         safe_callouts = []
@@ -479,7 +479,7 @@ def append_mid_native_audio_instruction(prompt: str, voice_lines: Any, callouts:
     audio_block = (
         f"\n\nNATIVE AUDIO: Generate natural native audio inside the video: a bright {voice} lifestyle-commerce creator voice, stylish, warm, emotionally engaged, friendly, clear, not robotic, not corporate. "
         f"Every spoken word must be in {language}; never answer in English. "
-        f"Spoken voiceover, complete within 8 seconds: \"{safe_line}\" "
+        f"Spoken voiceover, complete within 10 seconds: \"{safe_line}\" "
         "Add subtle upbeat modern lifestyle background music under the voice at low volume, no lyrics, plus light real handling sounds. "
         "No subtitles, no captions, no full-sentence labels, no emoji text, no social media icons, no platform logos, no camera/reel icons, no reaction icons, no app UI, and no watermarks. The only allowed readable text is the explicitly allowed tiny feature-tag overlay words."
     )
@@ -546,6 +546,7 @@ def build_model_params(args: argparse.Namespace, image_urls: list[str]) -> dict[
         return {
             "quality": args.quality,
             "aspect_ratio": args.aspect_ratio,
+            "duration": str(args.duration),
             "images": image_urls,
             "enhance_prompt": args.enhance_prompt,
         }
@@ -563,6 +564,7 @@ def build_model_params(args: argparse.Namespace, image_urls: list[str]) -> dict[
     params: dict[str, Any] = {
         "generation_mode": args.generation_mode,
         "aspect_ratio": args.aspect_ratio,
+        "duration": str(args.duration),
         "images": image_urls,
         "enhance_prompt": args.enhance_prompt,
     }
@@ -635,6 +637,7 @@ def compact_omni_prompt(
         effective = width if factor >= 1.0 else max(24, int(round(width * factor ** weight)))
         return clipped(value, effective)
 
+    # Legacy `_8s` fields remain readable, but every new batch writes and submits the 10-second contract.
     storyboard = variant.get("storyboard_10s") or variant.get("storyboard_8s") or variant.get("shot_plan") or []
     beats: list[str] = []
     if isinstance(storyboard, list):
@@ -1011,7 +1014,7 @@ def main() -> None:
     parser.add_argument(
         "--duration",
         default=None,
-        help="Video duration. Defaults to 10 for omni-flash/omni_flash-10s and 8 for other models.",
+        help="Video duration. Defaults to 10 seconds for every model.",
     )
     parser.add_argument("--audio-duration", default=None)
     parser.add_argument("--resolution", default="720p")
@@ -1046,7 +1049,7 @@ def main() -> None:
                         help="Spoken language and accent for the native audio, e.g. en-US, es-MX, es-ES, es-419, pt-BR. A per-variant 'voice_locale' field overrides this.")
     args = parser.parse_args()
     if args.duration is None:
-        args.duration = "10" if args.model in {"omni-flash", "omni_flash-10s"} else "8"
+        args.duration = "10"
     if args.audio_duration is None:
         args.audio_duration = str(args.duration)
     if args.model in {"omni-flash", "omni_flash-10s"} and str(args.duration) not in {"4", "6", "8", "10"}:

@@ -16,14 +16,14 @@ from creative_risk_router import apply_feasibility_route, build_video_feasibilit
 UGC_SYSTEM_PROMPT = """You are a senior UGC creative director and ecommerce offer strategist for short-form product video.
 Before writing scenes, identify the buyer's core reason to buy, then turn it into a product-faithful vertical creator ad that sells the result, uses natural native audio, and preserves strict product continuity. Return JSON only."""
 
-VOICEOVER_SEGMENTS = [("0-2s", 6), ("2-5s", 9), ("5-8s", 7)]
-VOICEOVER_TARGET_WORDS = (14, 18)
-VOICEOVER_HARD_MAX_WORDS = 20
+VOICEOVER_SEGMENTS = [("0-3s", 8), ("3-7s", 11), ("7-10s", 8)]
+VOICEOVER_TARGET_WORDS = (18, 22)
+VOICEOVER_HARD_MAX_WORDS = 25
 SHOT_TIME_SLOTS = {
-    3: ["0.0-2.0s", "2.0-5.0s", "5.0-8.0s"],
-    4: ["0.0-1.5s", "1.5-3.2s", "3.2-5.8s", "5.8-8.0s"],
-    5: ["0.0-1.2s", "1.2-2.8s", "2.8-5.2s", "5.2-6.8s", "6.8-8.0s"],
-    6: ["0.0-1.0s", "1.0-2.3s", "2.3-3.8s", "3.8-5.4s", "5.4-6.8s", "6.8-8.0s"],
+    3: ["0.0-3.0s", "3.0-7.0s", "7.0-10.0s"],
+    4: ["0.0-2.0s", "2.0-5.0s", "5.0-8.0s", "8.0-10.0s"],
+    5: ["0.0-2.0s", "2.0-4.0s", "4.0-6.5s", "6.5-8.5s", "8.5-10.0s"],
+    6: ["0.0-1.5s", "1.5-3.0s", "3.0-4.5s", "4.5-6.5s", "6.5-8.5s", "8.5-10.0s"],
 }
 
 CREATIVE_MATRIX_ARCHETYPES = [
@@ -297,13 +297,15 @@ def _trim_to_words(text: str, max_words: int) -> str:
     return " ".join(words[:max_words]).rstrip(" ,.-")
 
 
-def normalize_voiceover_script_8s(raw_voiceover: Any, hook: str = "", fallback: str = "") -> list[dict[str, str]]:
+def normalize_voiceover_script_10s(raw_voiceover: Any, hook: str = "", fallback: str = "") -> list[dict[str, str]]:
     collected: list[str] = []
     if isinstance(raw_voiceover, dict):
         for time_slot, _ in VOICEOVER_SEGMENTS:
             text = str(raw_voiceover.get(time_slot) or "").strip()
             if text:
                 collected.append(text)
+        if not collected:  # Read legacy/custom time-slot dictionaries, then rewrite them to the 10-second contract.
+            collected = [str(value).strip() for value in raw_voiceover.values() if str(value).strip()]
     elif isinstance(raw_voiceover, list):
         for item in raw_voiceover:
             if isinstance(item, dict):
@@ -343,7 +345,7 @@ def normalize_voiceover_script_8s(raw_voiceover: Any, hook: str = "", fallback: 
 
 
 def compact_voiceover_text(raw_voiceover: Any) -> str:
-    normalized = normalize_voiceover_script_8s(raw_voiceover)
+    normalized = normalize_voiceover_script_10s(raw_voiceover)
     return " ".join(item["line"] for item in normalized if item.get("line")).strip()
 
 
@@ -353,7 +355,7 @@ def _shot_text(item: Any) -> str:
     return str(item or "").strip()
 
 
-def normalize_shot_plan_8s(raw_shot_plan: Any, variant: dict[str, Any]) -> list[dict[str, str]]:
+def normalize_shot_plan_10s(raw_shot_plan: Any, variant: dict[str, Any]) -> list[dict[str, str]]:
     raw_items = raw_shot_plan if isinstance(raw_shot_plan, list) else []
     shots = [_shot_text(item) for item in raw_items]
     shots = [shot for shot in shots if shot][:6]
@@ -411,8 +413,12 @@ def assign_spoken_lines_to_shots(shot_plan: list[dict[str, str]], voiceover: lis
 
 
 def storyboard_entries(variant: dict[str, Any]) -> list[dict[str, str]]:
-    shot_plan = normalize_shot_plan_8s(variant.get("shot_plan"), variant)
-    voiceover = normalize_voiceover_script_8s(variant.get("voiceover_script_8s"), hook=str(variant.get("hook") or ""))
+    shot_plan = normalize_shot_plan_10s(variant.get("shot_plan"), variant)
+    # `_8s` is read-only migration support; normalized output is always `_10s`.
+    voiceover = normalize_voiceover_script_10s(
+        variant.get("voiceover_script_10s") or variant.get("voiceover_script_8s"),
+        hook=str(variant.get("hook") or ""),
+    )
     callouts = normalize_on_screen_callouts(variant.get("on_screen_callouts"), str(variant.get("selling_angle") or variant.get("usage_logic") or ""))
     spoken_assignments = assign_spoken_lines_to_shots(shot_plan, voiceover)
     entries: list[dict[str, str]] = []
@@ -641,14 +647,16 @@ def normalize_variants(
             clean_variant = apply_feasibility_route(clean_variant, feasibility_plan, matrix_index)
         clean_variant.setdefault("negative_prompt", "Do not alter product geometry, color, material, logo/text, silhouette, or invent extra parts.")
         clean_variant.setdefault("function_intro_prompt", build_function_intro_prompt(product_name, feature_summary, clean_variant.get("hook", "")))
-        clean_variant["voiceover_script_8s"] = normalize_voiceover_script_8s(
-            clean_variant.get("voiceover_script_8s"),
+        clean_variant["voiceover_script_10s"] = normalize_voiceover_script_10s(
+            clean_variant.get("voiceover_script_10s") or clean_variant.get("voiceover_script_8s"),
             hook=str(clean_variant.get("hook") or ""),
-            fallback=build_voiceover_script_8s(product_name, feature_summary, clean_variant.get("hook", ""))[1]["line"],
+            fallback=build_voiceover_script_10s(product_name, feature_summary, clean_variant.get("hook", ""))[1]["line"],
         )
+        clean_variant.pop("voiceover_script_8s", None)
         clean_variant["on_screen_callouts"] = normalize_on_screen_callouts(clean_variant.get("on_screen_callouts"), feature_summary)
-        clean_variant["shot_plan"] = normalize_shot_plan_8s(clean_variant.get("shot_plan"), clean_variant)
-        clean_variant["storyboard_8s"] = storyboard_entries(clean_variant)
+        clean_variant["shot_plan"] = normalize_shot_plan_10s(clean_variant.get("shot_plan"), clean_variant)
+        clean_variant["storyboard_10s"] = storyboard_entries(clean_variant)
+        clean_variant.pop("storyboard_8s", None)
         clean_variant.setdefault("function_demo_prompt", build_function_demo_prompt(product_name, feature_summary, clean_variant.get("title", "")))
         fidelity = product_fidelity_block(product_name, product_brief)
         image_prompt = str(clean_variant.get("image_prompt") or "")
@@ -1040,8 +1048,8 @@ def build_function_intro_prompt(product_name: str, feature_summary: str, hook: s
     )
 
 
-def build_voiceover_script_8s(product_name: str, feature_summary: str, hook: str = "") -> list[dict[str, str]]:
-    return normalize_voiceover_script_8s(
+def build_voiceover_script_10s(product_name: str, feature_summary: str, hook: str = "") -> list[dict[str, str]]:
+    return normalize_voiceover_script_10s(
         [
             hook or "This is the small fix that changes the whole routine.",
             f"Use it once, and the benefit is obvious: {feature_summary[:90]}",
@@ -1234,7 +1242,7 @@ def usage_keyframe_prompt(
         start_entry = storyboard_entries(variant)[0] if storyboard_entries(variant) else {"visual": "hook setup"}
         start_visual = sanitize_single_photo_prompt_text(str(start_entry.get("visual", "")))
         moment = (
-            f"END FRAME PHOTO: this is the final shot of the 8-second story. "
+            f"END FRAME PHOTO: this is the final shot of the 10-second story. "
             f"The opening hook was: {start_visual}. "
             f"Now create the SATISFYING CONCLUSION: [{endpoint.get('time')}] {endpoint_visual}. "
             "You are given the start-frame reference image for continuity (same room, same person, same lighting, same product identity). "
@@ -1344,8 +1352,8 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
     if not scene_context:
         scene_context = "a realistic home setting where this product would naturally be used"
     storyboard = format_storyboard_for_prompt(variant)
-    raw_voiceover = variant.get("voiceover_script_8s") or []
-    normalized_voiceover = normalize_voiceover_script_8s(
+    raw_voiceover = variant.get("voiceover_script_10s") or variant.get("voiceover_script_8s") or []
+    normalized_voiceover = normalize_voiceover_script_10s(
         raw_voiceover,
         hook=str(variant.get("hook") or ""),
         fallback=str(variant.get("dialogue_script") or variant.get("title") or ""),
@@ -1356,7 +1364,7 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
         "Native audio: include a clear young American female lifestyle-commerce creator voiceover, bright, stylish, warm, emotionally engaged, and not robotic or corporate. "
         f"Commercial spine for the spoken copy: buyer problem/desire = {buyer_problem}; product intervention = {product_intervention}; buyer result = {buyer_result}. "
         "The spoken copy must sell this spine with a natural creator cadence; do not spend the line only naming parts, materials, or generic setup steps. "
-        "The spoken script must finish naturally within 8 seconds at normal creator pace, ideally 14 to 18 English words total and never more than 20 words. "
+        "The spoken script must finish naturally within 10 seconds at normal creator pace, ideally 18 to 22 English words total and never more than 25 words. "
         f"Speak these exact timed lines in order: {timed_voiceover}. "
         f"Combined exact script: \"{voiceover_text[:220]}\" "
         "Do not add intro words, filler, repeated lines, extra CTA, or any unscripted speech. Keep the voiceover synchronized to the benefit/result arc. Add low-volume modern lifestyle background music plus subtle real product handling sounds; no singing."
@@ -1404,14 +1412,14 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
         f"forbidden generation = {variant.get('unsafe_actions_omitted') or feasibility.get('forbidden_generation', [])}. "
     )
     return (
-        "Create an 8-second vertical stylish creator-ad product-use clip using the provided reference frame or start/end keyframes. "
+        "Create a 10-second vertical stylish creator-ad product-use clip using the provided reference frame or start/end keyframes. "
         "If two reference images are provided, use image 1 as the first frame and image 2 as the final frame, keeping the same subject, room, lighting, wardrobe, and camera geometry unless the storyboard intentionally moves within that same scene. "
         "Commercial north star: every visual beat and the voiceover must sell the buyer-visible result, not merely list product parts. "
         f"Core buyer reason to buy: {core_selling_claim}. "
         f"Benefit ladder: problem/desire = {buyer_problem}; product action = {product_intervention}; result/proof = {buyer_result}. "
         f"Buyer-visible effect to dramatize: {buyer_effect}. "
         f"{feasibility_block}{action_arc} "
-        f"Follow this exact 0-8s storyboard with visual beat, spoken line, and sparse feature overlay for each beat: {storyboard} "
+        f"Follow this exact 0-10s storyboard with visual beat, spoken line, and sparse feature overlay for each beat: {storyboard} "
         f"Supported product action: {usage_context}. "
         f"Scene context: {scene_context}. "
         f"Scene imagination: {scene_imagination}. "
@@ -1490,13 +1498,13 @@ Each variant must include:
 - hook
 - dialogue_script with natural spoken lines
 - function_intro_prompt: a separate prompt for generating concise spoken function explanation
-- voiceover_script_8s: timed 0-2s, 2-5s, 5-8s spoken script lines that sell the main buyer problem/desire, show the product intervention, and land the buyer-visible result
+- voiceover_script_10s: timed 0-3s, 3-7s, 7-10s spoken script lines that sell the main buyer problem/desire, show the product intervention, and land the buyer-visible result
 - on_screen_callouts: 1-3 short ecommerce feature overlay labels rendered as stylish short-form creator typography (bold pill badges, warm vibrant tints, compact pop-up labels); 1-3 plain-English words only, max 18 characters, no emoji; never subtitles, sentence captions, app icons, platform logos, social media icons, camera/reel icons, UI chrome, or watermarks
 - function_demo_prompt: editor-facing prompt that explains the function, proof moment, and final benefit
 - usage_logic: explain how the product works and why the scene is correct
 - proof_moment: the exact visual action that proves the function
-- shot_plan with exact 0-8 second timing
-- storyboard_8s: exact 0-8 second beats; each beat should include time, visual, spoken, and optional sparse overlay rendered as stylish pill-badge / warm-tinted pop-up typography; overlay must be short feature tags only, not subtitles, and the first/last beats must correspond to the start/end keyframes
+- shot_plan with exact 0-10 second timing
+- storyboard_10s: exact 0-10 second beats; each beat should include time, visual, spoken, and optional sparse overlay rendered as stylish pill-badge / warm-tinted pop-up typography; overlay must be short feature tags only, not subtitles, and the first/last beats must correspond to the start/end keyframes
 - selected_reference_images using local paths from the preferred list
 - reference_scope: explain which visual details from source images lock product identity, and explicitly state that source-photo background/props/composition are not mandatory unless functionally necessary
 - selling_angle: one focused buyer benefit for this variant
@@ -1515,18 +1523,18 @@ Critical:
 3. Every variant must pass this commercial test: could a shopper understand the product's benefit with the sound on and again with the sound off? If not, rewrite the storyboard before returning JSON.
 4. Every image_prompt and video_prompt must contain a product-fidelity block requiring exact preservation of the original product appearance.
 5. The selected reference image must be the best true full-product reference: full silhouette, correct SKU/style, real proportions, visible key functional zones. Do not select alternate SKU images, accessory-only images, packaging-only images, loose parts, isolated cables, or detail images as canonical.
-6. Put concise native-audio voiceover lines into VEO video_prompt, and ensure the full spoken copy can naturally finish inside 8 seconds at normal creator pace: target 14-18 English words, hard max 20 words, no unfinished trailing phrase.
-7. Voiceover must be benefit-led and sales-forward: in 14-18 words, it should make the product feel worth buying by naming the buyer problem/desire, the product's role, and the final result. Avoid scripts that only say "snap it", "soft fabric", "white buckle", "easy setup", "here is how it works", or other part/setup descriptions unless those words are tied to the main buyer outcome.
-8. Keep every shot_plan, voiceover_script_8s, image-to-video prompt, and action arc designed for exactly 8 seconds. Do not write 9-12s, 10-12s, 12s, or 15s plans.
+6. Put concise native-audio voiceover lines into video_prompt, and ensure the full spoken copy can naturally finish inside 10 seconds at normal creator pace: target 18-22 English words, hard max 25 words, no unfinished trailing phrase.
+7. Voiceover must be benefit-led and sales-forward: in 18-22 words, it should make the product feel worth buying by naming the buyer problem/desire, the product's role, and the final result. Avoid scripts that only say "snap it", "soft fabric", "white buckle", "easy setup", "here is how it works", or other part/setup descriptions unless those words are tied to the main buyer outcome.
+8. Keep every shot_plan, voiceover_script_10s, image-to-video prompt, and action arc designed for exactly 10 seconds. Do not write 8s, 9s, 12s, or 15s plans.
 9. Allow only 1-2 tiny sparse VEO overlay labels from on_screen_callouts as feature tags, e.g. "100 speeds" or "Tilt airflow"; render them as stylish short-form creator typography (bold rounded pill badges, warm vibrant accent tints, compact pop-up labels), plain-English only, no emoji. If clean stylish text is uncertain, skip overlay rather than render ugly/garbled words. Do not ask for subtitles, transcript captions, lower-thirds, karaoke text, social media icons, platform logos, camera/reel icons, app UI, or watermarks. Never use positive platform-branded style phrases; say stylish short-form creator-ad energy instead.
 10. Build the video from a single storyboard: video_prompt must include every beat's time, visual content, spoken line, and optional sparse feature overlay; start_frame_prompt must depict the first beat's problem/setup; end_frame_prompt must depict the final beat's improved result/payoff. Overlay must not repeat the spoken line as subtitles.
 11. Product reference images lock the product itself, not the entire source photo. Preserve product identity and usage mechanics, but freely imagine realistic buyer scenes, backgrounds, camera angles, and contextual props that clarify the benefit.
 12. Each variant should focus on one small selling point or function. Vary buyer problem, scene, action, proof/result moment, and emotional payoff across the batch; do not produce ten versions of the same tabletop placement.
 12b. If the core selling claim is the same for every variant, the story must vary even more aggressively: use different hook archetypes, different people or social contexts, different before-state problems, different scene geometry, different proof/payoff visuals, different camera grammar, and different pacing. The product can solve the same buyer desire, but the ads must not look like clones.
-13. Start/end keyframes should be meaningfully different enough for an 8-second action arc while preserving the same exact product. Generate the end frame as the same shoot a few seconds later: same room, wall socket/table, person, wardrobe, lighting, product identity, and camera geometry; only the action result changes.
+13. Start/end keyframes should be meaningfully different enough for a 10-second action arc while preserving the same exact product. Generate the end frame as the same shoot a few seconds later: same room, wall socket/table, person, wardrobe, lighting, product identity, and camera geometry; only the action result changes.
 14. Read the historical variants listed above as actual prior creative work for this product. Do not paraphrase them. Avoid reusing the same scene setup, same use action, same proof moment, same buyer context, or same selling angle unless you materially transform at least 3 of those dimensions.
 15. When function overlap is unavoidable, deliberately choose a different buyer problem, a different visible result, a different camera idea, and a different proof framing instead of repeating the same demo in new words.
-15b. Use the CREATIVE MATRIX CONTRACT as the diversity source of truth. A variant fails if its creative_matrix_slot is not reflected in its hook, shot_plan, storyboard_8s, start_frame_prompt, end_frame_prompt, and video_prompt.
+15b. Use the CREATIVE MATRIX CONTRACT as the diversity source of truth. A variant fails if its creative_matrix_slot is not reflected in its hook, shot_plan, storyboard_10s, start_frame_prompt, end_frame_prompt, and video_prompt.
 16. Before writing the variants, allocate one primary_function_focus per variant from the high-priority commercial promise, confirmed_selling_points, manifest selling_points, confirmed_use_cases, step_by_step_usage, and proof_moments. Do not let minor hardware details or materials become the lead selling angle when the product title/page/URL clearly sells a higher-level benefit. Hardware details such as buckle, slider, material, color, pattern, button, cable, LED, or case should support the main promise rather than replace it. For multifunction wearables such as smart rings, do not default every variant to photo-taking/remote shutter; split confirmed functions across health/app checks, charging, status display, touch control, activity tracking, waterproof daily wear, or fit/detail as supported by the brief.
 17. If a phone appears, make its orientation physically possible. For selfie/timer/remote-shutter demos, the phone screen faces the creator and the lens points toward the creator; the viewer sees phone back/side, mirror, or over-shoulder composition. For app-screen proof, use over-shoulder/tabletop/second-device geometry. For wireless charging, the phone lies flat screen-up on the charger unless the real product is a stand.
 18. Follow VIDEO GENERATION FEASIBILITY ROUTE before choosing the storyboard action. Use its lowest-risk useful direction and motion budget. Model capability claims never override product evidence or topology risk.

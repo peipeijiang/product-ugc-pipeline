@@ -359,7 +359,7 @@ class PipelineTests(unittest.TestCase):
         video.parent.mkdir()
         video.write_bytes(b"synthetic video bytes")
         expected = video_contract(folder, frames, "veo3.1", "test prompt",
-                                  {"duration": "8", "aspect_ratio": "9:16"})
+                                  {"duration": "10", "aspect_ratio": "9:16"})
         record_video(folder, video, expected, "test prompt", {"task_id": "fake"})
         check_existing_video(folder, video, expected)
         validate_video_chain(folder, video)

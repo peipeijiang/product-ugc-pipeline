@@ -64,7 +64,7 @@ python scripts/qc_dual_consistency.py output --stage usage
 
 每张场景图输出对应的 `.provenance.json`，保存实际参考文件摘要、完整提示词、图片模型和供应商。图片提示词明确只输出一张正常的竖版照片，不复制宫格布局。
 
-VEO 继续接收场景首尾帧。Omni Flash 默认 10 秒，并提供两种显式模式：`first-last` 使用场景首尾帧；`omni-reference` 使用“Image2 时序故事板 + 产品身份宫格”。非保护路线可自动追加已质检的状态宫格作为第 3 张；高风险/严重风险保护路线省略状态宫格。故事板必须有当前 provenance 并通过关键帧 QC，身份宫格和实际使用的状态宫格分别通过对应 QC。真实主图只负责生成和校验这些参考，不直接传给 Omni。三个视频入口在 v2 中都先检查参考来源和相应 QC。
+所有视频模型统一使用 10 秒生产契约。VEO 继续接收场景首尾帧；Omni Flash 提供两种显式模式：`first-last` 使用场景首尾帧，`omni-reference` 使用“Image2 时序故事板 + 产品身份宫格”。非保护路线可自动追加已质检的状态宫格作为第 3 张；高风险/严重风险保护路线省略状态宫格。故事板必须有当前 provenance 并通过关键帧 QC，身份宫格和实际使用的状态宫格分别通过对应 QC。真实主图只负责生成和校验这些参考，不直接传给 Omni。三个视频入口在 v2 中都先检查参考来源和相应 QC。
 
 使用 `omni-reference` 时，在单个变体的 `reference_images` 中指定 Image2 生成的时序故事板即可；适配器会自动加入当前产品身份宫格，并按风险路线决定是否加入状态宫格。Omni 最多接收 3 张图，超出的显式候选会在付费提交前报错；保护路线固定为两张，额外参考会被拒绝。故事板需保存 provenance 并通过 `qc_dual_consistency.py --stage keyframes --target <path>`；每格只能出现一台实体产品。
 

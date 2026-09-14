@@ -119,6 +119,7 @@ def main() -> None:
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
     assert_ready_for_fresh_batch(args.output_dir, args.products)
+    target_video_model = args.video_model or ("veo3.1" if args.video_provider == "lk888" else "veo-3.1-fast-fl")
 
     run_command(
         [
@@ -135,6 +136,8 @@ def main() -> None:
             args.history_glob,
             "--model",
             args.prompt_model,
+            "--target-video-model",
+            target_video_model,
             "--base-url",
             args.prompt_base_url,
             "--products",
@@ -225,7 +228,7 @@ def main() -> None:
             args.audio_style,
         ]
         if video_model in {"omni-flash", "omni-fast"}:
-            command.extend(["--duration", "8", "--base-url", "https://api.lk888.ai", "--status-endpoint", "/v1/media/status"])
+            command.extend(["--duration", "10", "--base-url", "https://api.lk888.ai", "--status-endpoint", "/v1/media/status"])
         if args.light_overlay:
             command.append("--light-overlay")
         if args.single_reference:
