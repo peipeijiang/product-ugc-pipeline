@@ -107,7 +107,7 @@ def main() -> None:
     parser.add_argument("--prompt-model", default=os.getenv("PRODUCT_UGC_PROMPT_MODEL", "gpt-5.2"))
     parser.add_argument("--prompt-base-url", default="https://api.laozhang.ai/v1")
     parser.add_argument("--image-model", default="gpt-image-2-vip")
-    parser.add_argument("--image-size", default="1024x1536")
+    parser.add_argument("--image-size", default="1080x1920", help="Scene keyframe canvas passed to generate_images.py. Defaults to 1080x1920 (9:16) to match the vertical video contract.")
     parser.add_argument("--image-base-url", default="https://api.laozhang.ai/v1")
     parser.add_argument("--video-provider", choices=["lk888", "laozhang"], default="lk888")
     parser.add_argument("--video-model", default="")
@@ -227,8 +227,10 @@ def main() -> None:
             "--audio-style",
             args.audio_style,
         ]
-        if video_model in {"omni-flash", "omni-fast"}:
+        if video_model in {"omni-flash", "omni-fast", "omni_flash-10s", "omni_flash-10s-fl"}:
             command.extend(["--duration", "10", "--base-url", "https://api.lk888.ai", "--status-endpoint", "/v1/media/status"])
+        if video_model == "omni_flash-10s-fl":
+            command.extend(["--reference-mode", "first-last"])
         if args.light_overlay:
             command.append("--light-overlay")
         if args.single_reference:
