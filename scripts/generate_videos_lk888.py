@@ -14,6 +14,7 @@ from typing import Any
 import requests
 
 from common import download_binary, load_json, selected_product_dirs, write_json
+from creative_risk_router import format_production_notice
 from generate_images import parse_variants
 
 # The desktop environment may inject a stale local SOCKS proxy.  LK888 and
@@ -898,6 +899,10 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
     payload = {"model": args.model, "prompt": prompt, "params": params}
     if args.model not in OMNI_MODELS:
         payload["count"] = 1
+    print("\n".join(format_production_notice(
+        product_dir.name, variant_id, variant, args.model, args.reference_mode,
+        reference_images[:reference_limit],
+    )), flush=True)
     print(
         f"[params] aspect_ratio={args.aspect_ratio} duration={args.duration} "
         f"reference_mode={args.reference_mode} images={len(params.get('images') or [])}",

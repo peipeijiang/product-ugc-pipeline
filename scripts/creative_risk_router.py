@@ -88,6 +88,24 @@ POSITIVE_RESULT_TERMS = (
     "舒适", "支撑", "稳定", "便携", "收纳", "整洁", "轻量", "成品", "效果", "细节", "容量",
 )
 
+HAZARD_LABELS_ZH = {
+    "topology_change": "安装/连接结构变化",
+    "configuration_change": "展开/折叠状态变化",
+    "reversal_or_inversion": "反转/倒置",
+    "precision_contact": "精确对位或接触",
+    "material_deformation": "材料形变",
+    "multi_object_coordination": "多物体协同",
+    "occluded_contact": "接触点被遮挡",
+}
+
+FORBIDDEN_LABELS_ZH = {
+    "continuous installation, assembly, insertion, reversal, folding or topology-changing motion": "连续安装、组装、插入、反转、折叠或其他结构变化",
+    "multiple dependent product actions in one generated shot": "在一个生成镜头里连续完成多个相互依赖的产品动作",
+    "hands hiding the connection point while product geometry changes": "手遮住连接点时让产品几何结构发生变化",
+    "parts appearing, disappearing, multiplying, crossing or passing through each other": "零件凭空出现、消失、增殖、交叉或互相穿透",
+    "more than one dependent product action in the same shot": "同一镜头中出现多个相互依赖的产品动作",
+}
+
 
 def _text(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False).lower()
@@ -231,6 +249,89 @@ def build_video_feasibility_plan(brief: dict[str, Any], model: str = "model-agno
         ),
         "basis": "Conservative cross-model routing; model marketing claims never override product evidence or topology risk.",
     }
+
+
+def _selected_direction(value: dict[str, Any]) -> str:
+    selected = value.get("selected_direction") or value.get("safe_demo_direction") or {}
+    if isinstance(selected, dict):
+        return str(selected.get("direction") or "source-backed ready-state result").strip()
+    return str(selected or "source-backed ready-state result").strip()
+
+
+def _hazard_summary(hazards: Any) -> str:
+    if not isinstance(hazards, list) or not hazards:
+        return "none"
+    rendered: list[str] = []
+    for hazard in hazards:
+        if not isinstance(hazard, dict):
+            rendered.append(str(hazard))
+            continue
+        hazard_type = str(hazard.get("type") or "unknown")
+        name = HAZARD_LABELS_ZH.get(hazard_type, hazard_type)
+        signals = hazard.get("signals") or []
+        if isinstance(signals, list) and signals:
+            name += f"({','.join(str(item) for item in signals[:4])})"
+        rendered.append(name)
+    return ", ".join(rendered)
+
+
+def describe_video_approach(value: dict[str, Any]) -> str:
+    """Explain the routed 10-second production approach in user-facing language."""
+    generation_risk = value.get("generation_risk") if isinstance(value.get("generation_risk"), dict) else {}
+    level = str(value.get("risk_level") or generation_risk.get("level") or "unknown").lower()
+    protected = value.get("protect_product_configuration") is True or level in {"high", "critical"}
+    if protected:
+        return (
+            "10秒内让商品始终保持已核验的完成态；开场展示结果，中段只安排一个简单的人物或镜头动作，"
+            "结尾用细节、尺度或用户反应证明卖点。安装、折叠或连接过程只使用真实素材，或把独立端点素材在剪辑中硬切。"
+        )
+    if level == "medium":
+        return "先把商品摆到可演示状态；10秒内只展示一个简单交互和一个镜头运动，其余步骤拆到独立素材或剪辑中。"
+    return "用10秒连续镜头展示一个有依据的简单动作和一个镜头运动，全程保持商品身份、零件和结构一致。"
+
+
+def format_feasibility_notice(product_name: str, plan: dict[str, Any]) -> list[str]:
+    """Return concise console lines that expose the assessment before scripting."""
+    protected = "是" if plan.get("protect_product_configuration") else "否"
+    return [
+        (
+            f"[risk] 产品={product_name} 目标模型={plan.get('target_model', 'model-agnostic')} "
+            f"风险={plan.get('risk_level', 'unknown')} 分数={plan.get('risk_score', 0)} 固定商品结构={protected}"
+        ),
+        f"[risk] 触发因素={_hazard_summary(plan.get('hazards'))}",
+        f"[video-plan] 准备这样制作：{describe_video_approach(plan)}",
+        f"[video-plan] 主展示方向={_selected_direction(plan)}",
+    ]
+
+
+def format_production_notice(
+    product_name: str,
+    variant_id: int,
+    variant: dict[str, Any],
+    model: str,
+    reference_mode: str,
+    reference_images: list[Any],
+) -> list[str]:
+    """Return the actual routed plan immediately before a paid video request."""
+    risk = variant.get("generation_risk") if isinstance(variant.get("generation_risk"), dict) else {}
+    level = str(risk.get("level") or "unknown")
+    score = risk.get("score", "unknown")
+    protected = "是" if variant.get("protect_product_configuration") else "否"
+    references = ", ".join(getattr(item, "name", str(item)) for item in reference_images) or "none"
+    lines = [
+        (
+            f"[video-plan] 即将制作 产品={product_name} 变体={variant_id:02d} 模型={model} "
+            f"风险={level} 分数={score} 固定商品结构={protected}"
+        ),
+        f"[video-plan] 实际拍法={describe_video_approach(variant)}",
+        f"[video-plan] 主展示方向={_selected_direction(variant)}",
+        f"[video-plan] 参考模式={reference_mode} 参考图={references}",
+    ]
+    omitted = variant.get("unsafe_actions_omitted") or []
+    if isinstance(omitted, list) and omitted:
+        rendered = [FORBIDDEN_LABELS_ZH.get(str(item), str(item)) for item in omitted]
+        lines.append(f"[video-plan] 不让视频模型生成={'; '.join(rendered)}")
+    return lines
 
 
 def apply_feasibility_route(variant: dict[str, Any], plan: dict[str, Any], index: int = 0) -> dict[str, Any]:

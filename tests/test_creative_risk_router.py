@@ -9,6 +9,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from creative_risk_router import (
     apply_feasibility_route,
     build_video_feasibility_plan,
+    format_feasibility_notice,
+    format_production_notice,
     normalize_model_profile,
     rank_video_directions,
 )
@@ -148,6 +150,31 @@ class CreativeRiskRouterTests(unittest.TestCase):
         self.assertEqual(plan["risk_level"], "low")
         self.assertFalse(plan["protect_product_configuration"])
         self.assertTrue(plan["continuous_product_state_change_allowed"])
+
+    def test_risk_notice_explains_the_planned_video_before_generation(self):
+        plan = build_video_feasibility_plan(self.high_risk_brief(), "omni-flash")
+        notice = "\n".join(format_feasibility_notice("folding-chair", plan))
+        self.assertIn("风险=critical", notice)
+        self.assertIn("固定商品结构=是", notice)
+        self.assertIn("准备这样制作", notice)
+        self.assertIn("安装、折叠或连接过程只使用真实素材", notice)
+        self.assertIn("Stable support and comfortable seated rest", notice)
+
+    def test_submission_notice_reports_actual_references_and_omitted_actions(self):
+        plan = build_video_feasibility_plan(self.high_risk_brief(), "omni-flash")
+        routed = apply_feasibility_route(self.variant(), plan)
+        notice = "\n".join(format_production_notice(
+            "folding-chair",
+            1,
+            routed,
+            "omni-flash",
+            "omni-reference",
+            [Path("storyboard.png"), Path("identity-grid.png")],
+        ))
+        self.assertIn("即将制作", notice)
+        self.assertIn("参考模式=omni-reference", notice)
+        self.assertIn("storyboard.png, identity-grid.png", notice)
+        self.assertIn("不让视频模型生成", notice)
 
 
 if __name__ == "__main__":

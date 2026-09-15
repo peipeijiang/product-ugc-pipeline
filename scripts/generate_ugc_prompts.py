@@ -10,7 +10,11 @@ from pathlib import Path
 from typing import Any
 
 from common import load_json, request_json, require_api_key_for_base_url, selected_product_dirs, write_json
-from creative_risk_router import apply_feasibility_route, build_video_feasibility_plan
+from creative_risk_router import (
+    apply_feasibility_route,
+    build_video_feasibility_plan,
+    format_feasibility_notice,
+)
 
 
 UGC_SYSTEM_PROMPT = """You are a senior UGC creative director and ecommerce offer strategist for short-form product video.
@@ -1573,6 +1577,7 @@ def process_product(product_dir: Path, api_key: str, args: argparse.Namespace) -
         "manifest_selling_points": manifest.get("selling_points") or [],
     }
     feasibility_plan = build_video_feasibility_plan(routing_brief, args.target_video_model)
+    print("\n".join(format_feasibility_notice(product_dir.name, feasibility_plan)), flush=True)
     product_brief = {**product_brief, "video_feasibility_plan": feasibility_plan}
     references = best_reference_images(image_analysis, product_brief, limit=4)
     canonical_prompt_path = product_dir / "ugc_prompts.json"
