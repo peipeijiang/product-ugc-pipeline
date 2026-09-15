@@ -41,8 +41,9 @@ def resolve_image_aspect_ratio(args: argparse.Namespace) -> str:
     """Pick the media-route aspect ratio.
 
     An explicit --image-aspect-ratio always wins. The default is "auto", which
-    derives the ratio from --size so the identity sheet and the keyframes keep the
-    proportion the caller asked for instead of silently becoming 9:16.
+    derives the ratio from --size. Scene keyframes default to 1080x1920 so the
+    derived ratio is 9:16 and matches the vertical video contract; identity and
+    usage sheets pass their own grid canvas and keep that grid proportion.
     """
     requested = str(getattr(args, "image_aspect_ratio", "auto") or "auto")
     if requested != "auto":
@@ -314,7 +315,7 @@ def parse_size(size: str) -> tuple[int, int]:
 def compose_exact_pad_image(reference: Path, destination: Path, size: str) -> Path:
     from PIL import Image, ImageFilter
 
-    output_width, output_height = parse_size(size if size and size != "auto" else "1024x1536")
+    output_width, output_height = parse_size(size if size and size != "auto" else "1080x1920")
     source = Image.open(reference).convert("RGB")
     destination.parent.mkdir(parents=True, exist_ok=True)
 
@@ -432,7 +433,15 @@ def generate_image_file(
                 )
                 response = {"provider": attempt_provider, "task": status}
             else:
-                response = request_openai_image(api_key, args, prompt, references, variant_id)
+                # A media-first run receives the LK888 key at startup, but its
+                # OpenAI-compatible fallback is hosted by LaoZhang. Resolve the
+                # fallback key only when that route is actually attempted.
+                attempt_key = (
+                    api_key
+                    if not is_media_image_provider(provider)
+                    else require_api_key_for_base_url(args.base_url)
+                )
+                response = request_openai_image(attempt_key, args, prompt, references, variant_id)
                 saved_path = save_response_image(response, destination)
                 if not saved_path:
                     raise RuntimeError("OpenAI Images response did not contain a saved image")
@@ -575,7 +584,7 @@ def add_image_provider_arguments(parser: argparse.ArgumentParser) -> None:
         help="Route used when the primary image provider fails. Defaults to the OpenAI-compatible GPT-Image-2 route.",
     )
     parser.add_argument("--image-base-url", default=LK888_BASE_URL, help="Base URL for the upDrama media-task image route.")
-    parser.add_argument("--image-aspect-ratio", default="auto", help="Aspect ratio for the media-task image route. 'auto' derives it from --size, so 1024x1536 stays 2:3 instead of silently becoming 9:16.")
+    parser.add_argument("--image-aspect-ratio", default="auto", help="Aspect ratio for the media-task image route. 'auto' derives it from --size: the 1080x1920 keyframe default gives 9:16, while identity/usage sheets keep their own grid canvas (e.g. 1024x1536 -> 2:3).")
     parser.add_argument("--image-resolution", default="2K", choices=["auto", "1K", "2K", "4K"], help="Resolution tier for the media-task image route.")
     parser.add_argument("--image-version", default="sunburst", choices=["flare", "sunburst"], help="tt-image-2.5 quality tier: flare (standard) or sunburst (enhanced).")
     parser.add_argument("--image-quality", default="high", choices=["auto", "low", "medium", "high", "xhigh", "max"], help="Render quality tier for the media-task image route.")
@@ -590,7 +599,7 @@ def main() -> None:
     parser.add_argument("--prompts-file", default="ugc_prompts.json")
     add_image_provider_arguments(parser)
     parser.add_argument("--model", default="gpt-image-2-vip", help="Model for the OpenAI-compatible fallback route.")
-    parser.add_argument("--size", default="1024x1536")
+    parser.add_argument("--size", default="1080x1920", help="Scene keyframe/pad canvas. Defaults to 1080x1920 (9:16) so keyframes match the vertical video contract; identity/usage sheets override this with their own grid canvas.")
     parser.add_argument("--quality", default="")
     parser.add_argument("--base-url", default="https://api.laozhang.ai/v1")
     parser.add_argument("--products", default="", help="Comma-separated product selectors, e.g. 01 or 01-flower")
@@ -605,7 +614,8 @@ def main() -> None:
     parser.add_argument("--workers", type=int, default=1, help="Concurrent image workers. Results are written after each frame so a slow or failing frame cannot wedge the batch.")
     args = parser.parse_args()
     selected_variants = parse_variants(args.variants)
-    api_key = "local-compose" if args.compose_only else require_api_key_for_base_url(args.base_url)
+    primary_url = args.image_base_url if is_media_image_provider(args.image_provider) else args.base_url
+    api_key = "local-compose" if args.compose_only else require_api_key_for_base_url(primary_url)
     for product_dir in v2.products(args.output_dir, args.products):
         process_product(product_dir, api_key, selected_variants, args)
 

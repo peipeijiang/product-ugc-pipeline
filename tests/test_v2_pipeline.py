@@ -277,6 +277,29 @@ class PipelineTests(unittest.TestCase):
 
         self.assertEqual(calls.call_args_list[0].args[2]["params"]["aspect_ratio"], "9:16")
 
+    def test_media_failure_uses_laozhang_key_for_openai_fallback(self):
+        folder = self.fixture("electronics")
+        args = self.args(folder)
+        args.image_provider = "tt-image-2.5"
+        args.image_fallback = "laozhang-image2"
+        reference = folder / "images/source.png"
+        destination = folder / "generated_images/variant-01.png"
+
+        def key_for_url(url):
+            return "lk888-key" if "lk888" in url else "laozhang-key"
+
+        with patch("generate_images.require_api_key_for_base_url", side_effect=key_for_url), \
+             patch("generate_images.generate_image_via_media_task", side_effect=RuntimeError("media failed")), \
+             patch("generate_images.request_openai_image", return_value=self.response) as fallback:
+            result = generate_image_file(
+                "lk888-key", folder, {"variant_id": 1}, args, destination, "prompt",
+                reference_override=[reference],
+            )
+
+        self.assertEqual(result["image_provider"], "laozhang-image2")
+        self.assertEqual(fallback.call_args.args[0], "laozhang-key")
+        self.assertTrue(destination.exists())
+
     def test_qc_rejects_unknown_and_malformed(self):
         checks = {name: {"status": "pass", "evidence": "test evidence"} for name in CHECKS}
         self.assertEqual(verdict({"checks": checks}), "pass")

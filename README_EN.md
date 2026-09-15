@@ -172,7 +172,7 @@ LAOZHANG_API_KEY=$LAOZHANG_API_KEY \
 python scripts/generate_images.py product-ugc-output \
   --variants 1-10 \
   --model gpt-image-2-vip \
-  --size 1024x1536 \
+  --size 1080x1920 \
   --keyframes
 ```
 

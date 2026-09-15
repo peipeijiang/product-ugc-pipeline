@@ -35,7 +35,7 @@ Params used by the pipeline:
 
 | Param | Value | Notes |
 |---|---|---|
-| `aspect_ratio` | derived from `--size` | `auto` by default, so `--size 1024x1536` becomes `2:3` for identity sheets and keyframes, and `--size 1080x1920` becomes `9:16`. Pass an explicit value to override. |
+| `aspect_ratio` | derived from `--size` | `auto` by default. Scene keyframes now default to `--size 1080x1920`, so the derived ratio is `9:16` and matches the vertical video contract. Identity and usage sheets pass their own grid canvas from `v2_contract.SPECS` and keep that grid proportion. Passing `--size 1024x1536` still yields `2:3`, which must not be used for frames that feed a 9:16 video. Pass an explicit `--image-aspect-ratio` to override. |
 | `resolution` | `2K` | `auto` / `1K` / `2K` / `4K`. |
 | `version` | `sunburst` | `flare` = standard, `sunburst` = enhanced detail. |
 | `quality` | `high` | `auto`/`low`/`medium`/`high`/`xhigh`/`max`. |

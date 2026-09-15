@@ -73,7 +73,7 @@ python scripts/qc_dual_consistency.py output --stage videos --variants 1-3
 
 ```bash
 python scripts/generate_images.py output --variants 1-3 --keyframes \
-  --image-provider laozhang-image2 --image-fallback none --model gpt-image-2-vip --size 1024x1536
+  --image-provider laozhang-image2 --image-fallback none --model gpt-image-2-vip --size 1080x1920
 ```
 
 Omni Flash 是显式选择，沿用原接口。首段可使用 `omni_flash-10s` 或 `omni-flash`；后续连续段使用 `omni_flash-10s-fl` 首尾帧模式：
