@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Build human-reviewable contact sheets for keyframe and sampled-video QC.
+"""Build human-reviewable contact sheets for storyboard and sampled-video QC.
 
 QC stages require a real visual check, but the vision-model path writes only
 JSON verdicts. When review is done by a human, or by an agent whose transport
 cannot inline large images, that check needs durable artifacts on disk:
 
   - one contact sheet per video, evenly sampled and labelled with timestamps
-  - one contact sheet per generated storyboard or keyframe
+  - one contact sheet per generated storyboard
   - an index.html that shows every sheet full width for scrolling review
 
 This script only samples and lays out existing files. It never calls a paid
@@ -43,7 +43,7 @@ def duration_seconds(video: Path) -> float:
         return 0.0
 
 def sample_timestamps(total: float, count: int) -> list[float]:
-    """Evenly spaced interior samples; skips the first/last frame fades."""
+    """Evenly spaced interior samples; skips opening and closing fades."""
     if total <= 0:
         return []
     start = total * 0.03
@@ -175,13 +175,13 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("output_dir", type=Path)
     parser.add_argument("--products", default="")
-    parser.add_argument("--stage", choices=["keyframes", "videos"], default="videos")
+    parser.add_argument("--stage", choices=["storyboards", "videos"], default="videos")
     parser.add_argument("--samples", type=int, default=6, help="Frames sampled per video")
     parser.add_argument("--columns", type=int, default=3)
     parser.add_argument("--frame-width", type=int, default=360)
     parser.add_argument(
         "--image-glob", action="append", default=[],
-        help="Extra globs for keyframe stage, relative to the product folder",
+        help="Extra globs for storyboard stage, relative to the product folder",
     )
     args = parser.parse_args()
     for folder in selected_product_dirs(args.output_dir, args.products):
@@ -207,4 +207,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

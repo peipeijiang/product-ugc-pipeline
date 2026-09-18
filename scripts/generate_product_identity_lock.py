@@ -6,7 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
-from common import require_api_key_for_base_url, write_json
+from common import load_json, require_api_key_for_base_url, write_json
 from generate_images import add_image_provider_arguments, generate_image_file, is_media_image_provider
 from v2_contract import RULES, SPECS, action_ledger, context, digest, input_hashes, load_identity, products
 
@@ -16,8 +16,9 @@ def generate(folder: Path, api_key: str, args: argparse.Namespace) -> dict:
     actions = action_ledger(ctx["brief"])
     spec = ctx["spec"]
     if args.category:
-        write_json(folder / "category.json", {"category": args.category, "confidence": 1.0,
-                                              "detected_from": "explicit_user_category"})
+        existing_category = load_json(folder / "category.json", {})
+        write_json(folder / "category.json", {**existing_category, "category": args.category, "visual_family": args.category,
+                                              "confidence": 1.0, "detected_from": "explicit_user_category"})
     destination = folder / "identity_lock/reference_sheet.png"
     if destination.exists() and not args.force:
         record = load_identity(folder)
@@ -40,7 +41,8 @@ def generate(folder: Path, api_key: str, args: argparse.Namespace) -> dict:
     compact_brief = {
         key: ctx["brief"].get(key)
         for key in (
-            "product_name", "product_type", "recommended_v2_category", "confirmed_identity", "confirmed_selling_points",
+            "product_name", "product_type", "recommended_v2_category", "catalog_taxonomy", "production_classification",
+            "confirmed_identity", "confirmed_selling_points",
             "canonical_reference_images", "misuse_risks_to_avoid",
             "hallucination_defense", "identity_panel_overrides", "dimensions_mm", "state_change_contract",
         )
@@ -94,7 +96,7 @@ def generate(folder: Path, api_key: str, args: argparse.Namespace) -> dict:
     else:
         route_model, route_base_url = args.model, args.base_url
     record = {**slim_result, "status": "completed", "category": spec["category"], "sheet_count": 1,
-              "layout": spec["layout"], "panels": panels, "model": route_model,
+              "layout": spec["layout"], "panels": panels, "physical_traits": spec.get("physical_traits", []), "model": route_model,
               "base_url": route_base_url, "image_provider": used_provider,
               "source_hashes": input_hashes(folder, ctx),
               "sha256": digest(destination), "qc_status": "pending", "actions": actions}

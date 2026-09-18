@@ -2,19 +2,17 @@
 """
 Product Category Classifier for UGC Pipeline v2
 
-Automatically classifies products into one of 6 categories, or stops as unclassified:
-- apparel (服装): tops, pants, dresses, etc.
-- jewelry (首饰): rings, necklaces, earrings, etc.
-- electronics (电子产品/玩具): earbuds, speakers, toy blocks, etc.
-- home-tools (厨房/家居工具): knife, peeler, spatula, etc.
-- pet-tools (宠物工具): brush, leash, collar, etc.
-- furniture (家具): chairs, loungers, cots, stools, tables
+Classifies a physical product into a reusable UGC production family. When a
+model-built product brief is present, its multimodal production profile wins;
+title keywords are only a pre-brief compatibility fallback.
 """
 
 import json
 import re
 import sys
 from pathlib import Path
+
+from product_taxonomy import normalize_catalog_taxonomy, normalize_production_profile
 
 
 def load_json(path: Path) -> dict:
@@ -84,6 +82,18 @@ def classify_by_keywords(title: str) -> tuple[str | None, float]:
         "camping cot", "folding cot", "camp cot", "stool", "folding table", "recliner", "折叠椅", "折りたたみチェア",
         "リクライニングチェア", "躺椅", "月亮椅", "行军床", "折叠桌",
     ]
+
+    extended_families = [
+        ("sports-outdoor", ["hammock", "tent", "sleeping bag", "air mattress", "sleeping pad", "trekking pole", "sports", "吊床", "帐篷", "睡袋", "气垫床", "睡垫", "登山杖", "户外"]),
+        ("baby-care", ["stroller", "baby carrier", "diaper", "feeding bottle", "婴儿车", "背带", "纸尿裤", "奶瓶", "母婴"]),
+        ("vehicle-hardware", ["car mount", "vehicle", "automotive", "drill", "fastener", "汽车", "车载", "五金", "电钻", "紧固件"]),
+        ("bags-containers", ["bag", "backpack", "luggage", "suitcase", "organizer", "storage box", "bottle", "背包", "行李箱", "收纳", "储物", "水杯"]),
+        ("beauty-care", ["cosmetic", "makeup", "skincare", "serum", "cream", "brush set", "化妆", "护肤", "精华", "面霜", "美容"]),
+        ("food-beverage", ["food", "snack", "drink", "coffee", "tea", "beverage", "零食", "饮料", "咖啡", "茶叶", "食品"]),
+        ("toys-hobbies", toy_keywords + ["model kit", "craft", "board game", "模型", "手工", "桌游"]),
+        ("home-decor", ["lamp", "vase", "curtain", "rug", "decor", "mirror", "灯", "花瓶", "窗帘", "地毯", "装饰", "镜子"]),
+        ("office-media", ["notebook", "binder", "paper cutter", "office", "book", "笔记本", "文件夹", "办公", "书籍"]),
+    ]
     
     # 检查匹配
     if matches(apparel_keywords):
@@ -92,12 +102,15 @@ def classify_by_keywords(title: str) -> tuple[str | None, float]:
         return "jewelry", 0.95
     elif matches(furniture_keywords):
         return "furniture", 0.95
-    elif matches(electronics_keywords + toy_keywords):
+    elif matches(electronics_keywords):
         return "electronics", 0.95
     elif matches(home_tools_keywords):
         return "home-tools", 0.95
     elif matches(pet_tools_keywords):
         return "pet-tools", 0.95
+    for category, keywords in extended_families:
+        if matches(keywords):
+            return category, 0.90
     
     return None, 0.0
 
@@ -138,8 +151,9 @@ def classify_product(product_folder: Path, force: bool = False) -> dict:
     # 如果已经分类过且不强制重新分类，直接返回
     if category_file.exists() and not force:
         existing = load_json(category_file)
-        print(f"  已分类: {existing['category']} (confidence: {existing['confidence']:.2f})")
-        return existing
+        if existing.get("schema_version") == 2 or existing.get("detected_from") == "explicit_user_category":
+            print(f"  已分类: {existing['category']} (confidence: {existing.get('confidence', 'unknown')})")
+            return existing
     
     # 加载产品清单
     manifest_path = product_folder / "product_manifest.json"
@@ -148,6 +162,33 @@ def classify_product(product_folder: Path, force: bool = False) -> dict:
     
     manifest = load_json(manifest_path)
     title = manifest.get("product_name", "")
+
+    brief_path = product_folder / "product_brief.json"
+    if brief_path.is_file():
+        brief = load_json(brief_path)
+        profile = normalize_production_profile(brief)
+        catalog = normalize_catalog_taxonomy(brief)
+        result = {
+            "schema_version": 2,
+            "category": profile["visual_family"],
+            "visual_family": profile["visual_family"],
+            "physical_traits": profile["physical_traits"],
+            "interaction_modes": profile["interaction_modes"],
+            "catalog_taxonomy": catalog,
+            "detected_from": "multimodal_product_brief",
+            "confidence": profile["confidence"],
+            "classification_evidence": profile["classification_evidence"],
+            "requires_manual_category": profile["requires_manual_review"] or catalog["requires_manual_review"],
+            "product_name": title,
+        }
+        save_json(category_file, result)
+        print(
+            f"  制作族: {result['category']}；语义路径: {' > '.join(catalog['path'])}；"
+            f"特征: {', '.join(result['physical_traits']) or 'none'}"
+        )
+        if result["requires_manual_category"]:
+            print("  分类证据不足或包含未知值：已使用安全制作族，请人工复核后再付费生成")
+        return result
     
     # 1. 尝试关键词分类
     category, confidence = classify_by_keywords(title)
@@ -160,11 +201,13 @@ def classify_product(product_folder: Path, force: bool = False) -> dict:
     
     # 保存结果
     result = {
+        "schema_version": 1,
         "category": category or "unclassified",
         "detected_from": detected_from,
         "confidence": confidence,
         "product_name": title,
-        "requires_manual_category": category is None,
+        "requires_manual_category": True,
+        "requires_product_brief": True,
     }
     
     save_json(category_file, result)

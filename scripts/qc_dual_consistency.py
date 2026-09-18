@@ -128,6 +128,7 @@ def review(folder: Path, target: Path, identity: dict, key: str, args) -> dict:
     # Slim the brief to core identity + risks only; analysis is redundant with the real photos.
     slim_brief = {k: v for k, v in brief.items() if k in {
         "product_name", "product_type", "recommended_v2_category", "category_reason",
+        "catalog_taxonomy", "production_classification",
         "confirmed_identity", "misuse_risks_to_avoid", "state_change_contract",
         "dimensions_mm", "identity_panel_overrides",
         "confirmed_selling_points", "step_by_step_usage", "video_prompt_rules",
@@ -138,7 +139,7 @@ def review(folder: Path, target: Path, identity: dict, key: str, args) -> dict:
         originals = originals[:2]
     dependencies = originals + [folder / "product_brief.json", folder / "identity_lock/manifest.json"]
     visuals = [(f"Real source product {i + 1}", path) for i, path in enumerate(originals)]
-    if args.stage in {"usage", "keyframes", "videos"}:
+    if args.stage in {"usage", "storyboards", "videos"}:
         usage = load_usage(folder)
         dependencies.append(folder / "usage_poses/manifest.json")
         sheet = local_file(folder, identity["output_path"])
@@ -151,8 +152,7 @@ def review(folder: Path, target: Path, identity: dict, key: str, args) -> dict:
             dependencies.append(usage_sheet)
     variant = {}
     review_variant = {}
-    frame_role = None
-    if args.stage in {"keyframes", "videos"}:
+    if args.stage in {"storyboards", "videos"}:
         prompts_file = Path(getattr(args, "prompts_file", "ugc_prompts.json"))
         if not prompts_file.is_absolute():
             prompts_file = folder / prompts_file
@@ -161,19 +161,8 @@ def review(folder: Path, target: Path, identity: dict, key: str, args) -> dict:
         if not variant:
             raise RuntimeError(f"Missing storyboard for variant {variant_id}")
         dependencies.append(prompts_file)
-        if args.stage == "keyframes":
-            frame_role = (
-                "storyboard"
-                if "storyboard" in target.stem
-                else "start"
-                if target.stem.endswith("-start")
-                else "end"
-            )
+        if args.stage == "storyboards":
             review_variant = dict(variant)
-            if frame_role == "start":
-                review_variant.pop("end_frame_prompt", None)
-            elif frame_role == "end":
-                review_variant.pop("start_frame_prompt", None)
             from v2_contract import validate_scene_chain
             validate_scene_chain(folder, [target])
             dependencies.append(target.with_suffix(".provenance.json"))
@@ -182,10 +171,6 @@ def review(folder: Path, target: Path, identity: dict, key: str, args) -> dict:
             from v2_contract import validate_video_chain
             validate_video_chain(folder, target)
             dependencies.append(target.with_suffix(".provenance.json"))
-        start = folder / "generated_images" / f"variant-{variant_id:02d}-start.png"
-        if start.exists() and start != target:
-            visuals.append(("Generated start scene for continuity only", start))
-            dependencies.append(start)
     with tempfile.TemporaryDirectory(prefix="ugc-qc-") as temp:
         times = []
         if args.stage == "videos":
@@ -223,13 +208,10 @@ def review(folder: Path, target: Path, identity: dict, key: str, args) -> dict:
                 "hard_cut_only or omit_transition must show endpoints only and MUST fail if the grid invents a midpoint. "
                 "A repeated depiction across panels is expected; fail duplicates only inside a single panel. "
             )
-        if frame_role == "start":
-            role_instruction = "This TARGET is the START frame. Evaluate the setup/friction state; do not require the end-state action or product placement yet. Mark continuity not_applicable because no earlier scene exists and the end frame is intentionally not supplied for this check. Mark operation not_applicable as well: a single still photograph cannot evidence an ordered multi-step mechanism sequence, so judge only whether the depicted product state and posture are consistent with the documented operation and mark the stepped sequence itself not_applicable with that reason. "
-        elif frame_role == "end":
-            role_instruction = "This TARGET is the END frame. Evaluate the end-state action and compare it with the supplied generated start scene for continuity. Do not fail operation for the absence of a visible stepped-mechanism sequence: one still photograph cannot evidence an ordered multi-step adjustment, so when the depicted end state and posture match the documented operation, mark operation not_applicable with that reason. Fail operation only when the visible product state itself contradicts the documented operation. "
-        elif frame_role == "storyboard":
+        elif args.stage == "storyboards":
             role_instruction = ("This TARGET is a chronological six-panel storyboard grid used as one all-purpose video reference. "
-                                "Evaluate every panel and the panel-to-panel identity/action chain. A repeated depiction of the same single product across different panels is expected; fail only if a panel contains duplicate products or product identity drifts. ")
+                                "Evaluate every panel and the panel-to-panel identity/action chain. A repeated depiction of the same single product across different panels is expected; fail only if a panel contains duplicate products or product identity drifts. "
+                                "Judge the ordered sequence itself as the action contract: the panels must read in order and show only the documented supported use, never an invented mechanism or an unsupported state change. ")
             role_instruction += (
                 "EVIDENCE WHITELIST for this stage, treat these as confirmed real facts and never fail on them alone: "
                 "(a) countable repeated parts such as LED heads or petals are frequently occluded, foreshortened or cropped in close panels; "
@@ -256,7 +238,8 @@ def review(folder: Path, target: Path, identity: dict, key: str, args) -> dict:
                   "Operation/placement may be not_applicable for product-only panels; explain why. "
                   "For end frame compare start scene/person. For videos inspect ordered sampled frames for "
                   "action sequence and continuity; sampling is not exhaustive motion validation.\n"
-                  + "Category checklist (not SKU facts):\n" + category_spec(identity["category"])["checks"]
+                  + "Category checklist (not SKU facts):\n"
+                  + category_spec(identity["category"], identity.get("physical_traits"))["checks"]
                   + "\nProduct brief: " + json.dumps(slim_brief, ensure_ascii=False)
                   + "\nVariant storyboard for this target: " + json.dumps(review_variant, ensure_ascii=False))
         content = [{"type": "text", "text": prompt}]
@@ -289,8 +272,8 @@ def targets(folder, stage, variants, identity):
         return [local_file(folder, load_usage(folder)["output_path"])]
     found = []
     for variant_id in sorted(variants):
-        if stage == "keyframes":
-            found.extend(local_file(folder, f"generated_images/variant-{variant_id:02d}-{role}.png") for role in ("start", "end"))
+        if stage == "storyboards":
+            found.append(local_file(folder, f"generated_images/variant-{variant_id:02d}-storyboard.png"))
         else:
             candidates = [folder / name / f"variant-{variant_id:02d}.mp4" for name in ("videos", "videos_lk888")]
             available = [p for p in candidates if p.is_file()]
@@ -306,7 +289,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("output_dir", type=Path)
     p.add_argument("--products", default="")
-    p.add_argument("--stage", choices=["identity", "usage", "keyframes", "videos"], default="keyframes")
+    p.add_argument("--stage", choices=["identity", "usage", "storyboards", "videos"], default="storyboards")
     p.add_argument("--variants", default="1")
     p.add_argument("--prompts-file", default="ugc_prompts.json", help="Storyboard/prompt JSON used for the selected generated frames or videos")
     p.add_argument("--model", default="gpt-5.2")
@@ -316,7 +299,7 @@ def main():
     p.add_argument("--samples", type=int, default=8)
     p.add_argument("--report", type=Path)
     p.add_argument("--target", action="append", default=[],
-                   help="Explicit product-relative target path for keyframe QC, e.g. runs/.../variant-03-storyboard.png. May be repeated.")
+                   help="Explicit product-relative target path for storyboard QC, e.g. generated_images/variant-03-storyboard.png. May be repeated.")
     p.add_argument("--merge-existing", action="store_true", help="Replace selected target verdicts while preserving other targets in the stage report")
     p.add_argument("--workers", type=int, default=1, help="Review independent targets concurrently.")
     p.add_argument("--image-max-edge", type=int, default=2048,
@@ -339,8 +322,8 @@ def main():
                 report["results"] = list(existing.get("results", []))
         # Invalidate selected earlier verdicts before making calls, including on provider failure.
         if args.target:
-            if args.stage != "keyframes":
-                p.error("--target is currently supported only with --stage keyframes")
+            if args.stage != "storyboards":
+                p.error("--target is currently supported only with --stage storyboards")
             selected_targets = [local_file(folder, name) for name in args.target]
         else:
             selected_targets = targets(folder, args.stage, parse_variants(args.variants), identity)

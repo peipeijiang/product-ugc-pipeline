@@ -8,47 +8,25 @@ from typing import Any
 
 
 MODEL_ALIASES = {
-    "sd2.0": "seedance-2.0",
-    "seedance2": "seedance-2.0",
-    "seedance-2": "seedance-2.0",
-    "seedance-2.0": "seedance-2.0",
-    "doubao-seedance-2-0-pro": "seedance-2.0",
-    "minimax-h3": "minimax-h3",
-    "h3": "minimax-h3",
     "omni-flash": "omni-flash",
     "omni_flash": "omni-flash",
     "omni-fast": "omni-flash",
-    "omni_flash-10s-fl": "omni_flash-10s-fl",
-    "omni-flash-10s-fl": "omni_flash-10s-fl",
-    "veo3.1": "veo3.1",
-    "veo-3.1": "veo3.1",
-    "veo-3.1-fast-fl": "veo3.1",
+    "omni_flash-10s": "omni_flash-10s",
+    "omni-flash-10s": "omni_flash-10s",
 }
 
 MODEL_PROFILES = {
-    "seedance-2.0": {
-        "motion_budget": "moderate creator/camera motion",
-        "reference_strategy": "Use one clean identity anchor; add a short motion reference only when it directly shows the exact action.",
-    },
-    "minimax-h3": {
-        "motion_budget": "moderate creator/camera motion",
-        "reference_strategy": "Use first/last frames for composition control or a small coherent reference set; avoid conflicting mixed references.",
-    },
     "omni-flash": {
         "motion_budget": "low product motion and one gentle camera move",
-        "reference_strategy": "Use the chronological storyboard, identity grid and QC-passed operation grid; keep within the three-image adapter limit.",
+        "reference_strategy": "Use omni-reference with the chronological storyboard, identity grid and an optional QC-passed operation grid; keep within the three-image adapter limit.",
     },
-    "omni_flash-10s-fl": {
-        "motion_budget": "low product motion and one gentle camera move between locked endpoints",
-        "reference_strategy": "Use exactly the actual preceding last frame and the target last frame, in that order; both endpoints must share invariant wardrobe, SKU and camera fields.",
-    },
-    "veo3.1": {
-        "motion_budget": "one simple supported interaction",
-        "reference_strategy": "Use generated first/last frames with the same product topology and scene continuity.",
+    "omni_flash-10s": {
+        "motion_budget": "low product motion and one gentle camera move",
+        "reference_strategy": "Use omni-reference with the chronological storyboard, identity grid and an optional QC-passed operation grid.",
     },
     "model-agnostic": {
         "motion_budget": "one simple supported interaction",
-        "reference_strategy": "Use the smallest coherent reference set that locks product identity and the chosen endpoint state.",
+        "reference_strategy": "Use omni-reference with the smallest coherent reference set that locks product identity and the chosen chronological action.",
     },
 }
 
@@ -57,11 +35,13 @@ RISK_GROUPS: tuple[tuple[str, int, tuple[str, ...]], ...] = (
     ("topology_change", 7, (
         "install", "setup", "assemble", "disassemble", "attach", "detach", "connect", "disconnect",
         "insert", "remove", "thread", "lace", "zip", "unzip", "snap", "clip into", "plug in",
-        "mount", "splice", "join", "安装", "组装", "拼装", "插入", "插接", "穿入", "连接", "扣合", "拉链",
+        "mount", "splice", "join", "mount-install", "assemble", "suspend-anchor", "connect-power",
+        "安装", "组装", "拼装", "插入", "插接", "穿入", "连接", "扣合", "拉链",
     )),
     ("configuration_change", 5, (
         "fold", "unfold", "collapse", "deploy", "extend", "retract", "inflate", "deflate",
-        "open", "close", "telescop", "折叠", "展开", "收拢", "伸缩", "充气", "放气", "打开", "闭合",
+        "open", "close", "telescop", "fold-deploy", "inflate-deflate", "inflatable",
+        "折叠", "展开", "收拢", "伸缩", "充气", "放气", "打开", "闭合",
     )),
     ("reversal_or_inversion", 6, (
         "reverse", "invert", "turn inside out", "flip over", "rotate 180", "反转", "翻转", "里外翻", "倒置",
@@ -75,7 +55,8 @@ RISK_GROUPS: tuple[tuple[str, int, tuple[str, ...]], ...] = (
         "剥", "涂", "按压", "挤压", "拉伸", "缠绕", "打结", "倾倒", "切割",
     )),
     ("multi_object_coordination", 4, (
-        "two parts", "multiple parts", "both hands", "simultaneously", "one by one", "多部件", "两个零件", "双手同时", "依次",
+        "two parts", "multiple parts", "both hands", "simultaneously", "one by one", "multi-part",
+        "多部件", "两个零件", "双手同时", "依次",
     )),
     ("occluded_contact", 3, (
         "behind", "underneath", "inside", "hidden", "遮挡", "背面", "底部", "内部", "隐藏",
@@ -195,6 +176,7 @@ def build_video_feasibility_plan(brief: dict[str, Any], model: str = "model-agno
         "confirmed_selling_points": brief.get("confirmed_selling_points") or [],
         "manifest_selling_points": brief.get("manifest_selling_points") or [],
         "proof_moments": brief.get("proof_moments") or [],
+        "production_classification": brief.get("production_classification") or {},
     }
     hazards = action_hazards(action_evidence)
     score = sum(item["weight"] for item in hazards)

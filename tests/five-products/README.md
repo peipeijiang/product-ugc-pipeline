@@ -33,7 +33,7 @@ python scripts/classify_product_category.py tests/five-products
 python3 -m unittest discover -s tests -p 'test_v2*.py' -v
 ```
 
-真实端到端测试需要为每类另建产品目录，放入真实原图并依次运行视觉分析、简报、单张宫格、质检、首尾帧和视频。不要移除 fixture_only 后继续使用这里的虚构规格。
+真实端到端测试需要为每类另建产品目录，放入真实原图并依次运行视觉分析、简报、身份宫格、时间顺序故事板、质检和 Omni Flash 全参考视频。不要移除 fixture_only 后继续使用这里的虚构规格。
 
 ### 3. QC 检查维度
 

@@ -21,8 +21,8 @@ The routing ladder is:
 | High | Keep one verified endpoint configuration; convey setup with an external hard cut |
 | Critical | Result-first static reveal, detail/scale proof and creator reaction; use real source footage if the mechanism itself must be shown |
 
-For high/critical risk, start and end keyframes must preserve the same product
-topology. Do not give a first/last-frame model two different configurations and
+For high/critical risk, every storyboard panel must preserve the same product
+topology. Do not give the video model conflicting product configurations and
 then tell it to hard-cut: the model may still interpolate between them. Generate
 endpoint assets separately and make the cut in editing.
 
@@ -30,7 +30,7 @@ endpoint assets separately and make the cut in editing.
 
 Model profiles adjust creator and camera motion budgets, never the product-evidence
 rules. Seedance 2.0 and MiniMax H3 may receive moderate creator/camera motion;
-Omni Flash and VEO use a more conservative motion budget. A protected Omni route
+Omni Flash uses a conservative motion budget. A protected Omni route
 uses only a regenerated ready-state storyboard and the identity grid; it omits the
 operation grid so conflicting configurations cannot steer the model. No vendor capability
 claim permits an unobserved connection or topology change.

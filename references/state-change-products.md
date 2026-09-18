@@ -21,7 +21,7 @@ The pipeline therefore separates three jobs:
 3. The chronological ad storyboard locks scene order, people, camera and commercial beat.
 
 For Omni reference mode these are images 2, 3 and 1 respectively. For first/final
-frame video models the operation sheet guides Image2 keyframe creation; the video
+Omni Flash the operation sheet guides chronological storyboard creation; the video
 still receives the generated start and end frames.
 
 ## Product cognition contract

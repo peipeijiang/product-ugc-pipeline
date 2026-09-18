@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from common import load_json, request_json, require_api_key_for_base_url, selected_product_dirs, write_json, write_text
+from product_taxonomy import normalize_catalog_taxonomy, normalize_production_profile, prompt_contract
 
 
 SYSTEM_PROMPT = """You are a product usage researcher for UGC ad production.
@@ -87,8 +88,10 @@ Input B — image_analysis.json:
 Return JSON with:
 - product_name
 - product_type: literal product class visible in the source images (for example sleeping bag, folding chair, trekking pole); never replace it with the nearest supported category
-- recommended_v2_category: exactly one of apparel, jewelry, electronics, home-tools, pet-tools, furniture, or needs_new_category. Use needs_new_category when the category checklist would describe a different product family.
-- category_reason: visible/source-backed reason for that category decision
+- {prompt_contract()}
+- recommended_v2_category: repeat production_classification.visual_family for backward compatibility
+- category_reason: visible/source-backed reason for the production-family decision
+- identity_panel_overrides: optional object keyed by the selected production family's exact default panel names; use it only to add source-backed SKU-specific detail
 - confidence: high/medium/low and why
 - confirmed_identity: exact visual traits that must be preserved
 - confirmed_selling_points: factual selling points from the page
@@ -99,7 +102,7 @@ Return JSON with:
 - proof_moments: visual moments that prove the product works
 - reference_image_strategy: which local image paths are best for full product reconstruction and why
 - misuse_risks_to_avoid: likely wrong usages, impossible demos, or model hallucinations to avoid
-- hallucination_defense: structured defense against VEO/image-model hallucinations. Include: phantom_parts (list what product does NOT have), shape_preservation (exact silhouette rules), material_texture_lock (surface/color constraints), action_bounds (what product can and cannot do), context_contamination (scene elements training data might wrongly inject), scale_anchor (realistic size reference)
+- hallucination_defense: structured defense against image/video-model hallucinations. Include: phantom_parts (list what product does NOT have), shape_preservation (exact silhouette rules), material_texture_lock (surface/color constraints), action_bounds (what product can and cannot do), context_contamination (scene elements training data might wrongly inject), scale_anchor (realistic size reference)
 - video_prompt_rules: strict rules a video prompt must follow
 - state_change_contract: always return this object. Set required=false with a product-specific not_applicable_reason when the product has no folding, unfolding, assembly, installation, attachment, extension, opening/closing, zipping, or other configuration change. When required=true include:
   - mechanism_type
@@ -131,6 +134,8 @@ def render_materials_with_brief(product_dir: Path, manifest: dict[str, Any], ima
     lines = [existing.rstrip(), "", "## Product Usage Cognition", ""]
     lines.append(f"- Confidence: {brief.get('confidence', 'unknown')}")
     sections = [
+        ("Catalog Taxonomy", "catalog_taxonomy"),
+        ("Production Classification", "production_classification"),
         ("Confirmed Identity", "confirmed_identity"),
         ("Confirmed Selling Points", "confirmed_selling_points"),
         ("Confirmed Use Cases", "confirmed_use_cases"),
@@ -170,6 +175,17 @@ def process_product(product_dir: Path, api_key: str, args: argparse.Namespace) -
     brief = build_with_model(api_key, manifest, image_analysis, args.model, args.base_url, args.timeout)
     if brief.get("error"):
         raise RuntimeError(f"Model brief generation failed for {product_dir.name}: {brief}")
+    brief["catalog_taxonomy"] = normalize_catalog_taxonomy(brief)
+    brief["production_classification"] = normalize_production_profile(brief)
+    brief["recommended_v2_category"] = brief["production_classification"]["visual_family"]
+    print(
+        f"[category-plan] 产品={product_dir.name} 语义路径={' > '.join(brief['catalog_taxonomy']['path'])} "
+        f"制作族={brief['production_classification']['visual_family']} "
+        f"物理特征={','.join(brief['production_classification']['physical_traits']) or 'none'} "
+        f"交互={','.join(brief['production_classification']['interaction_modes']) or 'none'} "
+        f"需复核={'是' if brief['production_classification']['requires_manual_review'] or brief['catalog_taxonomy']['requires_manual_review'] else '否'}",
+        flush=True,
+    )
     brief["source_manifest"] = "product_manifest.json"
     brief["source_image_analysis"] = "image_analysis.json"
     write_json(product_dir / "product_brief.json", brief)

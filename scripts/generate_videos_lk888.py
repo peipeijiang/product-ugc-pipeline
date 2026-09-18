@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import hashlib
 import json
 import os
 import re
@@ -16,6 +17,16 @@ import requests
 from common import download_binary, load_json, selected_product_dirs, write_json
 from creative_risk_router import format_production_notice
 from generate_images import parse_variants
+from voice_locale import (
+    VoiceLocaleError,
+    language_clause,
+    language_name,
+    normalize_locale,
+    region_name,
+    resolve_voice_locale,
+    trim_voiceover,
+    voice_description,
+)
 
 # The desktop environment may inject a stale local SOCKS proxy.  LK888 and
 # public reference hosts must be reached directly for production submissions.
@@ -24,7 +35,7 @@ for _proxy_key in list(os.environ):
         os.environ.pop(_proxy_key, None)
 
 
-BASE_URL = "https://api.lk888.ai/api"
+BASE_URL = "https://api.lk888.ai"
 CONTINUE_STATES = {"pending", "running", "queued", "processing", "submitted"}
 SUCCESS_STATES = {"success", "completed", "succeeded"}
 FAILED_STATES = {"failed", "error", "cancelled", "canceled", "expired"}
@@ -43,17 +54,6 @@ def resolve_prompts_path(product_dir: Path, prompts_file: str) -> Path:
     if candidate.is_absolute():
         return candidate
     return product_dir / prompts_file
-
-
-def generated_keyframe_paths(product_dir: Path, variant_id: int) -> list[Path]:
-    start = product_dir / "generated_images" / f"variant-{variant_id:02d}-start.png"
-    end = product_dir / "generated_images" / f"variant-{variant_id:02d}-end.png"
-    if start.exists() and end.exists():
-        return [start, end]
-    single = product_dir / "generated_images" / f"variant-{variant_id:02d}.png"
-    if single.exists():
-        return [single]
-    return []
 
 
 def variant_reference_paths(product_dir: Path, variant: dict[str, Any]) -> list[Path]:
@@ -107,6 +107,10 @@ def omni_storyboard_identity_paths(product_dir: Path, variant: dict[str, Any]) -
     identity = load_identity(product_dir)
     identity_sheet = local_file(product_dir, identity["output_path"])
     explicit_references = unique_paths(variant_reference_paths(product_dir, variant))
+    variant_id = int(variant.get("variant_id", 0) or 0)
+    canonical_storyboard = product_dir / "generated_images" / f"variant-{variant_id:02d}-storyboard.png"
+    if canonical_storyboard.is_file() and canonical_storyboard not in explicit_references:
+        explicit_references.insert(0, canonical_storyboard)
     storyboard = next(
         (
             path
@@ -125,6 +129,9 @@ def omni_storyboard_identity_paths(product_dir: Path, variant: dict[str, Any]) -
         )
     if not storyboard.with_suffix(".provenance.json").is_file():
         raise RuntimeError(f"Storyboard is missing provenance: {storyboard}")
+    require_chronological_storyboard(product_dir, storyboard, variant)
+    require_qc(product_dir, [identity_sheet], "identity")
+    require_qc(product_dir, [storyboard], "storyboards")
     protected_configuration = variant_protects_configuration(variant)
     usage = load_usage(product_dir)
     usage_sheet = local_file(product_dir, usage["output_path"])
@@ -154,15 +161,34 @@ def omni_storyboard_identity_paths(product_dir: Path, variant: dict[str, Any]) -
     return references
 
 
-def generated_start_end_paths(product_dir: Path, variant_id: int) -> tuple[Path, Path]:
-    return (
-        product_dir / "generated_images" / f"variant-{variant_id:02d}-start.png",
-        product_dir / "generated_images" / f"variant-{variant_id:02d}-end.png",
-    )
+def require_chronological_storyboard(product_dir: Path, storyboard: Path, variant: dict[str, Any]) -> None:
+    """Filename/provenance labels alone cannot prove a real chronological grid.
 
-
-def is_veo_model(model: str) -> bool:
-    return model.lower().startswith("veo")
+    Require a separate current visual inspection bound to both image and routed
+    timeline. This gate is local and happens before upload or paid submission.
+    """
+    from v2_contract import digest
+    provenance = load_json(storyboard.with_suffix(".provenance.json"), {})
+    timeline = variant.get("storyboard_10s")
+    if not isinstance(timeline, list) or len(timeline) < 2:
+        raise RuntimeError("Omni requires a current multi-beat storyboard_10s")
+    timeline_hash = hashlib.sha256(json.dumps(timeline, ensure_ascii=False, sort_keys=True,
+                                              separators=(",", ":")).encode()).hexdigest()
+    image_hash = digest(storyboard)
+    if (provenance.get("sha256") != image_hash or not provenance.get("references")
+            or not (provenance.get("provider") or provenance.get("image_provider"))
+            or not (provenance.get("actual_prompt") or provenance.get("prompt"))):
+        raise RuntimeError("Storyboard needs current image hash, provider, prompt and reference provenance")
+    report_path = product_dir / "qc" / "storyboards" / f"{storyboard.stem}.json"
+    review = load_json(report_path, {})
+    if (review.get("status") != "pass" or review.get("sha256") != image_hash
+            or review.get("timeline_sha256") != timeline_hash
+            or not isinstance(review.get("panel_count"), int) or review["panel_count"] < 2
+            or review.get("chronological") is not True or review.get("singleton_per_panel") is not True
+            or not review.get("reviewer") or not review.get("evidence")):
+        raise RuntimeError(f"Current visual storyboard review required: {report_path}; single-frame anchors are not accepted")
+    if "chronological_storyboard" not in str(provenance.get("type") or ""):
+        raise RuntimeError("Storyboard provenance must declare a chronological_storyboard type")
 
 
 def existing_video_dir(product_dir: Path) -> Path:
@@ -299,8 +325,9 @@ def upload_references(
     return results
 
 
-def append_native_audio_instruction(prompt: str, voice_lines: Any, locale: str = "en-US") -> str:
-    voice, language = voice_profile(locale)
+def append_native_audio_instruction(prompt: str, voice_lines: Any, locale: str) -> str:
+    voice = voice_description(locale)
+    language_rule = language_clause(locale)
     line = ""
     if isinstance(voice_lines, list) and voice_lines:
         first = voice_lines[0]
@@ -311,7 +338,7 @@ def append_native_audio_instruction(prompt: str, voice_lines: Any, locale: str =
     elif isinstance(voice_lines, str):
         line = voice_lines.strip()
     audio_block = (
-        f"\n\nNATIVE AUDIO: Generate natural native audio inside the video: a bright {voice} ecommerce creator voice, energetic but not robotic, with subtle upbeat social-ad background music. Every spoken word must be in {language}; never answer in English. "
+        f"\n\nNATIVE AUDIO: Generate natural native audio inside the video: a bright {voice} ecommerce creator voice, energetic but not robotic, with subtle upbeat social-ad background music. {language_rule} "
         "No subtitles, no captions, no readable on-screen text, no labels, no social media icons, no platform logos, no camera/reel icons, no reaction icons, no app UI, no watermarks. "
     )
     if line:
@@ -326,7 +353,19 @@ def prompt_has_native_audio(prompt: str) -> bool:
     return "NATIVE AUDIO" in upper_prompt or "VOICEOVER" in upper_prompt
 
 
-def compact_voiceover_line(voice_lines: Any, fallback: str = "", max_words: int = 18) -> str:
+def compact_voiceover_line(
+    voice_lines: Any,
+    fallback: str = "",
+    max_words: int = 18,
+    locale: str | None = None,
+) -> str:
+    """Join the timed voiceover into one speakable line.
+
+    The old implementation sliced on whitespace (``words[:max_words]``), which
+    left a dangling half-sentence and mis-measured Japanese, where a whole line
+    is a single whitespace token. Trimming now happens per locale through
+    `voice_locale.trim_voiceover`, which keeps whole sentences.
+    """
     lines: list[str] = []
     if isinstance(voice_lines, list):
         for item in voice_lines:
@@ -340,10 +379,14 @@ def compact_voiceover_line(voice_lines: Any, fallback: str = "", max_words: int 
         lines.append(voice_lines.strip())
     text = " ".join(lines) or fallback
     text = text.replace("—", ", ")
-    words = text.split()
-    if len(words) > max_words:
-        text = " ".join(words[:max_words]).rstrip(" ,.-")
-    return text
+    if not text.strip():
+        return ""
+    resolved = normalize_locale(locale)
+    if not resolved:
+        # No locale known yet (direct helper use): keep the whole line rather
+        # than risk emitting a truncated fragment.
+        return " ".join(text.split())
+    return trim_voiceover(text, resolved)
 
 
 def first_voice_line(voice_lines: Any, fallback: str = "") -> str:
@@ -377,22 +420,6 @@ def overlay_callouts(variant: dict[str, Any], enabled: bool) -> list[str]:
         if len(cleaned) >= 2:
             break
     return cleaned
-
-
-VOICE_LOCALE_PROFILES: dict[str, tuple[str, str]] = {
-    "en-US": ("young American woman", "English"),
-    "es-MX": ("young Mexican woman speaking natural Mexican Spanish, with the clear open vowels and rhythm of Mexico rather than Spain",
-              "Mexican Spanish as spoken in Mexico"),
-    "es-ES": ("young Spanish woman speaking Castilian Spanish from Spain", "Castilian Spanish from Spain"),
-    "es-419": ("young Latin American woman speaking neutral Latin American Spanish", "neutral Latin American Spanish"),
-    "pt-BR": ("young Brazilian woman speaking Brazilian Portuguese", "Brazilian Portuguese"),
-    "ja-JP": ("young Japanese woman speaking natural conversational Japanese with a standard Tokyo accent",
-              "Japanese as spoken in Japan"),
-}
-
-
-def voice_profile(locale: str | None) -> tuple[str, str]:
-    return VOICE_LOCALE_PROFILES.get(str(locale or "en-US"), VOICE_LOCALE_PROFILES["en-US"])
 
 
 def power_connection_clause(brief: dict[str, Any], budget: int | None = None) -> str:
@@ -436,8 +463,9 @@ def power_connection_clause(brief: dict[str, Any], budget: int | None = None) ->
     return clause
 
 
-def append_safe_audio_test_instruction(prompt: str, voice_lines: Any, locale: str = "en-US") -> str:
-    voice, language = voice_profile(locale)
+def append_safe_audio_test_instruction(prompt: str, voice_lines: Any, locale: str) -> str:
+    voice = voice_description(locale)
+    language = language_name(locale)
     safe_line = first_voice_line(voice_lines, "Place the trap outside after adding bait.")
     audio_block = (
         f"\n\nNATIVE AUDIO TEST: Include one short natural sentence in {language}. The speaker is a {voice}. "
@@ -447,20 +475,23 @@ def append_safe_audio_test_instruction(prompt: str, voice_lines: Any, locale: st
     return prompt + audio_block
 
 
-def append_safe_native_audio_instruction(prompt: str, voice_lines: Any, locale: str = "en-US") -> str:
-    voice, language = voice_profile(locale)
+def append_safe_native_audio_instruction(prompt: str, voice_lines: Any, locale: str) -> str:
+    voice = voice_description(locale)
+    language = language_name(locale)
     safe_line = first_voice_line(voice_lines, "Here is how the product works.")
     audio_block = (
-        f"\n\nNATIVE AUDIO: Include one short natural voice line in {language}. The speaker is a {voice}. Every spoken word must be in {language}; never answer in English. "
+        f"\n\nNATIVE AUDIO: Include one short natural voice line in {language}. The speaker is a {voice}. {language_clause(locale)} "
         "No music, no singing, no hype words, no slang, no labels, no subtitles, no captions, no readable on-screen text, no social media icons, no platform logos, no camera/reel icons, no reaction icons, no app UI, no watermarks. "
         f"Speak exactly this one sentence and nothing else: \"{safe_line}\""
     )
     return prompt + audio_block
 
 
-def append_mid_native_audio_instruction(prompt: str, voice_lines: Any, callouts: list[str], locale: str = "en-US") -> str:
-    voice, language = voice_profile(locale)
-    safe_line = compact_voiceover_line(voice_lines, "Watch this tiny upgrade make the setup feel easier.", max_words=22)
+def append_mid_native_audio_instruction(prompt: str, voice_lines: Any, callouts: list[str], locale: str) -> str:
+    voice = voice_description(locale)
+    safe_line = compact_voiceover_line(
+        voice_lines, "Watch this tiny upgrade make the setup feel easier.", locale=locale
+    )
     overlay_block = ""
     if callouts:
         safe_callouts = []
@@ -479,7 +510,7 @@ def append_mid_native_audio_instruction(prompt: str, voice_lines: Any, callouts:
         )
     audio_block = (
         f"\n\nNATIVE AUDIO: Generate natural native audio inside the video: a bright {voice} lifestyle-commerce creator voice, stylish, warm, emotionally engaged, friendly, clear, not robotic, not corporate. "
-        f"Every spoken word must be in {language}; never answer in English. "
+        f"{language_clause(locale)} "
         f"Spoken voiceover, complete within 10 seconds: \"{safe_line}\" "
         "Add subtle upbeat modern lifestyle background music under the voice at low volume, no lyrics, plus light real handling sounds. "
         "No subtitles, no captions, no full-sentence labels, no emoji text, no social media icons, no platform logos, no camera/reel icons, no reaction icons, no app UI, and no watermarks. The only allowed readable text is the explicitly allowed tiny feature-tag overlay words."
@@ -527,52 +558,16 @@ def lk888_get(api_key: str, endpoint: str, base_url: str, params: dict[str, Any]
 
 
 def build_model_params(args: argparse.Namespace, image_urls: list[str]) -> dict[str, Any]:
-    if args.model == "kwvideo-v2":
-        return {
-            "version": args.version,
-            "duration": str(args.duration),
-            "aspect_ratio": args.aspect_ratio,
-            "resolution": args.resolution,
-            "images": image_urls[:2],
-        }
-    if args.model.startswith("doubao-seedance"):
-        return {
-            "images": image_urls,
-            "audio_duration": args.audio_duration,
-            "resolution": args.resolution,
-            "ratio": args.aspect_ratio,
-            "generate_audio": "true" if args.generate_audio else "false",
-        }
-    if args.model == "veo3.1-lite":
-        return {
-            "quality": args.quality,
-            "aspect_ratio": args.aspect_ratio,
-            "duration": str(args.duration),
-            "images": image_urls,
-            "enhance_prompt": args.enhance_prompt,
-        }
-    if args.model in {"omni-flash", "omni_flash-10s", "omni_flash-10s-fl"}:
-        params = {
-            "aspect_ratio": args.aspect_ratio,
-            "images": (
-                image_urls[:2] if args.model == "omni_flash-10s-fl"
-                else image_urls[:7] if args.model == "omni_flash-10s"
-                else image_urls[:3]
-            ),
-        }
-        if args.model == "omni-flash":
-            params["duration"] = str(args.duration)
-            params["enhance_prompt"] = args.enhance_prompt
-        if args.enable_upsample is not None:
-            params["enable_upsample"] = args.enable_upsample
-        return params
+    if args.model not in {"omni-flash", "omni_flash-10s"}:
+        raise RuntimeError(f"Unsupported video model {args.model}; this pipeline is Omni reference only")
     params: dict[str, Any] = {
-        "generation_mode": args.generation_mode,
         "aspect_ratio": args.aspect_ratio,
-        "duration": str(args.duration),
-        "images": image_urls,
-        "enhance_prompt": args.enhance_prompt,
+        "images": image_urls[:7] if args.model == "omni_flash-10s" else image_urls[:3],
     }
+    if args.model == "omni-flash":
+        params["duration"] = str(args.duration)
+        params["resolution"] = args.resolution
+        params["enhance_prompt"] = args.enhance_prompt
     if args.enable_upsample is not None:
         params["enable_upsample"] = args.enable_upsample
     return params
@@ -598,8 +593,7 @@ def normalize_status(status_response: dict[str, Any]) -> dict[str, Any]:
 
 
 OMNI_PROMPT_CHAR_LIMIT = 4000
-OMNI_MODELS = {"omni-flash", "omni_flash-10s", "omni_flash-10s-fl"}
-OMNI_FIRST_LAST_MODELS = {"omni_flash-10s-fl"}
+OMNI_MODELS = {"omni-flash", "omni_flash-10s"}
 
 
 def enforce_prompt_char_limit(prompt: str, limit: int = OMNI_PROMPT_CHAR_LIMIT, label: str = "Omni") -> str:
@@ -617,9 +611,10 @@ def enforce_prompt_char_limit(prompt: str, limit: int = OMNI_PROMPT_CHAR_LIMIT, 
 def compact_omni_prompt(
     variant: dict[str, Any],
     duration: str,
-    reference_mode: str,
+    reference_mode: str = "omni-reference",
     product_dir: Path | None = None,
     limit: int | None = None,
+    voice_locale: str | None = None,
 ) -> str:
     """Fit an Omni prompt inside the provider's 4,000-character hard limit.
 
@@ -657,7 +652,7 @@ def compact_omni_prompt(
                     beats.append(beat + (f"; spoken: {spoken}" if spoken else ""))
     protected_configuration = variant_protects_configuration(variant)
     operation_sheet = False
-    if product_dir and reference_mode == "omni-reference":
+    if product_dir:
         try:
             from v2_contract import load_identity, load_usage, local_file
             identity_record = load_identity(product_dir)
@@ -669,20 +664,11 @@ def compact_omni_prompt(
         except RuntimeError:
             operation_sheet = False
     mode_instruction = (
-        (
-            "Image 1 and image 2 are continuity references for the same verified ready-to-use product configuration. "
-            "Do not interpolate any product setup or topology change between them."
-            if protected_configuration else
-            "Image 1 is the opening frame and image 2 is the final frame; interpolate one supported continuous action between them."
-        )
-        if reference_mode == "first-last"
-        else (
-            "Use two all-purpose references: image 1 is the regenerated low-risk chronological storyboard and image 2 is the product identity grid. Keep the product in the same ready-to-use configuration shown in the storyboard; no operation grid or setup transition is used."
-            if protected_configuration else (
-                "Use three all-purpose references: image 1 is the chronological storyboard, image 2 is the product identity grid, and image 3 is the evidence-safe state-change sheet. They are not a forced first/final-frame pair. Never invent a midpoint omitted from image 3."
-                if operation_sheet else
-                "Use two all-purpose references: image 1 is the chronological storyboard and image 2 is the product identity grid; they are not a forced first/final-frame pair."
-            )
+        "Use two all-purpose references: image 1 is the regenerated low-risk chronological storyboard and image 2 is the product identity grid. Keep the product in the same ready-to-use configuration shown in the storyboard; no operation grid or setup transition is used."
+        if protected_configuration else (
+            "Use three all-purpose references: image 1 is the chronological storyboard, image 2 is the product identity grid, and image 3 is the evidence-safe state-change sheet. Never invent a midpoint omitted from image 3."
+            if operation_sheet else
+            "Use two all-purpose references: image 1 is the chronological storyboard and image 2 is the product identity grid."
         )
     )
     voice_items = variant.get("voiceover_script_10s") or variant.get("voiceover_script_8s") or []
@@ -691,7 +677,15 @@ def compact_omni_prompt(
     else:
         voice = str(voice_items)
     brief = load_json(product_dir / "product_brief.json", {}) if product_dir else {}
-    voice_desc, voice_language = voice_profile(variant.get("voice_locale"))
+    # The resolved locale is passed in so the compact path can no longer ignore
+    # a batch-level or CLI locale and silently speak English.
+    resolved_locale = normalize_locale(voice_locale) or normalize_locale(variant.get("voice_locale"))
+    if not resolved_locale:
+        raise VoiceLocaleError(
+            "compact_omni_prompt requires a resolved voice locale; refusing to default to English."
+        )
+    voice_desc = voice_description(resolved_locale)
+    language_rule = language_clause(resolved_locale)
     power_line = power_connection_clause(brief, budget=720)
     identity = variant.get("product_fidelity_block") or brief.get("confirmed_identity") or []
     misuse = variant.get("negative_prompt") or brief.get("misuse_risks_to_avoid") or []
@@ -704,14 +698,21 @@ def compact_omni_prompt(
         if protected_configuration else ""
     )
     def render(factor: float) -> str:
+        sku_colourway = clipped(variant.get("sku_colourway"), 240)
+        # An absent colourway used to render an empty
+        # "MANDATORY SKU FOR THIS VIDEO: ." clause that pinned nothing.
+        sku_clause = f"MANDATORY SKU FOR THIS VIDEO: {sku_colourway}. " if sku_colourway else (
+            "No colourway split exists for this listing: keep the single SKU shown in image 2 exactly as it is. "
+        )
         return (
             f"Create exactly one {duration}-second vertical 9:16 realistic creator-style product video. {mode_instruction} "
             "Keep the same adult creator, room, wardrobe, lighting, camera geometry, props and the one physical product throughout. "
             "Show exactly ONE product; never duplicate it in hands, furniture, mirrors, reflections or screens. "
+            f"LOCAL MARKET: this ad targets {region_name(resolved_locale)}; the creator, setting, props and gestures must read as a natural local product demo for that market, never a generic US-style shoot. "
             + protected_rule
             + f"PRODUCT TRUTH AND IDENTITY LOCK: {scaled(identity, 700, factor)}. "
             "Match image 2 for silhouette, parts, proportions and controls; if SKU colours differ, use the single colourway shown in image 1. "
-            f"MANDATORY SKU FOR THIS VIDEO: {clipped(variant.get('sku_colourway'), 240)}. "
+            + sku_clause
             + (power_line + " " if power_line else "")
             + f"FORBIDDEN DRIFT: {scaled(misuse, 600, factor)}. Never morph, resize, recolour, add branding or invent controls. "
             f"CONCEPT: {scaled(variant.get('title'), 180, factor, 0.8)}. HOOK: {scaled(variant.get('hook'), 320, factor, 0.8)}. "
@@ -721,9 +722,8 @@ def compact_omni_prompt(
             f"SUPPORTED ACTION: {scaled(variant.get('usage_logic'), 650, factor, 1.8)}. "
             f"PAYOFF: {scaled(variant.get('proof_moment'), 450, factor, 1.8)}. "
             f"NATIVE AUDIO: {voice_desc} creator voice, natural and warm. Speak exactly: {clipped(voice, 400)}. "
-            f"Every spoken word must be in {voice_language}; never answer in English. Do not add speech. Add subtle room and product sounds and low music without singing. "
+            f"{language_rule} Do not add speech. Add subtle room and product sounds and low music without singing. "
             "No subtitles, captions, overlays, logos, watermarks, app UI, touchscreen, wireless charging, projector, extra accessories, extra products or unsupported claims. Natural handheld motion."
-            + (" Finish exactly on image 2." if reference_mode == "first-last" else "")
         )
 
     prompt = render(1.0)
@@ -771,54 +771,32 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
     output_dir = existing_video_dir(product_dir)
     output_path = output_dir / f"variant-{variant_id:02d}.mp4"
     v2_active = active(product_dir)
+    # Resolve the spoken locale once, before any prompt is rendered. Both the
+    # compact and the full prompt path consume this value, so a declared market
+    # can no longer be silently overridden by an English default, and an
+    # undeclared market fails here instead of shipping English audio.
+    brief = load_json(product_dir / "product_brief.json", {})
+    manifest = load_json(product_dir / "product_manifest.json", {})
+    try:
+        voice_resolution = resolve_voice_locale(
+            variant=variant,
+            brief=brief if isinstance(brief, dict) else {},
+            manifest=manifest if isinstance(manifest, dict) else {},
+            explicit=getattr(args, "voice_locale", "") or getattr(args, "market", ""),
+            product_dir=product_dir,
+        )
+    except VoiceLocaleError as error:
+        raise RuntimeError(f"{product_dir.name} variant {variant_id:02d}: {error}") from error
+    voice_locale = voice_resolution.locale
     if output_path.exists() and not args.force and not v2_active:
         return {"variant_id": variant_id, "status": "skipped_existing", "output_path": str(output_path.relative_to(product_dir))}
-    if is_veo_model(args.model):
-        if args.single_reference:
-            raise RuntimeError(
-                f"{product_dir.name} variant {variant_id:02d}: VEO must use both start and end keyframes. "
-                "Remove --single-reference and generate the missing keyframe first."
-            )
-        start_frame, end_frame = generated_start_end_paths(product_dir, variant_id)
-        missing = [path.name for path in (start_frame, end_frame) if not path.exists()]
-        if missing:
-            raise RuntimeError(
-                f"{product_dir.name} variant {variant_id:02d}: VEO requires start+end keyframes; missing {', '.join(missing)}. "
-                "Run generate_images.py with --keyframes for this variant before submitting VEO."
-            )
-        reference_images = [start_frame, end_frame]
-    elif args.model in OMNI_FIRST_LAST_MODELS and args.reference_mode != "first-last":
-        raise RuntimeError(
-            f"{product_dir.name} variant {variant_id:02d}: {args.model} only supports first-last mode; "
-            "provide both generated start and end keyframes."
-        )
-    elif args.model in {"omni-flash", "omni_flash-10s", "omni_flash-10s-fl"} and args.reference_mode == "first-last":
-        start_frame, end_frame = generated_start_end_paths(product_dir, variant_id)
-        missing = [path.name for path in (start_frame, end_frame) if not path.exists()]
-        if missing:
-            raise RuntimeError(
-                f"{product_dir.name} variant {variant_id:02d}: Omni first-last mode requires both keyframes; "
-                f"missing {', '.join(missing)}. Generate and QC the missing frame first."
-            )
-        reference_images = [start_frame, end_frame]
-    elif args.model in {"omni-flash", "omni_flash-10s"} and args.reference_mode == "omni-reference":
-        generated = generated_keyframe_paths(product_dir, variant_id)
-        if v2_active:
-            # V2 Omni uses one stable, explicit pair. The real product photo is
-            # upstream evidence for creating/QC'ing the identity grid, not a
-            # third video-model reference.
-            reference_images = omni_storyboard_identity_paths(product_dir, variant)
-        else:
-            reference_images = unique_paths(generated[:1] + variant_reference_paths(product_dir, variant))[:3]
-    else:
-        reference_images = unique_paths(
-            generated_keyframe_paths(product_dir, variant_id)
-            + variant_reference_paths(product_dir, variant)
-        )
+    if args.reference_mode != "omni-reference":
+        raise RuntimeError("This pipeline supports only --reference-mode omni-reference")
+    if not v2_active:
+        raise RuntimeError("Omni reference submission requires the v2 identity lock and storyboard QC chain")
+    reference_images = omni_storyboard_identity_paths(product_dir, variant)
     if not reference_images:
         raise RuntimeError(f"Missing generated reference image(s) for variant {variant_id}")
-    if args.single_reference:
-        reference_images = reference_images[:1]
     if v2_active:
         # A generated storyboard can live in an append-only run folder rather
         # than the canonical generated_images directory. Its provenance file is
@@ -827,13 +805,12 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
         if not scene_refs:
             raise RuntimeError("v2 video requires generated scene frames")
         validate_scene_chain(product_dir, scene_refs)
-        require_qc(product_dir, scene_refs, "keyframes",
+        require_qc(product_dir, scene_refs, "storyboards",
                    override=bool(getattr(args, "allow_unverified_references", False)))
     reference_limit = (
-        2 if args.model == "omni_flash-10s-fl"
-        else 7 if args.model == "omni_flash-10s"
+        7 if args.model == "omni_flash-10s"
         else 3 if args.model == "omni-flash"
-        else 2
+        else 3
     )
     scale_lock = str(variant.get("_physical_scale_lock") or "").strip()
     scale_suffix = (" STRICT PHYSICAL SCALE THROUGHOUT: " + scale_lock) if scale_lock else ""
@@ -844,7 +821,8 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
         # the finished prompt still fits the provider's cap.
         budget = OMNI_PROMPT_CHAR_LIMIT - len(scale_suffix) if omni_limited else 1_000_000
         base_prompt = compact_omni_prompt(
-            variant, str(args.duration), args.reference_mode, product_dir, limit=budget
+            variant, str(args.duration), args.reference_mode, product_dir, limit=budget,
+            voice_locale=voice_locale,
         )
         if omni_limited:
             print(f"[prompt] compacted Omni prompt to {len(base_prompt)} characters", flush=True)
@@ -853,11 +831,13 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
     expected = video_contract(product_dir, reference_images[:reference_limit], args.model, base_prompt, {
         "aspect_ratio": args.aspect_ratio, "duration": str(args.duration),
         "audio_duration": str(args.audio_duration), "resolution": args.resolution,
-        "generate_audio": bool(args.generate_audio), "generation_mode": args.generation_mode,
-        "version": args.version, "quality": args.quality, "enhance_prompt": args.enhance_prompt,
+        "generate_audio": bool(args.generate_audio), "enhance_prompt": args.enhance_prompt,
         "audio_style": args.audio_style, "light_overlay": bool(args.light_overlay),
         "safe_audio_test": bool(args.safe_audio_test), "enable_upsample": args.enable_upsample,
         "reference_mode": args.reference_mode,
+        "voice_locale": voice_locale,
+        "voice_locale_source": voice_resolution.source,
+        "market": voice_resolution.market,
         "base_url": args.base_url, "status_endpoint": args.status_endpoint,
     }) if v2_active else {}
     if output_path.exists() and not args.force:
@@ -874,7 +854,6 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
     )
     callouts = overlay_callouts(variant, args.light_overlay)
     voiceover = variant.get("voiceover_script_10s") or variant.get("voiceover_script_8s")
-    voice_locale = str(variant.get("voice_locale") or getattr(args, "voice_locale", "en-US"))
     if args.audio_style == "none" or prompt_has_native_audio(base_prompt):
         prompt = base_prompt
     else:
@@ -897,8 +876,6 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
     params = build_model_params(args, [item["url"] for item in uploads])
     # Omni's v1 contract accepts exactly model, prompt and params.
     payload = {"model": args.model, "prompt": prompt, "params": params}
-    if args.model not in OMNI_MODELS:
-        payload["count"] = 1
     print("\n".join(format_production_notice(
         product_dir.name, variant_id, variant, args.model, args.reference_mode,
         reference_images[:reference_limit],
@@ -1027,12 +1004,9 @@ def main() -> None:
     parser.add_argument("--products", default="")
     parser.add_argument("--variants", default="1-10")
     parser.add_argument("--prompts-file", default="ugc_prompts.json")
-    parser.add_argument("--model", default="veo3.1")
+    parser.add_argument("--model", default="omni-flash", choices=["omni-flash", "omni_flash-10s"])
     parser.add_argument("--base-url", default=BASE_URL)
     parser.add_argument("--status-endpoint", default="/v1/skills/task-status")
-    parser.add_argument("--generation-mode", default="fast")
-    parser.add_argument("--version", default="快速")
-    parser.add_argument("--quality", default="sd")
     parser.add_argument("--aspect-ratio", default=DEFAULT_ASPECT_RATIO)
     parser.add_argument(
         "--duration",
@@ -1057,32 +1031,27 @@ def main() -> None:
     parser.add_argument("--safe-audio-test", action="store_true")
     parser.add_argument(
         "--reference-mode",
-        default="first-last",
-        choices=["first-last", "omni-reference"],
-        help="Omni image mode: an exact generated start/end pair, or the fixed v2 storyboard + identity-grid pair.",
+        default="omni-reference",
+        choices=["omni-reference"],
+        help="Fixed production mode: chronological storyboard + identity grid, with an optional QC-passed operation grid.",
     )
-    parser.add_argument("--single-reference", action="store_true", help="Deprecated alias: use one generated scene image in omni-reference mode.")
     parser.add_argument("--allow-landscape", action="store_true", help="Allow non-9:16 aspect ratios for explicit landscape-only jobs.")
     parser.add_argument("--continue-on-error", action="store_true", help="Record failed variants and continue processing the batch.")
     parser.add_argument("--workers", type=int, default=1, help="Submit and poll independent variants concurrently.")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--allow-unverified-references", action="store_true",
-                        help="Submit even when keyframe QC has not passed. Only with explicit user sign-off; the override is recorded in each video's provenance.")
-    parser.add_argument("--voice-locale", default="en-US",
-                        help="Spoken language and accent for the native audio, e.g. en-US, es-MX, es-ES, es-419, pt-BR. A per-variant 'voice_locale' field overrides this.")
+                        help="Submit even when storyboard QC has not passed. Only with explicit user sign-off; the override is recorded in each video's provenance.")
+    parser.add_argument("--voice-locale", default="",
+                        help="Deliberate override of the spoken locale, e.g. ja-JP or es-MX. Leave empty to resolve from the variant, the prompt batch, or the declared market; an unresolved locale is a hard error rather than English.")
+    parser.add_argument("--market", default="",
+                        help="Target market for the spoken language and local casting, e.g. Japan or JP. Used when neither the variant nor the prompt batch declares a locale.")
     args = parser.parse_args()
     if args.duration is None:
         args.duration = "10"
     if args.audio_duration is None:
         args.audio_duration = str(args.duration)
-    if args.model == "omni_flash-10s-fl" and str(args.duration) != "10":
-        raise SystemExit("omni_flash-10s-fl has a fixed 10-second duration")
     if args.model in {"omni-flash", "omni_flash-10s"} and str(args.duration) not in {"4", "6", "8", "10"}:
         raise SystemExit("Omni duration must be one of 4, 6, 8, or 10 seconds")
-    if args.model == "omni_flash-10s-fl" and args.reference_mode != "first-last":
-        raise SystemExit("omni_flash-10s-fl requires --reference-mode first-last")
-    if args.single_reference:
-        args.reference_mode = "omni-reference"
     if args.aspect_ratio != DEFAULT_ASPECT_RATIO and not args.allow_landscape:
         raise SystemExit(
             f"Refusing aspect_ratio={args.aspect_ratio}. Product UGC videos default to vertical {DEFAULT_ASPECT_RATIO}; "

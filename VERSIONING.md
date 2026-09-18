@@ -15,7 +15,7 @@ Generated product outputs, images, videos, logs, and API artifacts should not be
 Create a commit whenever the skill behavior changes meaningfully, for example:
 
 - `skill: improve canonical reference selection`
-- `skill: add native veo voiceover prompts`
+- `skill: add native Omni Flash voiceover prompts`
 - `skill: refine image2 product identity lock`
 - `skill: add 1688 product-function cognition rules`
 

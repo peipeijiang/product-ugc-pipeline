@@ -15,6 +15,18 @@ from creative_risk_router import (
     build_video_feasibility_plan,
     format_feasibility_notice,
 )
+from voice_locale import (
+    VoiceLocaleError,
+    language_clause,
+    language_name,
+    max_voiceover_chars,
+    normalize_locale,
+    resolve_voice_locale,
+    script_matches,
+    script_of,
+    trim_voiceover,
+    voice_description,
+)
 
 
 UGC_SYSTEM_PROMPT = """You are a senior UGC creative director and ecommerce offer strategist for short-form product video.
@@ -301,7 +313,102 @@ def _trim_to_words(text: str, max_words: int) -> str:
     return " ".join(words[:max_words]).rstrip(" ,.-")
 
 
-def normalize_voiceover_script_10s(raw_voiceover: Any, hook: str = "", fallback: str = "") -> list[dict[str, str]]:
+def derive_sku_colourway(manifest: dict[str, Any], product_brief: dict[str, Any] | None = None) -> str:
+    """Return a single pinned SKU/colourway label, or an empty string.
+
+    An absent value used to render a blank "MANDATORY SKU FOR THIS VIDEO: ."
+    clause. Returning an empty string lets the adapter omit the clause instead.
+    """
+    brief = product_brief if isinstance(product_brief, dict) else {}
+    identity = brief.get("confirmed_identity")
+    if isinstance(identity, dict):
+        for key in ("colourway", "colorway", "colour", "color", "variant", "sku_name", "sku"):
+            value = identity.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    for key in ("sku_colourway", "colourway", "colorway", "sku_name", "selected_sku"):
+        value = brief.get(key) or manifest.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    if isinstance(identity, str) and identity.strip():
+        return identity.strip()
+    skus = manifest.get("skus")
+    if isinstance(skus, list) and skus:
+        names: list[str] = []
+        for item in skus:
+            if not isinstance(item, dict):
+                continue
+            for key in ("sku_name", "sku_property_value_name", "name", "property_value_name"):
+                value = item.get(key)
+                if isinstance(value, str) and value.strip() and value.strip() not in names:
+                    names.append(value.strip())
+        # Only pin a colourway when the listing has exactly one; a multi-SKU
+        # listing must stay unpinned rather than locking an arbitrary SKU.
+        if len(names) == 1:
+            return names[0]
+    return ""
+
+
+def validate_voiceover_language(variant: dict[str, Any], locale: str, product_name: str) -> None:
+    """Reject a voiceover written in the wrong script for the target market.
+
+    This is the gate that would have caught an English script shipped to a
+    Japanese market instead of paying for a video in the wrong language.
+    """
+    if script_of(locale) == "latin":
+        return
+    lines = variant.get("voiceover_script_10s") or []
+    spoken = " ".join(
+        str(item.get("line") or "") if isinstance(item, dict) else str(item) for item in lines
+    ).strip()
+    if not spoken:
+        raise VoiceLocaleError(
+            f"{product_name} variant {variant.get('variant_id')}: no spoken line for {language_name(locale)}. "
+            "Refusing to submit a clip with an empty voiceover."
+        )
+    if not script_matches(spoken, locale):
+        raise VoiceLocaleError(
+            f"{product_name} variant {variant.get('variant_id')}: the voiceover is not written in "
+            f"{language_name(locale)} (locale {locale}) but the ad targets that market. "
+            f"Rewrite the spoken lines in {language_name(locale)} before generating video. "
+            f"Offending line: {spoken[:120]!r}"
+        )
+
+
+def _trim_line_for_locale(text: str, max_words: int, locale: str | None) -> str:
+    """Trim a spoken line without leaving a dangling fragment.
+
+    `_trim_to_words` cut the tail word-by-word, so a long line shipped as
+    "...you get the" and a Japanese line was counted as a single word because
+    it has no spaces. Latin lines now drop whole trailing clauses, and
+    non-Latin lines are budgeted by characters.
+    """
+    cleaned = _clean_spoken_text(text)
+    resolved = normalize_locale(locale)
+    if not resolved:
+        return _trim_to_words(cleaned, max_words)
+    if script_of(resolved) != "latin":
+        budget = max(12, int(round(max_voiceover_chars(resolved) * max_words / max(1, VOICEOVER_HARD_MAX_WORDS))))
+        return trim_voiceover(cleaned, resolved, max_chars=budget)
+    words = cleaned.split()
+    if len(words) <= max_words:
+        return " ".join(words)
+    clauses = [part for part in re.split(r"(?<=[,;:.!?])\s+", cleaned) if part.strip()]
+    while len(clauses) > 1 and len(" ".join(clauses).split()) > max_words:
+        clauses.pop()
+    result = " ".join(clauses).strip()
+    # A single clause can still exceed the slot. Keeping it whole reads far
+    # better than the old truncated fragment, and the model is separately
+    # instructed to stay inside the slot budget.
+    return result.rstrip(" ,;-") + ("." if result and result[-1] not in ".!?" else "")
+
+
+def normalize_voiceover_script_10s(
+    raw_voiceover: Any,
+    hook: str = "",
+    fallback: str = "",
+    locale: str | None = None,
+) -> list[dict[str, str]]:
     collected: list[str] = []
     if isinstance(raw_voiceover, dict):
         for time_slot, _ in VOICEOVER_SEGMENTS:
@@ -328,21 +435,42 @@ def normalize_voiceover_script_10s(raw_voiceover: Any, hook: str = "", fallback:
     normalized: list[dict[str, str]] = []
     for index, (time_slot, max_words) in enumerate(VOICEOVER_SEGMENTS):
         source = collected[index] if index < len(collected) else fallback_lines[index]
-        line = _trim_to_words(source, max_words)
+        line = _trim_line_for_locale(source, max_words, locale)
         if not line:
-            line = _trim_to_words(fallback_lines[index], max_words)
+            line = _trim_line_for_locale(fallback_lines[index], max_words, locale)
         normalized.append({"time": time_slot, "line": line})
+    resolved = normalize_locale(locale)
+    latin = (not resolved) or script_of(resolved) == "latin"
     total_words = sum(len(item["line"].split()) for item in normalized)
-    if total_words > VOICEOVER_HARD_MAX_WORDS:
-        overflow = total_words - VOICEOVER_HARD_MAX_WORDS
+    # Non-Latin scripts are not word-delimited, so the word-count overflow pass
+    # used to misfire on Japanese. Budget those by characters instead.
+    total_units = total_words if latin else sum(len(item["line"]) for item in normalized)
+    hard_max = VOICEOVER_HARD_MAX_WORDS if latin else max_voiceover_chars(resolved) if resolved else VOICEOVER_HARD_MAX_WORDS
+    if total_units > hard_max:
+        overflow = total_units - hard_max
         for item in reversed(normalized):
-            words = item["line"].split()
-            removable = max(0, len(words) - 4)
-            if removable <= 0:
-                continue
-            cut = min(removable, overflow)
-            item["line"] = " ".join(words[:-cut]).rstrip(" ,.-")
-            overflow -= cut
+            if latin:
+                words = item["line"].split()
+                removable = max(0, len(words) - 4)
+                if removable <= 0:
+                    continue
+                cut = min(removable, overflow)
+                remaining = " ".join(words[:-cut])
+                # Prefer dropping whole trailing clauses; only fall back to a
+                # word cut when a single clause is already over the budget.
+                clauses = [part for part in re.split(r"(?<=[,;:.!?])\s+", remaining) if part.strip()]
+                while len(clauses) > 1 and len(" ".join(clauses).split()) > len(words) - cut:
+                    clauses.pop()
+                rebuilt = " ".join(clauses).strip().rstrip(" ,;-")
+                item["line"] = rebuilt + ("." if rebuilt and rebuilt[-1] not in ".!?" else "")
+                overflow -= cut
+            else:
+                room = max(0, len(item["line"]) - 8)
+                if room <= 0:
+                    continue
+                cut = min(room, overflow)
+                item["line"] = trim_voiceover(item["line"], resolved, max_chars=max(8, len(item["line"]) - cut))
+                overflow -= cut
             if overflow <= 0:
                 break
     return normalized
@@ -448,13 +576,6 @@ def format_storyboard_for_prompt(variant: dict[str, Any]) -> str:
             f"[{entry.get('time')}] Visual: {entry.get('visual')}. Spoken: {spoken}. Overlay: {overlay}."
         )
     return " ".join(lines)
-
-
-def storyboard_endpoint(variant: dict[str, Any], frame_role: str) -> dict[str, str]:
-    entries = storyboard_entries(variant)
-    if not entries:
-        return {"time": "0.0-1.2s" if frame_role == "start" else "6.8-8.0s", "visual": "", "spoken": "", "overlay": ""}
-    return entries[0] if frame_role == "start" else entries[-1]
 
 
 def summarize_variant_history(variant: dict[str, Any], source_file: str) -> dict[str, Any]:
@@ -616,9 +737,17 @@ def normalize_variants(
     count: int,
     product_brief: dict[str, Any] | None = None,
     creative_matrix: list[dict[str, Any]] | None = None,
+    voice_locale: str | None = None,
+    market: str = "",
 ) -> dict[str, Any]:
     product_name = manifest["product_name"]
+    resolved_locale = normalize_locale(voice_locale)
+    if not resolved_locale:
+        raise VoiceLocaleError(
+            f"normalize_variants needs a resolved voice locale for {product_name}; refusing to assume English."
+        )
     feature_summary = product_function_summary(manifest, product_brief)
+    sku_colourway = derive_sku_colourway(manifest, product_brief)
     variants = output.get("variants")
     if not isinstance(variants, list):
         raise RuntimeError(f"Model output missing variants array for {product_name}")
@@ -631,6 +760,14 @@ def normalize_variants(
             raise RuntimeError(f"Variant {index} for {product_name} was not a JSON object")
         clean_variant = dict(variant)
         clean_variant["variant_id"] = index
+        # Persist the market contract on every variant so downstream adapter and
+        # montage steps never have to guess the spoken language, and so an empty
+        # colourway cannot render a blank "MANDATORY SKU" clause.
+        clean_variant["voice_locale"] = resolved_locale
+        clean_variant["market"] = market or clean_variant.get("market") or ""
+        clean_variant["voice_locale_source"] = "prompt_batch"
+        if sku_colourway and not str(clean_variant.get("sku_colourway") or "").strip():
+            clean_variant["sku_colourway"] = sku_colourway
         matrix_index = len(normalized)
         if creative_matrix and matrix_index < len(creative_matrix):
             clean_variant.setdefault("creative_matrix_slot", creative_matrix[matrix_index])
@@ -655,7 +792,9 @@ def normalize_variants(
             clean_variant.get("voiceover_script_10s") or clean_variant.get("voiceover_script_8s"),
             hook=str(clean_variant.get("hook") or ""),
             fallback=build_voiceover_script_10s(product_name, feature_summary, clean_variant.get("hook", ""))[1]["line"],
+            locale=resolved_locale,
         )
+        validate_voiceover_language(clean_variant, resolved_locale, product_name)
         clean_variant.pop("voiceover_script_8s", None)
         clean_variant["on_screen_callouts"] = normalize_on_screen_callouts(clean_variant.get("on_screen_callouts"), feature_summary)
         clean_variant["shot_plan"] = normalize_shot_plan_10s(clean_variant.get("shot_plan"), clean_variant)
@@ -669,11 +808,13 @@ def normalize_variants(
             image_prompt = fidelity + ("\n" + image_prompt if image_prompt else "")
         if "CANONICAL PRODUCT" not in video_prompt:
             video_prompt = fidelity + ("\n" + video_prompt if video_prompt else "")
-        clean_variant["start_frame_prompt"] = usage_keyframe_prompt(product_name, clean_variant, product_brief, "start")
-        clean_variant["end_frame_prompt"] = usage_keyframe_prompt(product_name, clean_variant, product_brief, "end")
+        # Drop legacy scene-endpoint fields so older history files cannot leak
+        # them into a new prompt batch.
+        clean_variant.pop("start_frame_prompt", None)
+        clean_variant.pop("end_frame_prompt", None)
         clean_variant["image_prompt"] = strict_pad_image_prompt(product_name, clean_variant, product_brief)
-        clean_variant["video_prompt"] = usage_demo_video_prompt(clean_variant, product_brief)
-        clean_variant["video_prompt_strategy"] = "usage_demo_conservative_first_frame_identity"
+        clean_variant["video_prompt"] = usage_demo_video_prompt(clean_variant, product_brief, resolved_locale)
+        clean_variant["video_prompt_strategy"] = "omni_reference_storyboard_identity"
         normalized.append(clean_variant)
     output["product_name"] = output.get("product_name") or product_name
     output["variants"] = normalized
@@ -691,7 +832,7 @@ def build_hallucination_defense_block(product_brief: dict[str, Any] | None = Non
     brief = product_brief or {}
     defense = brief.get('hallucination_defense') or {}
 
-    # Universal baseline — covers all common VEO hallucination categories
+    # Universal baseline — covers common image/video hallucination categories.
     base = (
         'HALLUCINATION DEFENSE (universal): '
         'Do not add, invent, redesign, or hallucinate ANY of the following unless explicitly visible in the reference image: '
@@ -944,43 +1085,6 @@ def _plain_brief_list(value: Any, limit: int = 4) -> str:
     return str(value or "")
 
 
-def sanitize_single_photo_prompt_text(value: Any) -> str:
-    text = str(value or "")
-    replacements = {
-        "Full 8-second storyboard": "single-frame visual plan",
-        "storyboard": "scene",
-        "Storyboard": "Scene",
-        "keyframe": "photo",
-        "Keyframe": "Photo",
-        "first vs final": "selected",
-        "multi-colorway": "single selected colorway",
-        "multi colorway": "single selected colorway",
-        "multiple colorways": "one selected colorway",
-        "Five prints": "one selected print",
-        "five prints": "one selected print",
-        "Pick Your Print": "Selected Print",
-        "flat-lay": "natural single-product lifestyle view",
-        "flat lay": "natural single-product lifestyle view",
-        "grid": "single image",
-        "collage": "single image",
-        "multi-panel": "single image",
-        "split-screen": "single image",
-        "contact sheet": "single image",
-        "before-and-after": "single moment",
-        "before and after": "single moment",
-        "side-by-side": "single",
-        "quad": "single",
-        "3-panel": "single image",
-        "4-up": "single image",
-        "print options": "the selected product",
-        "color options": "the selected product",
-        "product lineup": "the single product",
-    }
-    for source, target in replacements.items():
-        text = text.replace(source, target)
-    return " ".join(text.split())
-
-
 def product_function_summary(manifest: dict[str, Any], product_brief: dict[str, Any] | None = None) -> str:
     brief = product_brief or {}
     candidates = [
@@ -1220,107 +1324,34 @@ def image_led_video_prompt(variant: dict[str, Any]) -> str:
     )
 
 
-def usage_keyframe_prompt(
-    product_name: str,
+def usage_demo_video_prompt(
     variant: dict[str, Any],
     product_brief: dict[str, Any] | None = None,
-    frame_role: str = "start",
+    voice_locale: str | None = None,
 ) -> str:
     brief = product_brief or {}
-    feasibility = brief.get("video_feasibility_plan") if isinstance(brief.get("video_feasibility_plan"), dict) else {}
-    protect_configuration = feasibility.get("protect_product_configuration") is True
-    references = variant.get("selected_reference_images") or _brief_paths(brief, ["canonical_reference_images", "reference_image_strategy"])
-    reference_scope = variant.get("reference_scope") or reference_scope_note(references)
-    scene_imagination = build_scene_imagination(variant, brief)
-    usage_context = _plain_brief_list(
-        variant.get("usage_logic") or brief.get("step_by_step_usage") or brief.get("confirmed_or_inferred_use_steps"),
-        2,
-    )
-    proof_moment = _plain_brief_list(variant.get("proof_moment") or brief.get("proof_moments"), 1)
-    endpoint = storyboard_endpoint(variant, frame_role)
-    endpoint_visual = sanitize_single_photo_prompt_text(endpoint.get("visual"))
-    usage_context = sanitize_single_photo_prompt_text(usage_context)
-    proof_moment = sanitize_single_photo_prompt_text(proof_moment)
-    scene_imagination = sanitize_single_photo_prompt_text(scene_imagination)
-    if frame_role == "end":
-        start_entry = storyboard_entries(variant)[0] if storyboard_entries(variant) else {"visual": "hook setup"}
-        start_visual = sanitize_single_photo_prompt_text(str(start_entry.get("visual", "")))
-        moment = (
-            f"END FRAME PHOTO: this is the final shot of the 10-second story. "
-            f"The opening hook was: {start_visual}. "
-            f"Now create the SATISFYING CONCLUSION: [{endpoint.get('time')}] {endpoint_visual}. "
-            "You are given the start-frame reference image for continuity (same room, same person, same lighting, same product identity). "
-            "But the composition MUST be different — this is the END of the story, not the beginning. "
-            "The product is now in its final use state, the action is complete, the proof is visible. "
-            "Keep the room/person/lighting/product from the reference, but replace the composition with this conclusion moment."
+    # The spoken voice used to be hard-coded to a "young American female" with an
+    # "18 to 22 English words" budget, and because this text already contains
+    # "Native audio" the adapter skipped its own locale-aware block and shipped
+    # that English voice for every market. It is now derived from the locale.
+    resolved_locale = normalize_locale(voice_locale) or normalize_locale(variant.get("voice_locale"))
+    if not resolved_locale:
+        raise VoiceLocaleError(
+            "usage_demo_video_prompt needs a resolved voice locale; refusing to hard-code an English voice."
         )
-        continuity = (
-            "This end frame must look like the same exact person, same wardrobe, same room, same props, same lighting, "
-            "and same shoot as the start frame, but the action state, hand position, product interaction, phone/app/sink/result state, "
-            "and camera composition should advance to the final visible moment. If the start frame is provided as a reference image, copy its room geometry, wall texture, outlet plate or tabletop, screw positions, shadows, hand identity, wardrobe, lens height, and camera crop; change only the final action state."
+    voice_line = voice_description(resolved_locale)
+    spoken_language = language_name(resolved_locale)
+    if script_of(resolved_locale) == "latin":
+        length_rule = (
+            f"The spoken script must finish naturally within 10 seconds at normal creator pace, "
+            f"ideally {VOICEOVER_TARGET_WORDS[0]} to {VOICEOVER_TARGET_WORDS[1]} words total and never more than "
+            f"{VOICEOVER_HARD_MAX_WORDS} words."
         )
     else:
-        moment = (
-            f"START FRAME PHOTO: create only the opening hook/problem/setup moment: [{endpoint.get('time')}] {endpoint_visual}. "
-            "This must establish the scene before the product action begins."
+        length_rule = (
+            f"The spoken script must finish naturally within 10 seconds at normal creator pace, "
+            f"roughly {max_voiceover_chars(resolved_locale)} characters of {spoken_language} in total."
         )
-        continuity = "This start frame establishes the person, scene, wardrobe, props, and camera setup that the end frame must continue."
-    scene_hint = _plain_brief_list(variant.get("shot_plan") or brief.get("recommended_ugc_scenes") or variant.get("title"), 2)
-    if not scene_hint:
-        scene_hint = "a realistic use environment for this exact product"
-    scene_hint = sanitize_single_photo_prompt_text(scene_hint)
-    if protect_configuration:
-        frame_change_rule = (
-            "The start and end photos must keep the product in the same verified ready-to-use configuration. "
-            "Keep its topology, connections, part count and geometry unchanged; advance only the creator pose, camera framing, use result or reaction. "
-            "Do not depict installation, assembly, insertion, reversal, folding or any missing intermediate mechanism in either keyframe."
-        )
-    else:
-        frame_change_rule = (
-            "The start and end photos must not be near-duplicates: keep product identity stable, but clearly change only the visible action state for this selected moment."
-        )
-    phone_geometry = phone_geometry_constraints_for_prompt(
-        " ".join(
-            str(variant.get(key) or "")
-            for key in (
-                "title",
-                "hook",
-                "usage_logic",
-                "proof_moment",
-                "scene_imagination",
-                "start_frame_prompt",
-                "end_frame_prompt",
-                "image_prompt",
-            )
-        )
-    )
-    return (
-        product_fidelity_block(product_name, product_brief)
-        + "\nCreate ONE single vertical 9:16 realistic product-use photo in one continuous camera view. This must be one still image only, with no layout design, comparison graphic, product range display, or visual sequence. "
-        f"{moment} "
-        f"Use these selected reference images as the product identity source: {json.dumps(references, ensure_ascii=False)}. "
-        f"Reference scope: {reference_scope} "
-        "The first selected full-product reference is canonical. Do not borrow shape, color, mechanism, or accessories from alternate SKUs on the same product page. "
-        "The referenced product must remain the exact same physical object, with unobstructed recognizable silhouette and surface details. "
-        f"Use this product-appropriate scene rather than a generic kitchen unless the product is truly a kitchen product: {scene_hint}. "
-        f"Scene imagination: {scene_imagination} "
-        "The lifestyle environment may differ from the original product photo; preserve the product, not the source-photo background. "
-        f"{continuity} "
-        f"LOW-RISK DIRECTION: {feasibility.get('selected_direction', {})}. {frame_change_rule} "
-        "Do not switch to a different room, outlet style, table surface, camera distance, person, wardrobe, or product position between start and end. "
-        "Adult hands only if needed, natural phone-shot lighting, no subtitles, no transcript captions, no platform UI, no icons, no extra branding. "
-        f"{phone_geometry} "
-        "Avoid extreme close-ups, heavy occlusion, dramatic stains, magic effects, or any invented product mechanism. "
-        f"Supported use context: {usage_context}. Proof idea: {proof_moment}. "
-        "IMPORTANT ANTI-COLLAGE: This must be exactly one single undivided photograph. "
-        "Do not produce any multi-panel layouts, split-screens, before-after comparisons, contact sheets, product grids, collages, storyboard frames, or 2-up/3-up/4-up arrangements. "
-        "Do not include any on-image text labels, captions, callouts, arrows, circles, or graphic overlays. "
-        "Output one clean standalone 9:16 vertical photo only."
-    )
-
-
-def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, Any] | None = None) -> str:
-    brief = product_brief or {}
     feasibility = brief.get("video_feasibility_plan") if isinstance(brief.get("video_feasibility_plan"), dict) else {}
     protect_configuration = feasibility.get("protect_product_configuration") is True
     buyer_effect = buyer_effect_summary(variant, brief)
@@ -1361,14 +1392,16 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
         raw_voiceover,
         hook=str(variant.get("hook") or ""),
         fallback=str(variant.get("dialogue_script") or variant.get("title") or ""),
+        locale=resolved_locale,
     )
     voiceover_text = compact_voiceover_text(normalized_voiceover)
     timed_voiceover = " ".join(f"[{item['time']}] {item['line']}" for item in normalized_voiceover if item.get("line"))
     audio_block = (
-        "Native audio: include a clear young American female lifestyle-commerce creator voiceover, bright, stylish, warm, emotionally engaged, and not robotic or corporate. "
+        f"Native audio: include a clear {voice_line} lifestyle-commerce creator voiceover, bright, stylish, warm, emotionally engaged, and not robotic or corporate. "
         f"Commercial spine for the spoken copy: buyer problem/desire = {buyer_problem}; product intervention = {product_intervention}; buyer result = {buyer_result}. "
         "The spoken copy must sell this spine with a natural creator cadence; do not spend the line only naming parts, materials, or generic setup steps. "
-        "The spoken script must finish naturally within 10 seconds at normal creator pace, ideally 18 to 22 English words total and never more than 25 words. "
+        f"{length_rule} "
+        f"{language_clause(resolved_locale)} The spoken copy must be written in {spoken_language}; do not speak or transliterate English. "
         f"Speak these exact timed lines in order: {timed_voiceover}. "
         f"Combined exact script: \"{voiceover_text[:220]}\" "
         "Do not add intro words, filler, repeated lines, extra CTA, or any unscripted speech. Keep the voiceover synchronized to the benefit/result arc. Add low-volume modern lifestyle background music plus subtle real product handling sounds; no singing."
@@ -1416,8 +1449,8 @@ def usage_demo_video_prompt(variant: dict[str, Any], product_brief: dict[str, An
         f"forbidden generation = {variant.get('unsafe_actions_omitted') or feasibility.get('forbidden_generation', [])}. "
     )
     return (
-        "Create a 10-second vertical stylish creator-ad product-use clip using the provided reference frame or start/end keyframes. "
-        "If two reference images are provided, use image 1 as the first frame and image 2 as the final frame, keeping the same subject, room, lighting, wardrobe, and camera geometry unless the storyboard intentionally moves within that same scene. "
+        "Create a 10-second vertical stylish creator-ad product-use clip in Omni Flash omni-reference mode. "
+        "Use the chronological storyboard as the action/scene guide, the identity grid as the product truth, and an optional QC-passed operation grid only when the product needs supported state-change guidance. These are all-purpose references, not timeline endpoints. "
         "Commercial north star: every visual beat and the voiceover must sell the buyer-visible result, not merely list product parts. "
         f"Core buyer reason to buy: {core_selling_claim}. "
         f"Benefit ladder: problem/desire = {buyer_problem}; product action = {product_intervention}; result/proof = {buyer_result}. "
@@ -1450,11 +1483,42 @@ def generate_with_model(
     model: str,
     base_url: str,
     timeout: int,
+    voice_locale: str | None = None,
+    market: str = "",
 ) -> dict[str, Any]:
     commercial_promise = commercial_promise_summary(manifest, product_brief)
     creative_matrix = creative_matrix_plan(count, existing_history)
+    resolved_locale = normalize_locale(voice_locale)
+    if not resolved_locale:
+        raise VoiceLocaleError(
+            "generate_with_model needs a resolved voice locale; refusing to let the model assume an English market."
+        )
+    spoken_language = language_name(resolved_locale)
+    if script_of(resolved_locale) == "latin":
+        voiceover_budget = (
+            f"{VOICEOVER_TARGET_WORDS[0]}-{VOICEOVER_TARGET_WORDS[1]} words, hard maximum {VOICEOVER_HARD_MAX_WORDS}"
+        )
+    else:
+        voiceover_budget = (
+            f"about {max_voiceover_chars(resolved_locale)} characters of {spoken_language} in total"
+        )
+    market_block = f"""
+TARGET MARKET AND SPOKEN LANGUAGE (hard requirement):
+- Market: {market or resolved_locale}
+- Locale: {resolved_locale}
+- Spoken language: {spoken_language}
+- Voice: {voice_description(resolved_locale)}
+
+Every spoken line you write must be natural, native {spoken_language} intended for this market. Write `dialogue_script`,
+`voiceover_script_10s` and the spoken parts of `storyboard_10s` in {spoken_language}. {language_clause(resolved_locale)}
+Total spoken length: {voiceover_budget}, and it must finish naturally inside 10 seconds. Do not write English copy and do
+not leave an English placeholder. Keep scenes, props, creator persona and gestures culturally natural for {market or resolved_locale}.
+Each complete line must be a full sentence that ends with terminal punctuation; never return a fragment.
+"""
     prompt = f"""
 Create {count} distinct UGC prompt variants for short-form ecommerce product ads.
+
+{market_block}
 
 HIGH-PRIORITY COMMERCIAL PROMISE SIGNALS:
 {commercial_promise}
@@ -1508,7 +1572,7 @@ Each variant must include:
 - usage_logic: explain how the product works and why the scene is correct
 - proof_moment: the exact visual action that proves the function
 - shot_plan with exact 0-10 second timing
-- storyboard_10s: exact 0-10 second beats; each beat should include time, visual, spoken, and optional sparse overlay rendered as stylish pill-badge / warm-tinted pop-up typography; overlay must be short feature tags only, not subtitles, and the first/last beats must correspond to the start/end keyframes
+- storyboard_10s: exact 0-10 second beats; each beat should include time, visual, spoken, and optional sparse overlay rendered as stylish pill-badge / warm-tinted pop-up typography; overlay must be short feature tags only, not subtitles; the storyboard is rendered into one chronological reference sheet
 - selected_reference_images using local paths from the preferred list
 - reference_scope: explain which visual details from source images lock product identity, and explicitly state that source-photo background/props/composition are not mandatory unless functionally necessary
 - selling_angle: one focused buyer benefit for this variant
@@ -1530,15 +1594,15 @@ Critical:
 6. Put concise native-audio voiceover lines into video_prompt, and ensure the full spoken copy can naturally finish inside 10 seconds at normal creator pace: target 18-22 English words, hard max 25 words, no unfinished trailing phrase.
 7. Voiceover must be benefit-led and sales-forward: in 18-22 words, it should make the product feel worth buying by naming the buyer problem/desire, the product's role, and the final result. Avoid scripts that only say "snap it", "soft fabric", "white buckle", "easy setup", "here is how it works", or other part/setup descriptions unless those words are tied to the main buyer outcome.
 8. Keep every shot_plan, voiceover_script_10s, image-to-video prompt, and action arc designed for exactly 10 seconds. Do not write 8s, 9s, 12s, or 15s plans.
-9. Allow only 1-2 tiny sparse VEO overlay labels from on_screen_callouts as feature tags, e.g. "100 speeds" or "Tilt airflow"; render them as stylish short-form creator typography (bold rounded pill badges, warm vibrant accent tints, compact pop-up labels), plain-English only, no emoji. If clean stylish text is uncertain, skip overlay rather than render ugly/garbled words. Do not ask for subtitles, transcript captions, lower-thirds, karaoke text, social media icons, platform logos, camera/reel icons, app UI, or watermarks. Never use positive platform-branded style phrases; say stylish short-form creator-ad energy instead.
-10. Build the video from a single storyboard: video_prompt must include every beat's time, visual content, spoken line, and optional sparse feature overlay; start_frame_prompt must depict the first beat's problem/setup; end_frame_prompt must depict the final beat's improved result/payoff. Overlay must not repeat the spoken line as subtitles.
+9. Allow only 1-2 tiny sparse overlay labels from on_screen_callouts as feature tags, e.g. "100 speeds" or "Tilt airflow"; render them as stylish short-form creator typography (bold rounded pill badges, warm vibrant accent tints, compact pop-up labels), plain-English only, no emoji. If clean stylish text is uncertain, skip overlay rather than render ugly/garbled words. Do not ask for subtitles, transcript captions, lower-thirds, karaoke text, social media icons, platform logos, camera/reel icons, app UI, or watermarks. Never use positive platform-branded style phrases; say stylish short-form creator-ad energy instead.
+10. Build the video from one chronological storyboard reference sheet: video_prompt must include every beat's time, visual content, spoken line, and optional sparse feature overlay. The sheet, identity grid and optional operation grid are all-purpose omni-reference inputs; do not describe them as timeline endpoints. Overlay must not repeat the spoken line as subtitles.
 11. Product reference images lock the product itself, not the entire source photo. Preserve product identity and usage mechanics, but freely imagine realistic buyer scenes, backgrounds, camera angles, and contextual props that clarify the benefit.
 12. Each variant should focus on one small selling point or function. Vary buyer problem, scene, action, proof/result moment, and emotional payoff across the batch; do not produce ten versions of the same tabletop placement.
 12b. If the core selling claim is the same for every variant, the story must vary even more aggressively: use different hook archetypes, different people or social contexts, different before-state problems, different scene geometry, different proof/payoff visuals, different camera grammar, and different pacing. The product can solve the same buyer desire, but the ads must not look like clones.
-13. Start/end keyframes should be meaningfully different enough for a 10-second action arc while preserving the same exact product. Generate the end frame as the same shoot a few seconds later: same room, wall socket/table, person, wardrobe, lighting, product identity, and camera geometry; only the action result changes.
+13. The storyboard panels must form one meaningful 10-second action arc while preserving the same exact product, person, room, wardrobe, lighting and supported usage logic across the sheet.
 14. Read the historical variants listed above as actual prior creative work for this product. Do not paraphrase them. Avoid reusing the same scene setup, same use action, same proof moment, same buyer context, or same selling angle unless you materially transform at least 3 of those dimensions.
 15. When function overlap is unavoidable, deliberately choose a different buyer problem, a different visible result, a different camera idea, and a different proof framing instead of repeating the same demo in new words.
-15b. Use the CREATIVE MATRIX CONTRACT as the diversity source of truth. A variant fails if its creative_matrix_slot is not reflected in its hook, shot_plan, storyboard_10s, start_frame_prompt, end_frame_prompt, and video_prompt.
+15b. Use the CREATIVE MATRIX CONTRACT as the diversity source of truth. A variant fails if its creative_matrix_slot is not reflected in its hook, shot_plan, storyboard_10s, and video_prompt.
 16. Before writing the variants, allocate one primary_function_focus per variant from the high-priority commercial promise, confirmed_selling_points, manifest selling_points, confirmed_use_cases, step_by_step_usage, and proof_moments. Do not let minor hardware details or materials become the lead selling angle when the product title/page/URL clearly sells a higher-level benefit. Hardware details such as buckle, slider, material, color, pattern, button, cable, LED, or case should support the main promise rather than replace it. For multifunction wearables such as smart rings, do not default every variant to photo-taking/remote shutter; split confirmed functions across health/app checks, charging, status display, touch control, activity tracking, waterproof daily wear, or fit/detail as supported by the brief.
 17. If a phone appears, make its orientation physically possible. For selfie/timer/remote-shutter demos, the phone screen faces the creator and the lens points toward the creator; the viewer sees phone back/side, mirror, or over-shoulder composition. For app-screen proof, use over-shoulder/tabletop/second-device geometry. For wireless charging, the phone lies flat screen-up on the charger unless the real product is a stand.
 18. Follow VIDEO GENERATION FEASIBILITY ROUTE before choosing the storyboard action. Use its lowest-risk useful direction and motion budget. Model capability claims never override product evidence or topology risk.
@@ -1584,6 +1648,25 @@ def process_product(product_dir: Path, api_key: str, args: argparse.Namespace) -
     history_glob = "ugc_prompts.json" if args.output_file == "ugc_prompts.json" and canonical_prompt_path.exists() else args.history_glob
     existing_history, history_files = collect_existing_variant_history(product_dir, history_glob) if not args.ignore_history else ([], [])
     print(f"[prompts] {product_dir.name} refs={references} history={len(existing_history)}")
+    # Resolve the market/locale once for the whole batch and persist it, so the
+    # video adapter, the montage step and any later reroll all inherit the same
+    # spoken language instead of defaulting to English.
+    existing_canonical = load_json(canonical_prompt_path, {}) if canonical_prompt_path.exists() else {}
+    try:
+        voice_resolution = resolve_voice_locale(
+            prompts=existing_canonical if isinstance(existing_canonical, dict) else {},
+            brief=product_brief,
+            manifest=manifest,
+            explicit=getattr(args, "voice_locale", "") or getattr(args, "market", ""),
+            product_dir=product_dir,
+        )
+    except VoiceLocaleError as error:
+        raise RuntimeError(f"{product_dir.name}: {error}") from error
+    print(
+        f"[market] {product_dir.name} locale={voice_resolution.locale} "
+        f"market={voice_resolution.market or voice_resolution.locale} source={voice_resolution.source}",
+        flush=True,
+    )
     creative_matrix = creative_matrix_plan(args.count, existing_history)
     output = generate_with_model(
         api_key,
@@ -1596,9 +1679,18 @@ def process_product(product_dir: Path, api_key: str, args: argparse.Namespace) -
         args.model,
         args.base_url,
         args.timeout,
+        voice_locale=voice_resolution.locale,
+        market=voice_resolution.market,
     )
-    output = normalize_variants(output, manifest, references, args.count, product_brief, creative_matrix)
+    output = normalize_variants(
+        output, manifest, references, args.count, product_brief, creative_matrix,
+        voice_locale=voice_resolution.locale,
+        market=voice_resolution.market,
+    )
     output["selected_reference_images"] = references
+    output["voice_locale"] = voice_resolution.locale
+    output["market"] = voice_resolution.market or voice_resolution.locale
+    output["voice_locale_source"] = voice_resolution.source
     output["target_video_model"] = feasibility_plan["target_model"]
     output["video_feasibility_plan"] = feasibility_plan
     output["start_variant_id"] = args.start_variant_id
@@ -1675,10 +1767,21 @@ def main() -> None:
     parser.add_argument("--model", default=os.getenv("PRODUCT_UGC_PROMPT_MODEL", "gpt-5.2"))
     parser.add_argument(
         "--target-video-model",
-        default=os.getenv("PRODUCT_UGC_VIDEO_MODEL", "veo3.1"),
-        help="Video model used for risk routing, e.g. seedance-2.0 (sd2.0), minimax-h3, omni-flash, omni_flash-10s-fl, or veo3.1.",
+        default=os.getenv("PRODUCT_UGC_VIDEO_MODEL", "omni-flash"),
+        choices=["omni-flash", "omni_flash-10s"],
+        help="Omni Flash model used for risk routing. Video submission always uses omni-reference.",
     )
     parser.add_argument("--base-url", default="https://api.laozhang.ai/v1")
+    parser.add_argument(
+        "--market",
+        default="",
+        help="Target market for the spoken language and local creative framing, e.g. Japan or JP. Resolved from the product brief when omitted.",
+    )
+    parser.add_argument(
+        "--voice-locale",
+        default=os.getenv("PRODUCT_UGC_VOICE_LOCALE", ""),
+        help="Explicit spoken locale, e.g. ja-JP. Overrides the declared market; it is never silently defaulted to English.",
+    )
     parser.add_argument("--timeout", type=int, default=420)
     parser.add_argument("--products", default="", help="Comma-separated product selectors, e.g. 01 or 01-flower")
     args = parser.parse_args()

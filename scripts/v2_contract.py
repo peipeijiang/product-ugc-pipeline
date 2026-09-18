@@ -7,15 +7,12 @@ import re
 from pathlib import Path
 
 from common import load_json, selected_product_dirs, write_json
+from product_taxonomy import PRODUCTION_FAMILIES, normalize_production_profile, production_spec
 
 ROOT = Path(__file__).resolve().parents[1]
 SPECS = {
-    "apparel": ("2 rows x 2 columns", "1024x1024", ["front silhouette", "supported angle", "fabric and seams", "verified worn fit"]),
-    "jewelry": ("1 row x 3 columns", "1536x1024", ["front placement and scale", "45 degree contact and drape", "material and closure detail"]),
-    "electronics": ("3 rows x 2 columns", "1024x1536", ["front silhouette", "45 degree thickness", "supported side and ports", "supported top and controls", "verified use and contact", "verified relative scale"]),
-    "home-tools": ("3 panels top, 2 panels bottom", "1024x1024", ["full silhouette", "supported side", "grip and functional part", "verified use and contact", "verified relative scale"]),
-    "pet-tools": ("3 panels top, 2 panels bottom", "1024x1024", ["full silhouette", "supported side", "grip and functional part", "verified pet interaction", "verified pet size relation"]),
-    "furniture": ("3 panels top, 2 panels bottom", "1024x1024", ["full silhouette", "supported side and frame geometry", "hinge and adjustment detail", "verified use and contact", "verified relative scale"]),
+    name: (spec["layout"], spec["size"], list(spec["panels"]))
+    for name, spec in PRODUCTION_FAMILIES.items()
 }
 
 RULES = """Evidence precedence: real canonical product photos govern appearance;
@@ -70,13 +67,18 @@ def hashes(folder: Path, paths: list[Path]) -> dict:
     return {str(p.relative_to(folder)): digest(p) for p in paths}
 
 
-def category_spec(category: str) -> dict:
-    if category not in SPECS:
-        raise RuntimeError(f"Unknown category {category}; choose {', '.join(SPECS)}")
-    layout, size, panels = SPECS[category]
-    return {"category": category, "layout": layout, "size": size,
-            "sheet_count": 1, "panels": panels,
-            "checks": (ROOT / "references" / f"category-{category}.md").read_text(encoding="utf-8")}
+def category_spec(category: str, traits: list[str] | None = None) -> dict:
+    spec = production_spec(category, traits)
+    universal = (ROOT / "references" / "category-universal.md").read_text(encoding="utf-8")
+    specialized_path = ROOT / "references" / f"category-{spec['category']}.md"
+    specialized = specialized_path.read_text(encoding="utf-8") if specialized_path.is_file() else ""
+    trait_texts = []
+    for trait in spec["physical_traits"]:
+        trait_path = ROOT / "references" / f"trait-{trait}.md"
+        if trait_path.is_file():
+            trait_texts.append(trait_path.read_text(encoding="utf-8"))
+    spec["checks"] = "\n\n".join(item for item in [universal, specialized, *trait_texts, *spec["trait_checks"]] if item)
+    return spec
 
 
 def context(folder: Path, category: str = "") -> dict:
@@ -87,16 +89,21 @@ def context(folder: Path, category: str = "") -> dict:
     if manifest.get("fixture_only"):
         raise RuntimeError("Synthetic test fixture: supply real product sources before production generation")
     assert_clean_generation_inputs(folder, analysis, brief)
-    category = category or load_json(folder / "category.json", {}).get("category", "")
-    spec = category_spec(category)
-    recommended = str(brief.get("recommended_v2_category") or "").strip()
-    if recommended == "needs_new_category":
+    category_record = load_json(folder / "category.json", {})
+    explicit_category = bool(category)
+    if not explicit_category and category_record.get("requires_manual_category") is True:
         raise RuntimeError(
-            "Product cognition says no built-in v2 category fits this product; add an honest category before identity generation"
+            "Product classification requires manual review; correct the multimodal profile or pass an explicit --category before identity generation"
         )
-    if recommended in SPECS and recommended != category:
+    profile = normalize_production_profile(brief)
+    category = category or category_record.get("category", "") or profile["visual_family"]
+    traits = category_record.get("physical_traits") or profile["physical_traits"]
+    spec = category_spec(category, traits)
+    recommended = profile["visual_family"]
+    has_model_classification = isinstance(brief.get("production_classification"), dict) or bool(brief.get("recommended_v2_category"))
+    if not explicit_category and has_model_classification and recommended in SPECS and recommended != spec["category"]:
         raise RuntimeError(
-            f"Category mismatch: category.json selects {category}, but product cognition recommends {recommended}"
+            f"Category mismatch: category.json selects {spec['category']}, but product cognition recommends {recommended}"
         )
     state_change_contract(brief)
     refs = best_reference_images(analysis, brief, limit=4)
@@ -355,7 +362,8 @@ def guidance(folder: Path) -> str:
         if usage.get("state_change_contract") else ""
     )
     return (RULES + "\nVerified action ledger: " + json.dumps(usage["actions"], ensure_ascii=False)
-            + transform_guidance + "\nCategory checks:\n" + category_spec(record["category"])["checks"])
+            + transform_guidance + "\nCategory checks:\n"
+            + category_spec(record["category"], record.get("physical_traits"))["checks"])
 
 
 def require_qc(folder: Path, paths: list[Path], stage: str, override: bool = False) -> None:
@@ -391,12 +399,6 @@ def scene_references(folder: Path, role: str, variant_id: int) -> list[Path]:
     if usage_sheet != sheet:
         require_qc(folder, [usage_sheet], "usage")
         refs.append(usage_sheet)
-    if role == "end":
-        start = local_file(folder, f"generated_images/variant-{variant_id:02d}-start.png")
-        # The fallback image edit route accepts three inputs. Keep the start scene,
-        # real product truth, and state-change sheet; the latter was generated from
-        # and is still checked against the current identity grid.
-        refs = [start, canonical, usage_sheet] if usage_sheet != sheet else [start, canonical, sheet]
     return refs
 
 
@@ -411,7 +413,7 @@ def validate_scene_chain(folder: Path, paths: list[Path]) -> None:
     for path in paths:
         provenance = load_json(path.with_suffix(".provenance.json"), {})
         if provenance.get("sha256") != digest(path):
-            raise RuntimeError(f"Missing/current v2 scene provenance: {path.name}; regenerate keyframes")
+            raise RuntimeError(f"Missing/current v2 scene provenance: {path.name}; regenerate the storyboard")
         refs = provenance.get("references", {})
         identity_current = refs.get(record["output_path"]) == record["sha256"]
         usage_current = refs.get(usage["output_path"]) == usage["sha256"]
@@ -419,7 +421,7 @@ def validate_scene_chain(folder: Path, paths: list[Path]) -> None:
             raise RuntimeError(f"Frame {path.name} did not use current identity or state-change sheet")
         for name, expected in refs.items():
             if digest(local_file(folder, name)) != expected:
-                raise RuntimeError(f"Frame reference changed: {name}; regenerate keyframes")
+                raise RuntimeError(f"Storyboard reference changed: {name}; regenerate the storyboard")
 
 
 def video_contract(folder: Path, references: list[Path], model: str, source_prompt: str, config: dict) -> dict:

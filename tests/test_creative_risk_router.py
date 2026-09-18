@@ -1,5 +1,4 @@
 """Offline tests for conservative video-direction routing."""
-import argparse
 import sys
 import unittest
 from pathlib import Path
@@ -18,7 +17,6 @@ from generate_ugc_prompts import (
     normalize_shot_plan_10s,
     normalize_voiceover_script_10s,
     usage_demo_video_prompt,
-    usage_keyframe_prompt,
 )
 from generate_videos_lk888 import build_model_params, compact_omni_prompt
 
@@ -34,17 +32,18 @@ class CreativeRiskRouterTests(unittest.TestCase):
         self.assertEqual(shots[-1]["time"], "8.5-10.0s")
 
         params = build_model_params(
-            argparse.Namespace(
-                model="veo3.1",
-                duration="10",
-                generation_mode="fast",
-                aspect_ratio="9:16",
-                enhance_prompt="false",
-                enable_upsample=None,
-            ),
-            ["https://example.invalid/start.png", "https://example.invalid/end.png"],
+            type("Args", (), {
+                "model": "omni-flash",
+                "duration": "10",
+                "aspect_ratio": "9:16",
+                "resolution": "1080p",
+                "enhance_prompt": "false",
+                "enable_upsample": None,
+            })(),
+            ["https://example.invalid/storyboard.png", "https://example.invalid/identity.png"],
         )
         self.assertEqual(params["duration"], "10")
+        self.assertEqual(params["images"][0], "https://example.invalid/storyboard.png")
 
     def high_risk_brief(self):
         return {
@@ -92,9 +91,8 @@ class CreativeRiskRouterTests(unittest.TestCase):
         }
 
     def test_aliases_are_normalized(self):
-        self.assertEqual(normalize_model_profile("sd2.0"), "seedance-2.0")
-        self.assertEqual(normalize_model_profile("H3"), "minimax-h3")
         self.assertEqual(normalize_model_profile("omni_flash"), "omni-flash")
+        self.assertEqual(normalize_model_profile("omni-flash-10s"), "omni_flash-10s")
 
     def test_lowest_risk_commercial_direction_wins(self):
         ranked = rank_video_directions(self.high_risk_brief())
@@ -112,8 +110,8 @@ class CreativeRiskRouterTests(unittest.TestCase):
 
     def test_state_pair_routes_to_ready_state_without_generated_setup(self):
         brief = self.high_risk_brief()
-        plan = build_video_feasibility_plan(brief, "sd2.0")
-        self.assertEqual(plan["target_model"], "seedance-2.0")
+        plan = build_video_feasibility_plan(brief, "omni-flash")
+        self.assertEqual(plan["target_model"], "omni-flash")
         self.assertEqual(plan["risk_level"], "critical")
         self.assertTrue(plan["protect_product_configuration"])
         self.assertFalse(plan["continuous_product_state_change_allowed"])
@@ -128,14 +126,11 @@ class CreativeRiskRouterTests(unittest.TestCase):
         self.assertIn("stable support", routed["safe_demo_direction"]["direction"].lower())
 
         brief["video_feasibility_plan"] = plan
-        video_prompt = usage_demo_video_prompt(routed, brief)
-        keyframe_prompt = usage_keyframe_prompt("portable folding chair", routed, brief, "end")
+        video_prompt = usage_demo_video_prompt(routed, brief, "en-US")
         self.assertIn("Do not generate setup", video_prompt)
         self.assertIn("topology, connections, part count and geometry must remain unchanged", video_prompt)
-        self.assertIn("same verified ready-to-use configuration", keyframe_prompt)
-        self.assertIn("do not generate, morph, interpolate or hard-cut the transition", keyframe_prompt)
 
-        omni_prompt = compact_omni_prompt(routed, "10", "omni-reference")
+        omni_prompt = compact_omni_prompt(routed, "10", "omni-reference", voice_locale="en-US")
         self.assertIn("regenerated low-risk chronological storyboard", omni_prompt)
         self.assertIn("LOW-RISK ROUTE", omni_prompt)
         self.assertIn("topology, connections, geometry and part count never change", omni_prompt)
@@ -150,6 +145,20 @@ class CreativeRiskRouterTests(unittest.TestCase):
         self.assertEqual(plan["risk_level"], "low")
         self.assertFalse(plan["protect_product_configuration"])
         self.assertTrue(plan["continuous_product_state_change_allowed"])
+
+    def test_factorized_traits_feed_the_risk_router(self):
+        plan = build_video_feasibility_plan({
+            "product_name": "inflatable sleeping mat",
+            "confirmed_selling_points": ["Comfortable sleep support"],
+            "production_classification": {
+                "visual_family": "sports-outdoor",
+                "physical_traits": ["inflatable", "multi-part"],
+                "interaction_modes": ["inflate-deflate"],
+            },
+        }, "omni-flash")
+        self.assertIn(plan["risk_level"], {"high", "critical"})
+        self.assertTrue(plan["protect_product_configuration"])
+        self.assertIn("configuration_change", [item["type"] for item in plan["hazards"]])
 
     def test_risk_notice_explains_the_planned_video_before_generation(self):
         plan = build_video_feasibility_plan(self.high_risk_brief(), "omni-flash")

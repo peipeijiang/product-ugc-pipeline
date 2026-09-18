@@ -1,71 +1,17 @@
-# LaoZhang API Notes
+# LaoZhang image and chat fallback notes
 
-Sources checked on 2026-04-27:
+LaoZhang is used only for prompt-writing or the OpenAI-compatible image fallback. It is not a video route in this skill.
 
-- GPT Image 2: https://docs.laozhang.ai/en/api-capabilities/gpt-image-2
-- VEO 3.1 Async: https://docs.laozhang.ai/en/api-capabilities/veo/veo-31-async-api
+## Base configuration
 
-## Base
+- Base URL: `https://api.laozhang.ai/v1`
+- API key: `LAOZHANG_API_KEY`
+- Chat endpoint: `/chat/completions`
+- Image endpoints: `/images/generations` and `/images/edits`
+- Common image model: `gpt-image-2-vip`
 
-- Base URL: `https://api2.laozhang.ai/v1` (current documentation; the legacy
-  `api.laozhang.ai` host may still route requests but is not the documented default)
-- Auth: `Authorization: Bearer $LAOZHANG_API_KEY`
-- Do not include model-specific paths in the base URL.
+The normal image path is LK888/upDrama `tt-image-2.5`. The LaoZhang image endpoint is the final fallback after the media-task image routes fail. Record the actual provider and request parameters in provenance.
 
-## GPT-Image-2
+For image edits, send verified canonical product references only. Do not use alternate SKUs, packaging-only photos, loose accessories or unrelated detail crops as the primary identity source.
 
-Route behavior depends on the token group:
-
-- Default group `gpt-image-2`: reverse ChatGPT Web route, no `size` or `quality`.
-- Default group `gpt-image-2-vip`: reverse Codex route, supports common `size`, no `quality`.
-- `Sora2Official` group `gpt-image-2`: official-transit route, supports official `size` and `quality`.
-
-Common `gpt-image-2-vip` sizes:
-
-- `1024x1024`
-- `1536x1024`
-- `1024x1536`
-- `2048x2048`
-- `2048x1152`
-- `auto`
-
-Avoid `3840x2160` and `2160x3840` on `gpt-image-2-vip`.
-
-Supported endpoint patterns:
-
-- Text-to-image: `POST /images/generations`
-- Image-to-image: `POST /images/edits` multipart with `image=@source.png` for
-  one source. For multiple reference files, send each as `image[]=@source.png`;
-  repeating scalar `image` can hit the deprecated upstream `referenceImages` path.
-- Default-group chat image route: `POST /chat/completions`; response image is often a Markdown image URL in `choices[0].message.content`
-
-For product-fidelity pad images, prefer `/images/edits` with the cleanest downloaded product photo as `image`.
-
-## VEO 3.1 Async
-
-Endpoint:
-
-- Create: `POST /videos`
-- Poll: `GET /videos/{video_id}`
-- Content: `GET /videos/{video_id}/content`
-
-VEO 3.1 models:
-
-- `veo-3.1`: portrait, text-to-video
-- `veo-3.1-fl`: portrait, image-to-video
-- `veo-3.1-fast`: portrait, text-to-video, cheaper/faster
-- `veo-3.1-fast-fl`: portrait, image-to-video, cheaper/faster
-- `veo-3.1-landscape`: landscape, text-to-video
-- `veo-3.1-landscape-fl`: landscape, image-to-video
-- `veo-3.1-landscape-fast`: landscape, text-to-video, cheaper/faster
-- `veo-3.1-landscape-fast-fl`: landscape, image-to-video, cheaper/faster
-
-For image-to-video, send multipart `input_reference` files. `-fl` models support one or two reference images; with two images, the first is the first frame and the second is the last frame.
-
-Statuses:
-
-- Continue polling: `queued`, `processing`, `in_progress`, `submitted`
-- Complete: `completed`, then call `/videos/{id}/content`
-- Stop/fail: `failed`, `cancelled`, `canceled`, `expired`
-
-Video content may return JSON with a temporary MP4 URL. Download immediately; URLs may expire.
+Video generation always uses the LK888/upDrama Omni Flash adapter in `omni-reference` mode.

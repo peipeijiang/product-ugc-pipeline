@@ -1,587 +1,174 @@
 ---
 name: product-ugc-pipeline
-description: Build product UGC ad-production pipelines from ecommerce product URLs. Use when Codex needs to scrape product pages, analyze product assets, choose low-risk directions for Seedance 2.0, MiniMax H3, Omni Flash or VEO, generate short-form ecommerce prompts and product-faithful reference images, or create videos through LaoZhang or LK888/updrama APIs.
+description: Build product-faithful short-form UGC ads from ecommerce product URLs. Use for source-complete product research, product cognition, creative routing, Omni Flash chronological storyboard references, omni-reference video generation, and QC.
 ---
 
 # Product UGC Pipeline
 
-## v2 implementation contract (2026-09-07)
+## Production contract
 
-For v2 products, read `README_V2.md` and the matching `references/category-*.md`.
-After successful product cognition: generate ONE identity sheet, build the usage
-ledger, run identity QC, generate prompts and scene start/end frames, run keyframe
-QC, then submit the existing video adapter. Products that fold, assemble, install,
-attach, extend, open or otherwise change configuration must also follow
-`references/state-change-products.md` and receive a QC-passed operation sheet.
+All production video generation uses LK888/upDrama Omni Flash in `omni-reference` mode.
 
-The three new scripts are implemented. `generate_usage_pose_sheet.py` adds no image
-for a static product by default; it automatically adds one operation grid for a
-state-changing product, while `--separate-sheet` explicitly adds a usage grid for a
-static product. Do not create separate panel images. Generated sheets are secondary guidance, not product truth;
-real source photos and source-backed facts remain authoritative. No numeric reference
-weights are sent to VEO or Omni Flash. Unknown dimensions/functions must remain unknown.
+- Default model: `omni-flash`.
+- Optional fixed-duration route: `omni_flash-10s`.
+- Reference mode: always `omni-reference`.
+- Video aspect ratio: always `9:16` unless the user explicitly requests another format.
+- Video references are all-purpose references, never timeline endpoints.
+- Reference order is: chronological storyboard, verified product identity grid, then optional QC-passed operation grid.
+- `omni-flash` accepts at most three references. Reject excess references before paid submission.
+- Do not silently switch to another video model or provider.
 
-V2 activates when `identity_lock/` exists. The image adapter then sends the real primary
-product photo plus the QC-passed grid; end frames also receive the start scene. Never
-truncate these references to the legacy default of one. Scene outputs remain single
-undivided vertical photographs. Every scene gets `.provenance.json`; video submission
-checks current references and QC. Old v1 frames require regeneration with `--force`.
-Existing product folders without an identity lock remain compatible with the v1 path.
+The chronological storyboard is one vertical reference sheet that contains the full 0–10 second progression in clearly ordered panels. It replaces separate scene endpoint assets. The storyboard controls sequence and scene continuity; the identity grid controls exact SKU appearance; the optional operation grid controls only source-supported configuration changes.
 
-QC uses a configurable vision model and returns pass/fail/needs_review/error with evidence.
-No automatic paid regeneration is implemented. Missing evidence or uncertain visual checks
-must not be reported as passed. Video QC is sampled-frame review, not exhaustive motion
-or audio validation. Offline tests are not real product/video quality benchmarks.
+## Core rule
 
-## Core Rule
+Preserve the real product above all else. Product references lock silhouette, proportions, material, color, mechanisms, labels and supported use. They do not lock the source-photo background, props or composition unless those elements are functionally necessary.
 
-Preserve the original product appearance above all else. The pad image is the visual identity lock for VEO, but default videos should still show practical product use. Describe supported actions and scene flow, not a competing redesign of the product.
+Never invent dimensions, functions, product parts, lighting, screens, indicators, accessories or state changes. Unknown facts must remain unknown.
 
-Product references lock the product, not the whole source photo. Use source images to preserve product identity, function surfaces, proportions, material, color, mechanisms, and supported use. Do not unnecessarily copy the original product-photo background, table, lighting, props, or composition unless those elements are essential to the product function.
+## Market and spoken language
 
-## Workflow
+The target market is a required input, not an assumption. Spoken language, creator casting and scene framing must match the market the user asked for.
+
+- Resolve the market from the product brief, the market profile, the prompt batch or an explicit `--market` / `--voice-locale` flag.
+- Persist the resolved `market` and `voice_locale` at the top level of `ugc_prompts.json` and on every variant.
+- Precedence is: `variant.voice_locale` → explicit CLI flag → `prompts.voice_locale` → declared market.
+- An unresolved or misspelled locale is a hard failure before any paid step. There is no English default.
+- Every spoken line must be written in the target language and pass the language gate. A Japanese-market batch with English copy fails before video submission.
+- Prefer a visual-only clip plus target-language text-to-speech in post over a mixed-language or language-mismatched clip.
+
+Supported locales live in `scripts/voice_locale.py`. Add a locale there instead of letting an unknown value fall back to English.
+
+## Required workflow
 
 1. Put product URLs in a text file, one URL per line.
-2. Run `scripts/scrape_products.py` to create numbered product folders and download the complete product asset set: every main-gallery/SKU image and every detail-description image. The same completeness requirement applies when extraction uses `ego-browser`, another browser, page APIs, or a custom scraper.
-3. Vision-analyze every downloaded candidate before writing any product document. **Vision priority is built-in model vision first.** In an interactive Codex run, look at every local file with the model's own vision and record the per-image result in `image_analysis.json`; do not call MiniMax for image understanding or QC. Only when the host cannot feed images to the model at all — for example a vision sidecar that returns a provider error for every image — fall back to a provider vision model through the configured keys, in this order: LaoZhang vision (`scripts/analyze_materials.py --limit-images 0`), then LK888/updrama vision (`--base-url` pointed at the LK888-compatible endpoint with that key). Record in the analysis log which engine actually produced the observations, and say so in the hand-off: a provider fallback is a valid vision run but it is not equivalent to built-in vision. For provider-backed CLI automation, run `scripts/analyze_materials.py --limit-images 0`.
-4. Run `scripts/build_product_brief.py` to synthesize product usage cognition from `product_manifest.json` + `image_analysis.json`.
-5. Run `scripts/generate_ugc_prompts.py` to create UGC prompt variants grounded in the product brief. Pass the intended generator with `--target-video-model`. This step must first run `scripts/creative_risk_router.py`, rank useful directions by physical-generation risk, then build a benefit ladder and write the hook, voiceover, storyboard, keyframe prompts, and video prompt around the safest useful direction.
-6. Run `scripts/generate_images.py` to create image-to-image “pad images” or start/end keyframes. The default image provider is upDrama `tt-image-2.5` on LK888; if it fails the script automatically falls back to the OpenAI-compatible GPT-Image-2 route.
-7. Run `scripts/generate_videos_lk888.py` to send public start/end keyframe URLs to LK888/updrama VEO. Production default video generation is LK888 `veo3.1`.
-8. Use `scripts/generate_videos.py` for LaoZhang VEO only when the user explicitly asks for LaoZhang or LK888 is not the requested provider.
-9. When the user asks for “two new versions”, “再来两个新版本”, or any fresh reroll, prefer `scripts/run_fresh_batch.py` so the skill first extends the canonical prompt file, then keyframes, then videos, instead of accidentally rerunning an old prompt batch.
+2. Extract the complete offer asset set with `scripts/scrape_products.py` or the authenticated browser route required by the page.
+3. Analyze every downloaded image and write `image_analysis.json`.
+4. Build `product_brief.json` with `scripts/build_product_brief.py`.
+5. Classify the product with `scripts/classify_product_category.py`.
+6. Generate one product identity grid with `scripts/generate_product_identity_lock.py`.
+7. Generate the source-backed usage ledger with `scripts/generate_usage_pose_sheet.py`. Products that fold, assemble, install, attach, extend, open or otherwise change configuration also require an operation grid.
+8. Run identity and operation-grid QC with `scripts/qc_dual_consistency.py`.
+9. Generate UGC variants with `scripts/generate_ugc_prompts.py --target-video-model omni-flash`.
+10. Generate one chronological storyboard sheet per variant with `scripts/generate_images.py --storyboards`.
+11. Run storyboard QC. Never submit a paid video from a missing, stale or failed storyboard.
+12. Submit videos with `scripts/generate_videos_lk888.py --model omni-flash --reference-mode omni-reference`.
+13. Run sampled-frame video QC and report any uncertainty honestly.
 
-### Universal source-completeness and vision gate (mandatory)
+For fresh rerolls, use `scripts/run_fresh_batch.py`. It appends history-aware prompts, generates new storyboards, and submits Omni videos through the same fixed route.
 
-This gate applies to **every extraction method**, not only the browser fallback.
-Before product cognition begins, download all product main-gallery images, SKU or
-colorway images, detail-description images, installed/use images, packaging images,
-and product-video posters exposed by the live offer. For 1688, the long description
-is commonly served from a separate `descUrl`/detail-description response; fetching
-only the visible gallery is incomplete. Preserve each source URL and source surface
-(`main_gallery`, `sku`, `detail_description`, `video_poster`, etc.) in
-`product_manifest.json`. Do not stop after finding one apparently canonical image.
+## Browser routing
 
-If static scraping returns no images, incomplete images, a challenge page, or only
-generic page assets, use `ego-browser` to open the actual product-detail page. Extract
-every page image URL that is plausibly a product main image, SKU/colorway image,
-detail image, installed/use image, packaging image, or product video poster. Do not
-continue from a single external “matching” image when page assets are available.
+Pages that depend on login state, cookies, membership, age verification, account context or region context must use the user's authenticated browser session first. TikTok Shop PDPs are presumed session- and region-sensitive. Do not begin with unauthenticated static scraping for those pages.
 
-**Login-gated, age-gated and region-gated product pages default to `ego-browser`.**
-TikTok Shop, member-only, age-gated and region-locked PDPs routinely answer a plain
-HTTP fetch with only generic page chrome, an anti-bot challenge, or a
-“this item is not available in your country or region” shell — a real TikTok Shop JP
-offer returned three usable product assets from static scraping while the live page
-held six gallery images plus eleven detail images. When the target page needs the
-user's session, cookies or region context, open it with `ego-browser` (see the
-ego-browser skill) instead of extending the static scraper; the browser reuses the
-user's existing login state, so never try to reproduce authentication by hand. On
-macOS the CLI cannot reach the browser bootstrap from inside the default agent
-sandbox and reports `Failed to connect to ego_cli bootstrap`; that is an environment
-limit, not a missing install, so re-run it outside the sandbox.
+If the page presents a login, CAPTCHA or device confirmation, stop and hand control to the user. Never bypass authentication.
 
-For TikTok Shop PDPs the authoritative asset list is the Next.js `loaderData`
-payload. Parse the `product_model` object for `images` (main gallery),
-`skus[].sku_image` and `sku_property_image_map` (colourway crops), the `description`
-array (detail-description images) and `videos`. Reading
-`document.querySelectorAll('img')` alone misses lazy panels, and the carousel slide
-count can include the SKU crop rather than a distinct gallery image, so treat the
-parsed payload as the source of truth and the DOM as a cross-check.
+For TikTok Shop, treat the live Next.js `loaderData` product payload as the authoritative asset list. Parse gallery images, SKU images, description images and videos; use the DOM only as a cross-check.
 
-Download the full candidate set into `images/`, preserve source URLs in
-`product_manifest.json`, and record an extraction audit with gallery/detail counts,
-method, and any explicit limitation. Then run vision analysis on all candidates
-(`--limit-images 0`, using concurrent requests where the provider permits). In a
-Codex session this means direct built-in model vision, not MiniMax. Let the vision results label images canonical, alternate-SKU, detail,
-demonstration, packaging, or irrelevant; retain every product-related image in the
-analysis log and exclude irrelevant UI/logo/recommendation assets from product
-cognition. Build `materials.md` and `product_brief.json` only after that full image
-analysis. The analyzed local-path set must exactly cover the manifest image set;
-partial analysis is a hard failure even if the first few images look sufficient.
-The product brief must cite the actual local image path(s) and page fields
-for each appearance, function, dimension, control, and usage claim. A single image
-is acceptable only when the live product page itself contains only one usable
-product image, which must be recorded as an explicit limitation.
+## Source completeness gate
 
-Default output structure:
+Before product cognition, download every product-related main-gallery image, SKU/colorway image, detail-description image, installed/use image, packaging image and product-video poster exposed by the live offer. Preserve source URL and source surface in `product_manifest.json`.
 
-```text
-product-ugc-output/
-├── 01-product-name/
-│   ├── product_manifest.json
-│   ├── materials.md
-│   ├── images/
-│   ├── image_analysis.json
-│   ├── product_brief.json
-│   ├── ugc_prompts.json
-│   ├── runs/
-│   │   ├── 20260520-dual-refresh/
-│   │   │   ├── prompt_batch.json
-│   │   │   ├── image_generation_results.json
-│   │   │   ├── video_generation_results.json
-│   │   │   ├── keyframes/
-│   │   │   └── videos/
-│   │   └── ...
-│   ├── generated_images/
-│   └── videos/
-└── run_manifest.json
-```
+The analyzed local-path set must cover the manifest image set exactly. Partial visual analysis is a hard failure. A single image is acceptable only when the live offer truly contains one usable product image, and that limitation must be recorded.
 
-### Adding a product category that does not exist yet (mandatory when nothing fits)
+## Reference contract
 
-The built-in v2 categories do not cover every SKU. A folding outdoor reclining chair
-is neither a kitchen tool nor a pet tool: the keyword classifier labelled it
-`electronics` with confidence 0.6, and the identity-stage `category_specific` check
-then failed for the honest reason that the checklist asks about blades, food contact
-and pet body language. Do not force the product into the nearest listed category, and
-do not instruct the reviewer model to ignore the mismatch.
+For each variant, the production reference set is:
 
-Add a category instead. It is four edits and one regeneration:
+1. `generated_images/variant-XX-storyboard.png` — chronological action, creator, room, wardrobe, camera and pacing.
+2. `identity_lock/reference_sheet.png` — canonical SKU identity and physical truth.
+3. Optional operation grid — only for a source-supported state change that passed QC and is allowed by the risk route.
 
-1. Add a `SPECS` entry in `scripts/v2_contract.py`: `("<layout>", "<canvas>", [panel names])`.
-   Keep the panel names generic enough to fit the whole family and the canvas at a
-   size the image route actually supports.
-2. Add `references/category-<name>.md` with the 7-dimension framework table, the
-   special checks (scale realism, material truth, gravity and stability, no phantom
-   parts), the verified use actions and the single reference-sheet panel plan.
-   `category_spec()` reads this file straight into the QC prompt, so it is the
-   checklist the reviewer will actually apply.
-3. Set `category.json` to the new name with `"detected_from": "explicit_user_category"`.
-   `generate_product_identity_lock.py --category <name>` rewrites that file itself, so
-   pass the flag rather than editing by hand.
-4. Regenerate the identity sheet with `--force`, re-run `generate_usage_pose_sheet.py`,
-   then re-run `qc_dual_consistency.py --stage identity`. A changed category
-   invalidates the existing identity sheet by design.
+The storyboard provenance must include `type=chronological_storyboard` and a current timeline hash. Video submission must verify provenance, hashes and QC before uploading.
 
-`furniture` (家具 / 户外折叠家具) was added this way and is the worked example. Keep
-a new checklist honest: it has to reject real defects for that family, not wave the
-product through.
+Never submit raw product photos alone as video references. Raw photos are inputs to the reference-generation and identity-lock steps.
 
-## Quick Commands
+## Creative routing
+
+Run `scripts/creative_risk_router.py` before prompt finalization. Prefer the lowest-risk useful proof:
+
+- stable ready-state product use;
+- one simple supported interaction;
+- detail or result proof;
+- creator reaction and buyer-visible payoff.
+
+When installation, assembly, folding, insertion or other topology change lacks direct motion evidence, keep the product in one verified ready-to-use configuration. Communicate setup through editing or real footage, not model-invented interpolation.
+
+Each variant must differ materially in hook archetype, buyer context, creator persona, scene geometry, proof moment, camera grammar and pacing. Cosmetic wording changes do not count as new concepts.
+
+## Prompt contract
+
+Every variant must include:
+
+- one core selling claim;
+- buyer problem or desire;
+- one supported product intervention;
+- buyer-visible result;
+- 0–10 second `storyboard_10s` beats;
+- benefit-led voiceover that can finish naturally within ten seconds;
+- exact product-fidelity constraints;
+- a low-risk proof moment;
+- a video prompt written specifically for Omni Flash all-purpose references.
+
+The video prompt must explain that the storyboard, identity grid and optional operation grid are all-purpose references. It must not assign any reference image to a specific timeline endpoint.
+
+Avoid subtitles, transcript text, platform logos, app UI, social icons, watermarks and invented product branding. Sparse short feature tags are allowed only when clean text generation is credible; otherwise omit them.
+
+## Fail-fast rules
+
+Stop before paid submission when any of these is true:
+
+- product extraction is incomplete;
+- image analysis has missing or failed files;
+- product cognition lacks identity, use, function or misuse constraints;
+- the target market or spoken locale is undeclared, unresolvable, or disagrees with the written voiceover;
+- identity or operation QC is missing, stale or uncertain;
+- storyboard is missing, stale, not chronological or failed QC;
+- reference count exceeds the model limit;
+- aspect ratio is not the requested format;
+- the API route, model or reference mode differs from this contract;
+- balance, channel availability or provider status is insufficient.
+
+Do not fabricate JSON outputs or manually mark QC as passed to keep a batch moving.
+
+## Quick commands
 
 ```bash
-python product-ugc-pipeline/scripts/scrape_products.py urls.txt --out product-ugc-output
-LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/analyze_materials.py product-ugc-output --limit-images 0
-LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/build_product_brief.py product-ugc-output
-LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_ugc_prompts.py product-ugc-output --count 10
-LK888_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_images.py product-ugc-output --variants 1-10 --keyframes
-# explicit fallback-only run on the OpenAI-compatible GPT-Image-2 route
-LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_images.py product-ugc-output --variants 1-10 --image-provider laozhang-image2 --image-fallback none --model gpt-image-2-vip --size 1080x1920 --keyframes
-LK888_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_videos_lk888.py product-ugc-output --variants 1-10 --model veo3.1 --generation-mode fast
-LK888_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_videos_lk888.py product-ugc-output --variants 1-10 --model omni-flash --base-url https://api.lk888.ai --status-endpoint /v1/media/status --reference-mode first-last
-LAOZHANG_API_KEY=sk-... python product-ugc-pipeline/scripts/generate_videos.py product-ugc-output --variants 1-10 --model veo-3.1-fast-fl
-LAOZHANG_API_KEY=sk-... LK888_API_KEY=sk-... python product-ugc-pipeline/scripts/run_fresh_batch.py product-ugc-output --products 01,02 --count 2 --batch-label 20260520-dual-refresh
-```
-
-This skill does not use a local dry-run fallback for prompt/image/video generation. Generation steps should run through the real model/API path so outputs stay consistent with production behavior.
-
-This skill must fail fast when the cognition pipeline is incomplete. Direct per-image analysis by Codex built-in vision is a valid vision-model run when its observations and file coverage are recorded; guessing from filenames or product titles is not. Do not manually invent `image_analysis.json`, `product_brief.json`, `ugc_prompts.json`, or generated keyframes to keep a batch moving. If vision analysis, product-brief synthesis, prompt generation, or Image2 keyframe generation fails, stop and report the failing model/provider/error. Continue only after switching to a working model/provider or after the user explicitly asks for a non-production experiment.
-
-Video generation is VEO-first on LK888 by default. Do not silently switch production videos from LK888 `veo3.1` to Seedance, Kling, Omni, LaoZhang VEO, or any non-VEO model. If LK888 VEO fails, times out, has no channel, or returns insufficient balance, stop and report the exact status/cost/error. Use non-VEO models such as `omni-flash`, Seedance, or Kling only when the user explicitly asks for that model or approves the fallback.
-
-Every video must be grounded by model-generated reference frames, not raw product photos alone. The product photos are identity locks for Image2; Image2 then creates the actual scene/person/use reference frames in `generated_images/`. Do not submit a video task directly from scraped product images or source-page lifestyle images unless the user explicitly asks for a product-photo-only stability experiment. For VEO, this is stricter: both `variant-XX-start.png` and `variant-XX-end.png` must exist and must be generated by the image step before video submission. If either frame is missing, pause video submission and generate the missing frame first. For v2 Omni reference mode, use the generated chronological storyboard plus the verified product identity grid. Add the verified operation grid only when the feasibility route allows continuous configuration change; omit it for high/critical protected routes.
-
-## Production Incident Lessons
-
-These lessons are hard production rules, not preferences:
-
-1. **Aspect-ratio drift creates unusable assets, and the keyframe canvas is half of that contract.** Product UGC for TikTok/Reels/Shorts defaults to vertical `9:16`. Never submit `16:9`, landscape orientation, or landscape size unless the user explicitly requests landscape. Before any paid video task, print and verify the provider params: `aspect_ratio=9:16` for LK888 VEO/Omni, `orientation=portrait` and `size=720x1280` for providers that use orientation/size fields. If params are not vertical, fail before submission. The same check applies one step earlier to the scene keyframes: `generate_images.py --size` now defaults to `1080x1920` so the derived `aspect_ratio` is `9:16`. The old `1024x1536` default was `2:3`, and because `--image-aspect-ratio auto` derives the ratio from `--size`, a whole batch of start/end frames was generated at `2:3` and then handed to VEO with `aspect_ratio=9:16`. VEO had to crop or stretch every reference, which surfaced as products that looked subtly squashed and scenes whose composition no longer matched the prompt. Identity and usage sheets are exempt because they pass their own grid canvas from `v2_contract.SPECS`; only the scene frames that feed a vertical video must be `9:16`. Verify with the frame itself, not the flag: a finished keyframe PNG must report a 1080x1920-proportional size, and `image_generation_results.json` / `.provenance.json` must show the ratio actually sent.
-2. **Raw product images are not video scene references.** Scraped product photos should only be used as product-identity locks for Image2. The video model needs generated scene/keyframe references that already show the intended person, room, product placement, and usage setup. If a batch has videos but lacks matching `generated_images/variant-XX...` files, treat it as a process failure and do not repeat that pattern.
-3. **VEO requires a complete first/final-frame contract.** VEO video submission must use `generated_images/variant-XX-start.png` as the first-frame reference and `generated_images/variant-XX-end.png` as the final-frame reference. If either one is missing, do not fall back to a single image, product photo, or text-only generation; generate the missing frame first, quality-check it, then submit VEO.
-4. **Omni Flash has explicit model routes.** The first container may use `omni_flash-10s` (fixed 10 seconds, up to seven all-purpose references) or `omni-flash` (4/6/8/10 seconds, up to three references). Every continuation container that must preserve the prior product/person state should use `omni_flash-10s-fl` with `--reference-mode first-last`; it is fixed at 10 seconds and accepts one or two images ordered as actual first frame then target last frame. The new model is endpoint-conditioned, not a pixel-perfect guarantee for intermediate frames, so both endpoints must share invariant wardrobe/SKU/camera fields and L2 must reject any drift before the result becomes the next continuation frame. `--reference-mode omni-reference` remains for `omni-flash`/`omni_flash-10s` only. Reject unsupported reference counts before paid submission.
-5. **Never invent product lighting to prove a state change.** Storyboard and video prompts must not add a glowing end-cap, ambient LED ring, light show, equalizer or new indicator unless that exact state is visible in the real product photos or is explicitly confirmed by the user. Vision QC treats invented lighting as identity and continuity drift rather than a harmless flourish. When a beat needs to show that playback, pairing or a mode started, carry it with the creator action, reaction and audio while the product appearance stays identical across panels and shots. Permissive wording such as thin optional ambient rings is unsafe: the image model reads it as license and escalates it into a saturated lit disc.
-6. **Record the reference chain.** Each generated video result should make it clear which local generated frame(s) and product reference(s) were used, so later review can tell whether the media followed the correct pipeline.
-7. **Pin one SKU colourway per storyboard, and describe it lit and unlit.** For products sold in several colours, choose one colourway per variant and state it as an explicit mandatory line in the storyboard prompt. Saying only "keep the same colour across panels" is not enough: the image model treats switching a lamp on as licence to recolour, so warm-glow products drift toward amber and gold in the lit panels. Spell out both states of the same hue ("pink when unlit and still clearly pink when lit"), and for white or light SKUs say the emitted light is cool neutral white and that any amber, honey, butter or golden cast on the product is wrong. Also pin the secondary parts that follow colour by association: the trunk, housing or base must keep one colour and must never be tinted to match the product's lit colour.
-8. **Ban legible writing everywhere, not just captions.** Forbidding captions and watermarks still leaves the model free to render door plates, wall signs, book spines, posters and packaging print, which vision QC then reports as text overlay. State that every panel must be free of legible writing of any kind and that such surfaces stay blank or out of focus.
-9. **Give vision QC the product's real controls as an allow-list.** A QC prompt that forbids "remote control" without naming the legitimate parts will fail honest storyboards: an inline cable switch gets reported as a remote, a power bank as a forbidden battery, and background houseplants as real leaves. List the confirmed real parts and legitimate scene props as explicitly correct before listing violations, or the QC pass rate becomes meaningless and real defects hide among false positives.
-10. **Tell each QC stage which checks it cannot possibly evidence.** The identity stage reviews one static grid, so operation and continuity have no evidence by construction. If the prompt does not say so, the model returns `unknown` for both, the contract downgrades the verdict to `needs_review`, and video submission stays blocked no matter how good the grid is. Mark structurally impossible checks `not_applicable` with a reason, and reserve `unknown` for evidence that should exist but is occluded.
-11. **Keep generated-image bytes out of manifests.** Spreading an image-generation result straight into a manifest embeds the provider's base64 payload, which pushed one identity manifest to 2.5 MB. Any later request that serialises that manifest into a prompt then dies on a truncated connection, and the failure surfaces as a confusing QC shape error rather than an oversized request. Store the saved file path, hash and parameters; drop the raw response.
-12. **Accept both QC response shapes.** Vision models return the six checks either nested under `checks` or flattened at the top level. Only accepting the nested form turns a perfectly good review into "missing or unexpected checks". Normalise both, and when a shape still does not match, dump the raw response so a schema mismatch is not mistaken for a transport failure.
-13. **Bypass system proxies, not just proxy environment variables.** macOS System Settings can define a system-wide proxy that `requests` still honours through `trust_env` after the proxy environment variables are stripped. When that proxy is not running, every provider call fails with `ProxyError` or `SSLEOFError` and looks like a provider outage or a concurrency problem. Force direct connections in the HTTP layer for both the `requests` path and the `urllib` fallback.
-14. **A concurrent batch must isolate failures and persist progress, or it wedges.** When several variants share one `ThreadPoolExecutor`, a bare `future.result()` inside the `as_completed` loop re-raises the first exception and aborts the loop, so already-submitted work is silently dropped from the report: a 10-target QC run where one target hit a transient error wrote only 8 results and left no error line for the missing two. Wrap each `future.result()` in `try/except`, record a `status: error` entry carrying the exception text, and keep iterating so the remaining targets still land. Persist the results file after every completion rather than only at the end, so an interrupted or crashing run keeps the frames and tasks it already finished. Apply the same shape to storyboard/keyframe generation (`generate_images.py --workers N`), video submission (`generate_videos_lk888.py --workers N`), keyframe/storyboard QC (`qc_dual_consistency.py --workers N`) and the legacy cascade pipeline, and never let one slow or failing variant stall submission of the rest.
-15. **Image generation is provider-chained: TT Image 2.5 first, GPT-Image-2 second.** `generate_images.py`, `generate_product_identity_lock.py` and `generate_usage_pose_sheet.py` default to the upDrama media-task route (`--image-provider tt-image-2.5` against `https://api.lk888.ai/v1/media/generate`) because it is a single create-and-poll round trip, takes 1-16 references and controls aspect ratio and resolution independently. On any failure the script retries `tt-image-2` on the same route, then the OpenAI-compatible GPT-Image-2 `/images/edits` route. Never hand-roll a provider swap inside a batch: pass `--image-provider` / `--image-fallback`, and read the per-frame `image_provider` and `provider_fallbacks` fields in `image_generation_results.json` to see which route actually produced each frame.
-16. **A v2 Omni storyboard must hold exactly one product per panel.** `--reference-mode omni-reference` sends the chronological storyboard as an all-purpose reference, and the storyboard QC enforces the same singleton rule as the video prompt. A comedy or comparison beat that stages a row of chairs — or any background office task chair, stool, bench or chair-like silhouette — is read as a duplicated product and fails identity and continuity. Carry multi-person escalation with staging instead: planted spears, stacked helmets, queues, abandoned picnic tarps and waiting bystanders all land the joke while the frame keeps one product. Three more rules make the difference between pass and fail: panel 1 must contain the product itself, folded at the open mouth of its carry bag, so the single instance is traceable from panel 1 onward; the upright and reclined panels need a comparable side angle so the angle change evidences the operation; and the long silhouette with its extended support panel must be visible in every panel where the product is open, or the model quietly substitutes a different, shorter product.
-
-17. **Work out the power connection from the real photos before writing any prompt, and draw it.** Listings show a cable leaving the product and almost never show what it plugs into, so the image and video models invent a plausible-looking connection: a bare mains plug on the product's cable, a USB plug shoved straight into a wall socket with no adapter, the lamp glowing while its plug lies loose on the desk, a second stray plug, or the cable vanishing off-frame before it reaches anything. All of these read as correct at a glance and are wrong. Settle it first: pull the source photos through a vision pass that answers, per image, where the cable exits, what connector is on the free end, what it is plugged into, whether any adapter or battery ships with it, and whether there is an inline switch. Record the result in product_brief.json under power_connection (cable_exit, connector_on_cable, supplied_in_box, valid_power_sources, required_visible_chain, forbidden, source_evidence), because generate_videos_lk888.py renders that block into every video prompt as a mandatory POWER CONNECTION clause. Then draw a one-page correct-versus-wrong diagram and keep it beside the run so the user can check the intent in seconds. For this rose-tree lamp the truth was: the cable permanently exits the side of the square base, the free end is a USB-A plug, nothing is plugged in on the source photos, no adapter ships with it, so the only valid chain is lamp to cable to USB-A plug to a visibly powered USB source (wall charger in a mains outlet, USB power strip, laptop port, or power bank). The same trap applies to any USB-, battery- or barrel-jack-powered product.
-
-18. **Enforce the Omni prompt character budget in code, not in prose.** omni-flash on upDrama hard-rejects prompts over 4,000 code points (provider message: 提示必须为4000个字符或更少). Each clause previously had its own slice length with no global cap, so adding the POWER CONNECTION block inflated every prompt to roughly 4,750 characters and the provider returned state=failed for the entire batch. Fix: in scripts/generate_videos_lk888.py, compact_omni_prompt now renders with full slices first and then binary-searches a single scale factor for the elastic creative clauses (identity block, FORBIDDEN DRIFT, CONCEPT, HOOK, PRIMARY FUNCTION, SCENE, SHOT PLAN, SUPPORTED ACTION, PAYOFF) until the prompt fits, with the SHOT PLAN weighted to shrink faster than the rest because the storyboard image already carries it. Mandatory clauses (identity lock, SKU, POWER CONNECTION, the spoken line, the safety tail) never scale, and the final prompt is hard-truncated as a backstop. Always size the budget against the post-compaction length: reserve headroom for STRICT PHYSICAL SCALE THROUGHOUT and the optional audio suffix by calling compact_omni_prompt with limit=4000 minus len(scale_suffix). Validate by looping compact_omni_prompt over every variant and asserting the rendered length is at or under the limit before submitting.
-
-19. **Make the storyboard power beat a hard close-up, not a suggestion.** For USB-, battery- or barrel-jack-powered products, the v2 Omni storyboard is one of the two all-purpose references, so a loose-plug or invisible-connection panel will leak into the video. Repeating "must show the seated plug" in the storyboard prompt was not enough on its own; the image model still rendered panels where the lamp glowed with the USB-A plug loose in a hand or on the desk. Enforce it inside the storyboard prompt itself: designate one specific panel as the connection close-up (a tight crop of the USB-A plug half-inserted into the wall charger, the charger prongs going into a mains outlet visible behind), and require every lit panel to show the seated chain in the same frame, with an explicit "the lamp may only glow when the chain is already mated end-to-end" rule. Add a one-image correct-versus-wrong diagram next to the storyboard folder so reviewers can spot the failure in seconds. The same rule applies to the FORBIDDEN DRIFT block in compact_omni_prompt: the forbidden list has to spell out every wrong connection (bare mains plug on the lamp cable, USB pushed straight into a wall socket, lamp glowing while the plug is loose or in a hand, cable plugged back into the body, battery or wireless charging added, second cable, cable vanishing off-frame) so the model cannot fall back to a plausible-looking wrong answer.
-
-20. **Submit every batch in parallel and never let one variant stall the rest.** Both runs/<batch>/generate_storyboards.py and scripts/generate_videos_lk888.py already expose --workers N; pass a number at least equal to the variant count and let the executor submit everything inside one process so transient failures and rate limits stay on the single live machine. The storyboard script writes per-variant provenance after every save and never crashes the batch on a single failure; the video script does the same with variant-XX.task.json plus the final result manifest. Heartbeat automations are only for retries of a single known-bad variant after a batch has been processed, and they must be PAUSED or pointed at a no-op prompt the moment the consolidated run is queued so they do not double-submit. When --workers 1 is left at the default, a 10-variant batch waits 10x longer than it should: explicitly set --workers 10 (or higher) for omni-flash submission and --workers 5 to 7 for storyboard keyframes, and keep the workers inside one Python process so stdout, the upload lifecycle, and the persisted manifests stay together.
-
-21. **State-changing products need a part/state/transition contract before paid generation.** An identity grid can lock appearance but cannot prove how a chair unfolds, a pole telescopes, or two parts install. Record part counts, connections, evidenced endpoint states, transition evidence level, moving/fixed parts, contact points, completion cues and forbidden intermediate shapes in `product_brief.json`. If only endpoint images exist, set `evidence_level=state_pair_only` and `render_policy=hard_cut_only` or `omit_transition`; never ask a model to interpolate the missing mechanism. `generate_usage_pose_sheet.py` creates the operation grid automatically and scene generation may use it within the three-image fallback cap. Omni adds it as image 3 only for a non-protected route; the high/critical route defined below omits it. Read `references/state-change-products.md` for the schema and mistake taxonomy.
-
-22. **Choose the lowest-risk useful direction before writing the storyboard.** `generate_ugc_prompts.py` must create `video_feasibility_plan` with `creative_risk_router.py` before it calls the prompt model. Score the advertised actions, not the product category: connection/topology changes such as installation, assembly, insertion, detachment and joining are highest risk; reversal, folding, deformable materials, precision contact and multiple dependent steps add risk. For high/critical routes, keep the product in one verified ready-to-use configuration in both keyframes and every generated video frame. Sell the result through ready-state use, detail/scale proof, camera motion and creator reaction. In Omni `omni-reference` mode, regenerate the chronological storyboard from the routed variant, use only that storyboard plus the identity grid, omit the operation grid, and inject the selected direction and forbidden actions into the compact prompt. Never reuse a pre-route storyboard. A hard cut is performed in editing between separate endpoint assets or real source footage; it is never a prompt asking the generator to invent or interpolate the missing transition. Model profiles for Seedance 2.0 (`sd2.0`), MiniMax H3, Omni Flash and VEO only adjust creator/camera motion budgets. Read `references/low-risk-video-direction.md` for the ladder and research basis.
-23. **Tell the user how the routed video will be made.** Before prompt generation, print the target model, risk level and score, hazard signals, configuration lock, selected commercial direction, and the planned 10-second shooting approach. Immediately before each paid video request, print the variant's actual shooting approach, reference mode, actual reference filenames, and omitted actions. A high/critical notice must say that the generated clip keeps the verified ready-state product fixed, proves the result with a simple use/detail/reaction, and delegates setup, folding or connection footage to real source material or an editor hard cut between separately created endpoints.
-
-## Parallel Pipeline (Fire-and-Forget + Auto-Cascade)
-
-The image-to-video pipeline is I/O-bound on third-party APIs. Instead of serial "submit one → wait → submit next", the pipeline should submit all tasks in parallel, then poll and cascade.
-
-### Architecture
-
-```
-Submit all N start-frame tasks  ──►  Poll all concurrently
-                                        │
-                          ┌─ start-01 done ──► submit end-01 (with start-01 as ref)
-                          │   start-02 done ──► submit end-02
-                          │   ...
-                          │   start-N done ──► submit end-N
-                          │
-                          └─ Poll all end-frame tasks concurrently
-                                        │
-                          ┌─ (start-01 + end-01) done ──► submit video-01
-                          │   (start-02 + end-02) done ──► submit video-02
-                          │   ...
-                          └─ Poll all video tasks concurrently
-```
-
-### Key Principles
-
-1. **Submit all at once.** Never wait for one task to finish before submitting the next independent task. All N start frames should be submitted within seconds of each other.
-2. **Cascade on completion.** When a start frame finishes, immediately submit its corresponding end frame (using the start frame as reference image for scene/person/lighting continuity). Do not wait for other start frames.
-3. **Video auto-trigger.** When both start and end frames for a variant are downloaded, immediately submit the video generation task.
-4. **Polling pool.** Use a single polling loop that checks all pending tasks (images + videos) with short intervals (3-5 seconds). Each task is tracked by its `task_id` and `variant_id`.
-5. **Resume safety.** Track submitted task IDs in a state file (`pipeline_state.json`) so interrupted runs can resume without re-submitting completed tasks.
-
-### Usage
-
-```bash
-python product-ugc-pipeline/scripts/parallel_pipeline.py product-ugc-output/01-product \
-  --variants 1-10 \
-  --video-model veo3.1 \
-  --duration 10
-```
-
-### State File (`pipeline_state.json`)
-
-```json
-{
-  "product": "01-smart-sleep-wristband",
-  "started_at": "2026-07-08T12:00:00Z",
-  "phases": {
-    "start_frames": {
-      "variant-01": {"status": "completed", "task_id": "img_abc", "path": "generated_images/variant-01-start.png"},
-      "variant-02": {"status": "running", "task_id": "img_def"}
-    },
-    "end_frames": {
-      "variant-01": {"status": "completed", "task_id": "img_ghi", "path": "generated_images/variant-01-end.png"}
-    },
-    "videos": {
-      "variant-01": {"status": "submitted", "task_id": "vid_jkl"}
-    }
-  }
-}
-```
-
-### Constraints
-
-- End frames must use the completed start frame as a reference image to maintain scene/person/lighting continuity.
-- Video tasks only submit after the required Image2-generated reference frames are downloaded to disk. VEO requires both start and end frames; Omni/non-VEO requires at least one generated scene reference frame.
-- Never treat raw scraped product images as a replacement for generated scene/keyframe references. Product images lock identity during Image2 generation; generated keyframes guide video motion.
-- If a task fails (state=failed), retry once with a different prompt seed before reporting the error.
-- The pipeline must handle partial completion gracefully: already-completed tasks should be detected and skipped.
-
-## Product Folder Requirements
-
-For each product folder:
-
-- `product_manifest.json`: source URL, product name, detected price, selling points, downloaded image list, source image URLs.
-- `product_manifest.json` must also include an extraction audit proving that the main gallery and detail-description surfaces were checked; an explicitly documented live-page limitation is required when either surface has no usable images.
-- `materials.md`: human-readable material log; update it after image analysis and product-brief synthesis.
-- `images/`: original downloaded product-only images; never overwrite these.
-- `image_analysis.json`: per-image visual description, product-related flag, exact product-identity details, visible/inferred use mechanics, UGC usefulness score, prompt risks, and recommended usage.
-- `product_brief.json`: synthesized product cognition, including confirmed identity, step-by-step usage, scenes, proof moments, misuse risks, and reference image strategy.
-- `ugc_prompts.json`: canonical prompt file. New rerolls should append new variants into this same file so prompt history stays in one place. Final media generation reads `image_prompt`, `start_frame_prompt`, `end_frame_prompt`, and `video_prompt`; do not keep duplicate “model suggested” prompt fields in this canonical file.
-- `runs/`: append-only batch history. Every fresh reroll or re-generation should create a labeled run folder containing the batch JSON, intermediate keyframes, and that run's own result manifests. Keep only the latest canonical `generated_images/` and `videos/` at the top level for quick access.
-- `generated_images/`: GPT-Image-2 outputs named by prompt variant; with `--keyframes`, writes `variant-XX-start.png` and `variant-XX-end.png`.
-- `videos/`: canonical VEO output JSON, status JSON, and downloaded MP4 files. New runs should append by `variant-XX` inside this folder instead of creating `videos_*` batch folders.
-
-### Fail-Fast Production Contract
-
-For production videos:
-
-- Product extraction must be marked complete for every relevant source surface. The manifest image set and `image_analysis.json` local-path set must match exactly; partial vision runs cannot feed the product brief.
-- `image_analysis.json` must come from a successful vision model run. If any image analysis record contains `analysis.error`, stop.
-- `product_brief.json` must include product identity, confirmed use cases, step-by-step usage, misuse risks, and hallucination defense. If any required field is missing, stop.
-- `ugc_prompts.json` must be generated from the valid manifest + image analysis + product brief, either by the prompt model or by Codex directly when product cognition is clear. Do not invent prompts without reading the product source files; direct Codex-authored prompts are production-valid when they cite the same inputs, pass the quality gate, and record a `prompt_history` note.
-- Functional start/end keyframes must be generated by Image2/model image generation from canonical product references. Do not use `--compose-only` product-photo pads for usage videos; those are acceptable only for explicit stable b-roll.
-- If the pipeline cannot complete a step, report the exact failed step/model/provider and do not proceed to paid video generation.
-
-### Universal Hallucination Defense
-
-Every product gets automatic hallucination-defense injection into all VEO/image prompts.
-
-**How it works:**
-1. `build_product_brief.py` asks the LLM to produce `hallucination_defense` with six categories per product:
-   phantom_parts, shape_preservation, material_texture_lock, action_bounds, context_contamination, scale_anchor.
-2. `generate_ugc_prompts.py` reads `product_brief.json` and auto-injects defense into:
-   `product_fidelity_block()` (appended to every prompt), `negative_prompt`, and LLM prompt-writing instructions.
-3. Without `product_brief.json`, a universal baseline defense fires covering all common VEO hallucination categories.
-
-**Categories (universal):**
-- Phantom parts: cables, wires, hoses, motors, buttons, lids, chambers, hinges, handles, blades, text, packaging
-- Shape drift: silhouette must not change (flower→circle, gourd→cylinder)
-- Material/texture: surface finish, color, transparency must stay exact
-- Action invention: product cannot do things unsupported by reference images
-- Context contamination: training-data clichés (“every outlet has a cord”, “every kitchen has a window”)
-- Scale distortion: product must stay realistic size relative to hands/objects
-
-
-## Prompt Standards
-
-Generate prompts in English for image/video models, but keep metadata fields readable in either Chinese or English depending on user preference.
-
-### Core Selling-Point Flow
-
-The skill must capture the core selling point before it writes any scene, voiceover, or image prompt. The commercial logic is:
-
-1. `product_manifest.json`: captures title, URL wording, page description, price, and page selling points. This is where the raw commercial promise first appears.
-2. `image_analysis.json`: filters which claims are visually supported, identifies true product appearance, and flags risks where the page promise cannot be literally shown.
-3. `product_brief.json`: converts raw promise + visual evidence into confirmed selling points, supported use cases, proof moments, misuse risks, and safe buyer-perceived results.
-4. `generate_ugc_prompts.py`: builds a per-variant `benefit_ladder` before writing creative:
-   - `core_selling_claim`: the one buyer reason to care.
-   - `buyer_problem`: the desire, worry, frustration, or routine moment that creates demand.
-   - `product_intervention`: the one supported product action shown correctly.
-   - `buyer_result`: the visible or spoken after-state that makes the promise believable.
-   - `proof_moment`: the exact visual moment that proves the result without hallucinating.
-5. `video_prompt`: receives the benefit ladder explicitly, so VEO is guided by the commercial spine instead of drifting into generic “how it works” or hardware-only demos.
-
-For example, a pet collar marketed around pest/outdoor protection should not lead with “white buckle” or “soft fabric” unless those details support the buyer promise. A stronger ladder is: outdoor worry → put the collar on before balcony/grass time → pet is comfortable and owner feels prepared. If literal pest removal cannot be visually proven, use safe routine/result language instead of fake insect-killing visuals.
-
-Before generating image/video prompts, separate cognition into five layers:
-
-1. Product identity: exact appearance, silhouette, materials, functional surfaces, visible mechanisms, ports, accessories, and SKU/colorway that must never drift.
-2. Commercial promise: the product title, page selling points, and confirmed selling points that explain why a buyer would care.
-3. Product function: confirmed use cases, step-by-step operation, proof moments, misuse risks, and what must be visible for a buyer to believe the promise.
-4. Buyer-visible effect: the after-state created by the product, such as calmer pet, cleaner sink, faster prep, less clutter, easier setup, cooler air, more comfortable sleep, or safer grooming.
-5. Scene imagination: realistic lifestyle contexts inferred from the buyer problem, function, and selling angle, not limited to the original product-page photos.
-
-Every batch should deliberately vary the variants by buyer problem, selling angle, scenario, action, proof moment, and final effect. Avoid making all prompts the same “place product on counter/table, show result” pattern.
-For rerolls, always treat older `ugc_prompts*.json` files as history to avoid, not as the default video source, unless the user explicitly asks to rerun that exact batch.
-
-### Creative Matrix: Same Core Promise, Different Ads
-
-When one product has a dominant commercial promise (for example “sleepy faster”, “cooler anywhere”, “less mess”, “pet feels safer”, or “prep is faster”), keep that promise consistent across variants but force the creative executions to diverge.
-
-`generate_ugc_prompts.py` must pass a `creative_matrix` into prompt generation and each variant must include a `creative_matrix_slot`. Each slot varies at least these dimensions:
-
-- `hook_archetype`: timestamp pain, bad-habit interruption, skeptic-to-believer, challenge/timed test, social comparison, travel problem, messy real-life chaos, ASMR/sensory payoff, gift angle, or niche confession.
-- `buyer_context`: the specific moment creating demand, such as doomscrolling, hotel bed, partner asleep, work-brain overload, one-more-episode trap, busy-parent chaos, or travel routine.
-- `creator_persona`: different creator identity or energy, such as tired relatable creator, skeptical reviewer, travel creator, busy everyday creator, soft-spoken ASMR creator, or gift-guide creator.
-- `scene_type`: bedroom, desk-to-bed transition, hotel, vanity/unboxing, partner scene, travel bag, kitchen counter, car console, dorm, bathroom, outdoor routine, or other product-valid setting.
-- `story_shape`: not always “problem → product → happy result”; use confession, reversal, timed test, comparison, habit break, unbox-to-real-use, sensory routine, or chaos-to-calm.
-- `proof_style`: before/after emotional contrast, object left behind, reaction shot, timer/checklist prop, undisturbed partner, simplified scene, tactile micro-proof, or packaging-to-use contrast.
-- `camera_idea`: pillow-height handheld, macro hands, over-shoulder, bag pull-out, two-person depth composition, wide chaos-to-close product, talk-to-camera then product detail, etc.
-- `pace`: snappy social pacing, slow sensory pacing, review-style pacing, challenge pacing, comedic contrast, or calm premium lifestyle pacing.
-
-The batch fails quality review if all variants merely paraphrase the same story arc. A valid batch can repeat the same `core_selling_claim`, but it must make each video look like a different ad concept. Hardware details should support the dominant promise; they should not replace the buyer-facing reason to buy.
-
-Before writing multiple variants, allocate a distinct `primary_function_focus` from `product_brief.confirmed_selling_points`, product-page `selling_points`, `confirmed_use_cases`, `step_by_step_usage`, and `proof_moments`. Do not let minor hardware details, materials, or setup steps become the lead angle when the product title/page clearly sells a higher-level benefit. If overlap is unavoidable, materially change at least four dimensions: buyer problem, buyer-visible effect, scene geometry, proof moment, camera idea, pace, and creator style. For multifunction wearables such as smart rings, do not default every clip to remote photo control; split variants across confirmed functions such as app/health check, display/status glance, charging dock, touch gesture, activity tracking, waterproof daily wear, or fit/detail as supported by the product brief.
-
-When a phone appears in an image or video prompt, specify physically possible phone geometry:
-
-- If the phone is acting as the camera for selfie / remote shutter / timer capture, the phone screen should face the creator and the camera lens should point toward the creator. The viewer should see the phone back/side, mirror reflection, or over-shoulder setup unless a second camera/phone is explicitly present.
-- If the viewer must see the phone screen or app preview, use an over-shoulder, mirror, tabletop, or second-device composition so the screen faces the external camera while the product/hand remains visible.
-- Do not show an impossible shot where a single phone both films the creator with its front camera and has its screen facing the external viewer with no mirror/secondary-camera explanation.
-- For wireless charging pads, the phone lies flat screen-up on the charging surface unless the actual product is a stand. Do not make the phone stand upright just because it is being charged.
-
-Every UGC variant must include:
-
-- Hook in the first 2 seconds.
-- Creator persona and shot style, e.g. kitchen counter demo, unboxing, problem-solution, ASMR cleaning, mom-life hack, apartment mini-kitchen.
-- Natural dialogue that sells the buyer problem/desire, the product intervention, and the improved after-state. The voice should feel like a stylish short-form lifestyle creator: young, bright, specific, and emotionally interested in the product benefit, without asking for any platform UI, platform logo, or social icon. The dialogue must make the product feel worth buying; do not let it collapse into neutral part naming or generic setup narration.
-- VEO prompts may include native English voiceover/dialogue when the user wants a spoken product explanation. VEO may render 1–2 stylish feature-tag overlays (bold rounded pill labels, warm vibrant accent tints, compact pop-up badge typography) with short plain-English words like “100 speeds” or “Tilt airflow”. These must not be subtitles, sentence captions, transcripts, lower thirds, karaoke text, platform UI, social media icons, logos, reaction icons, camera icons, or watermarks.
-- Every production model uses the 10-second creative contract. Spoken copy must finish naturally inside 10 seconds at normal creator pace: target 18–22 English words total, hard maximum 25 words, and no more than 3 short lines. Avoid unfinished trailing phrases such as “set and...”. Do not repeat the same spoken line across multiple storyboard beats, and explicitly forbid extra filler/CTA beyond the scripted lines.
-- Omni Flash provider requests use exactly `model`, `prompt`, and `params`; `omni-flash` uses `images` (optional, maximum 3), `aspect_ratio`, `duration`, `enhance_prompt`, and optional `enable_upsample`; `omni_flash-10s` uses fixed 10 seconds and up to 7 references; `omni_flash-10s-fl` uses fixed 10 seconds and 1–2 ordered first/last images. Use `POST /v1/media/generate`, poll `GET /v1/media/status?task_id=...`, treat `is_final` as the terminal flag and `state` as the success/failure flag. Keep Omni prompts at or below 4,000 characters.
-- For every 10-second voiceover, use the `benefit_ladder` order: buyer problem/desire → product intervention → buyer result. Avoid dead lines like “here is how it works,” “easy setup,” or “soft material” unless they clearly support the core buying reason.
-- A proof/result moment showing the product creating the advertised benefit or a safe buyer-perceived version of that benefit.
-- A final sell shot where the viewer understands the improved outcome, not merely a product-in-hand beauty shot.
-- Product-fidelity block: “Use the provided product reference as the canonical source. Do not redesign, recolor, simplify, enlarge logos, change flower/gourd/cat silhouette, or invent extra parts.”
-- Negative constraints: no fake claims, no impossible effects, no unrelated accessories, no distorted product geometry.
-- `reference_scope`: a short note that says which parts of source images are product identity locks and which parts are free to reinterpret as lifestyle scene design.
-- `scene_imagination`: a realistic scene derived from product function and buyer use case; it may differ from the product photos when functionally appropriate.
-
-Actual VEO `video_prompt` should be a conservative usage demo:
-
-- Treat the generated pad image / first frame as the visual identity lock.
-- Show one simple real-world use action supported by `product_brief.json`, but organize the clip around the buyer-visible effect.
-- Prefer start/end keyframes for 10-second usage videos: start = hook/problem setup, end = believable improved outcome / proof / sell shot.
-- For wearable products such as collars, rings, braces, or pillows, the start frame should show the real pre-use context and the product about to be used; the end frame should show the same subject wearing/using it correctly. Static product-photo pads are not acceptable for functional usage videos.
-- Start/end keyframes should be meaningfully different enough to imply a 10-second action arc, while keeping the exact same product identity. Avoid nearly identical start/end frames unless the goal is a stable b-roll shot.
-- Start and end keyframes should usually stay in the same room, with the same subject identity, wardrobe, props, lighting, and camera setup; the end frame should feel like a few seconds later in the same moment, not a different shoot.
-- Prefer generating the end keyframe from the already-generated start keyframe plus canonical product references, so the person and scene stay continuous while the action advances.
-- When two keyframes exist, VEO receives both as `input_reference`; image 1 is the first frame and image 2 is the final frame.
-- Allow adult hands and kitchen/sink/tabletop context when needed for a useful demo.
-- Describe the buyer problem, product intervention, after-state, proof moment, and camera style. Keep product-identity constraints concise so they do not drown out the selling idea.
-- Do not ask VEO to add new product parts, mechanisms, labels, containers, chambers, hinges, buttons, reservoirs, or unsupported accessories. Do not pile on generic negative constraints unrelated to this product; use only the few risks that matter.
-- Keep detailed UGC dialogue, product explanation, and usage logic in `dialogue_script`, `function_intro_prompt`, `voiceover_script_10s`, `usage_logic`, and `shot_plan` for planning/editing context. The final video-model prompt is always `video_prompt`.
-- Use a single `storyboard_10s` as the source of truth for each variant. Each beat should include `time`, `visual`, `spoken`, and optional `overlay`. `video_prompt` should include the full storyboard, `start_frame_prompt` should depict the first beat, and `end_frame_prompt` should depict the final beat. Overlay labels must be sparse feature tags only, never subtitles or repeated spoken text.
-- `start_frame_prompt` and `end_frame_prompt` are still-image prompts, not planning prompts. They must request one single vertical 9:16 realistic photo for the chosen beat only. Do not include the full storyboard, timeline, multiple beats, “first vs final” wording, contact sheet language, multi-panel language, collage/grid wording, or colorway-range phrases such as “five prints” / “multi-colorway”. Keep only the current frame description, product identity constraints, reference-image scope, and same-scene continuity requirements.
-- The start keyframe is generated first from canonical product references. The end keyframe should usually be generated from the start keyframe plus canonical product references, so the same outlet/table/person/room/camera carries through while only the action result advances. The end frame must not independently invent a different room, wall socket, phone orientation, person, wardrobe, or product state.
-- In `storyboard_10s`, assign each spoken line to only one beat. Other beats should have no new spoken words rather than repeating the previous line, otherwise the video model may over-speak and cut off the ending.
-- Do not let start/end keyframes be generic “before/after” images. They must correspond to the first and final storyboard beats, with a visible action-state change while preserving the same product identity, subject, room, wardrobe, lighting, and continuity.
-- Voiceover and visuals must pass the benefit test: with sound on, the spoken line names the buyer problem/desire and the product-created result; with sound off, the first and final frames still show a believable before/after or need/payoff arc.
-- `on_screen_callouts` may contain short feature tags such as “Fast Setup”, “Water Resistant”, or “Foldable Stand”. For VEO, prefer short plain-English words, 1–3 words per label, max 18 characters, rendered as stylish short-form creator typography (bold rounded pill badges, warm vibrant accent tints, compact pop-up labels) — but never platform/app/action icons, camera/reel icons, reaction icons, or UI chrome. If clean stylish text is uncertain, skip overlay rather than produce ugly or garbled text. Emoji may be stored for later manual editing only; do not send emoji into VEO overlay instructions.
-- Never ask image or video models to render any social media or platform logos/icons, app icons, story frames, platform UI chrome, like/comment/share bars, camera/reel icons, subtitles, captions, transcript text, lower thirds, karaoke text, or watermarks. Avoid positive platform-branded style phrases in generation prompts; say "stylish short-form creator-ad energy" instead. If VEO overlays are used, they must be stylish short-form feature-tag typography only (bold pill labels, warm vibrant tints), never platform branding.
-
-Every UGC variant must be grounded in `product_brief.json`:
-
-- Use `confirmed_selling_points`, product-page `selling_points`, and the product title to identify the main buyer reason to care before choosing a scene.
-- Use `step_by_step_usage` and `confirmed_use_cases` as the truth source for product operation.
-- Use `misuse_risks_to_avoid` to prevent wrong demonstrations.
-- Use `reference_image_strategy` plus `image_analysis.json` to choose full-product reference images for Image 2.
-- Prefer explicit `canonical_reference_images` / `full_product_reference_images` in `product_brief.json` when present, and exclude `alternate_sku_reference_images`, `rejected_reference_images`, `non_canonical_reference_images`, and `avoid_reference_images`.
-- The canonical reference must show the true product full silhouette, correct SKU/style, real proportions, and key functional zones. Do not use accessory-only, packaging-only, loose parts, alternate colorway/SKU, or detail-only photos as the identity reference.
-- Do not let the reference image over-constrain the lifestyle scene. Once the correct product identity and usage mechanics are locked, expand the scene to realistic buyer contexts that make the function easier to understand.
-- For each variant, map one selling point to one buyer problem, one usage action, one proof/result moment, and one final improved after-state. If several functions exist, split them across variants rather than cramming them into the same clip.
-- If usage is uncertain, write a conservative tabletop/hand demo rather than inventing a dramatic function.
-
-## Image Provider Notes
-
-Read `references/image-provider-notes.md` before changing image calls. Key defaults:
-
-- **Standing default for every image step: `tt-image-2.5` on the upDrama / LK888 media route.** Identity sheets, usage sheets, pad images and start/end keyframes all use it unless someone explicitly asks for another route. `POST https://api.lk888.ai/v1/media/generate`, poll `GET /v1/media/status?task_id=`, then download `result_url`. Do not pass `--image-provider` on a normal run; the script default is already the media route.
-- `tt-image-2.5` accepts 1-16 reference images plus `version` (`flare` / `sunburst`), `aspect_ratio`, `resolution` (1K/2K/4K), `quality` and `background`. It is a single create-and-poll round trip with no separate upload step, so it survives flaky links that break large multipart uploads.
-- The other two routes are situational alternates, chosen deliberately per job instead of used as a blanket substitute:
-  - `tt-image-2` on the same LK888 media route, when `tt-image-2.5` is unavailable or a specific frame needs its behaviour.
-  - `laozhang-image2` (GPT-Image-2 through the OpenAI-compatible `/images/edits` and `/images/generations` routes), when a frame needs the LaoZhang model path specifically, or the media route has no channel.
-  Pass `--image-provider <name>` to pick one deliberately. Do not switch a whole batch to another provider to work around a transient network error; that is what the automatic chain below is for.
-- Automatic chain on failure: `tt-image-2.5` -> `tt-image-2` -> `laozhang-image2`. A failure in one variant never aborts the batch, and `image_generation_results.json` records the route that actually produced each frame.
-- API key env vars: `LK888_API_KEY` or `UPDRAMA_API_KEY` for the media route; `LAOZHANG_API_KEY` for the fallback route.
-- Interactive sessions may also call Codex built-in image generation directly when both script routes are unavailable, but the frame still has to be recorded with its provider, hash and parameters, and still has to pass the same vision QC.
-
-## LaoZhang API Notes
-
-Read `references/laozhang-api-notes.md` before changing API calls. Key defaults:
-
-- Base URL: `https://api.laozhang.ai/v1`
-- API key env var: `LAOZHANG_API_KEY`
-- GPT-Image-2 reverse routes: `/images/generations`, `/images/edits`, or `/chat/completions`.
-- Use `gpt-image-2-vip` for common explicit sizes; avoid unsupported 4K sizes on VIP.
-- VEO 3.1 async endpoint: `POST /videos`, poll `GET /videos/{id}`, then download via `GET /videos/{id}/content`.
-- Use VEO models with `-fl` suffix for image-to-video reference frames.
-
-## LK888 / updrama API Notes
-
-Use `scripts/generate_videos_lk888.py` only when LK888/updrama is the requested provider or LaoZhang VEO is unavailable.
-
-Key defaults:
-
-- Base URL: `https://api.lk888.ai/api`
-- API key env var: `LK888_API_KEY`
-- Capability refresh endpoints: `GET /v1/skills`, `GET /v1/skills/guide`, and `GET /v1/skills/models/{model_name}`.
-- Balance endpoint: `GET /v1/skills/balance`; query it before paid batches when practical.
-- Media creation endpoint: `POST /v1/media/generate`; poll `GET /v1/skills/task-status?task_id={task_id}` until `is_final=true`.
-- VEO 3.1 production default model name: `veo3.1`; common params are `generation_mode=fast`, `aspect_ratio=9:16`, `images=[start_url,end_url]`, and `enhance_prompt=false`.
-- `veo3.1-lite` uses `quality=sd|4k` instead of `generation_mode`, but may have inactive channels; verify pricing/status before relying on it.
-- Upload params require publicly reachable URLs. The API does not accept local file paths or multipart image uploads for `images`.
-- The adapter writes LK888 outputs to `videos_lk888/` so LaoZhang outputs in `videos/` remain untouched.
-- If an API behavior contradicts the capability docs, submit `POST /v1/skills/feedback` and record the returned `feedback_id`.
-
-## Quality Gate
-
-Before delivering outputs, inspect `materials.md`, `image_analysis.json`, and `ugc_prompts.json` for each product:
-
-- Reject image prompts that do not preserve the exact product form.
-- Reject VEO prompts that redesign the product, invent mechanisms, or introduce unsupported actions.
-- Reject prompts that imply social media/platform icons, logos, app UI, story stickers, like/comment/share chrome, camera/reel icons, watermark overlays, subtitles, captions, transcript text, lower thirds, karaoke text, or VEO-rendered emoji text. Allow only sparse stylish feature-tag overlay words (bold pill labels, warm vibrant tints) that evoke short-form creator energy without platform branding.
-- Reject prompts that use a weak reference image when a cleaner product image exists.
-- Prefer close-up product photos as image references over lifestyle images.
-- Reject batches where the variants only differ cosmetically but repeat the same hook archetype, buyer context, scene type, story shape, camera idea, action, and proof moment.
-- Reject same-promise batches that do not include a visible `creative_matrix` / `creative_matrix_slot` plan or where the generated prompts ignore those slots.
-- Reject keyframes that copy the original source-photo environment without a functional reason; scene design should come from buyer context and selling angle.
-- Reject start/end keyframes that are too similar to produce a meaningful 10-second product-use video, unless the variant is explicitly stable b-roll.
-- Reject video submission if the model references are only raw product/source images. The video reference set must include Image2-generated `generated_images/variant-XX...` scene/keyframe files; VEO must include exactly the generated start and end keyframes.
-- Before calling Image 2, manually or programmatically verify the selected reference images are the correct product, not another SKU on the same page.
-- Image prompts must explicitly say the first selected full-product reference is canonical and conflicting page images should be ignored.
-- For Image 2 edits, pass multiple verified full-product references when available, with the first image as the canonical product identity lock.
-- If generated images drift from the original product, prefer `generate_images.py --compose-only` with the cleanest reference asset over asking the image model to redraw the product.
-
-## Defaults
-
-- Scraping: use JSON-LD `Product.image` assets first and exclude generic page images by default. Add `--include-page-images` only when product pages lack structured product images.
-- Vision analysis: analyze every downloaded candidate by default (`--limit-images 0`). A positive `--limit-images` value is diagnostic-only and produces partial analysis that must not be used to build a production product brief. In interactive Codex work, use the model's built-in vision directly; MiniMax vision is not part of this skill.
-- Prompt generation: read `product_brief.json` when present; if missing, fall back to manifest + image analysis but treat that as lower confidence.
-- Prompt generation: default model is `gpt-5.2`; override with `--model`, `--prompt-model`, or `PRODUCT_UGC_PROMPT_MODEL` when a specific provider/model such as `omni-flash` is available in the active API channel.
-- Prompt generation: do not use LK888 media/video models as prompt writers. For small ad-hoc rerolls where Codex has enough product context, Codex may directly author and append/rewrite variants in `ugc_prompts.json`; record this in `prompt_history` with a manual rewrite note.
-- Prompt generation: prefer direct Codex-authored prompts instead of calling an external chat model when any of these are true: the user has given a clear creative direction, the product has already been analyzed in this thread, previous model prompts missed the selling point, the task is a small reroll for one known product, or external prompt models are timing out / returning malformed JSON. This is not a dry-run fallback; it is the canonical creative-planning path. Codex must still ground the prompts in `product_manifest.json`, `image_analysis.json`, `product_brief.json`, and prior `ugc_prompts.json`, then append a `prompt_history` entry describing why direct authoring was used.
-- Prompt generation: use history-aware mode by default. `generate_ugc_prompts.py` passes the full prior `ugc_prompts*.json` history into the model context so the model can directly avoid repeating older scenes, actions, proof moments, buyer contexts, and selling angles.
-
-## v2 New Features (2026-09-04)
-
-Product UGC Pipeline v2 ships **6 product categories**. When a product genuinely
-belongs to none of them, add a category rather than force-fitting it — see
-"Adding a product category that does not exist yet" above.
-
-1. **Apparel** (服装) - tops, pants, dresses, outerwear, skirts, swimwear, lingerie, bridal, costume
-   - Uses Virtual Try-On Video's 7要素 framework
-   - One 2×2 grid reference sheet (4 panels)
-   - Dual-consistency check (face 8维 + garment 7要素)
-
-2. **Jewelry** (首饰) - rings, necklaces, earrings, bracelets, watches
-   - Custom 6维审图 framework
-   - One 1×3 grid reference sheet (front / 45° / macro)
-   - Placement precision check (ring finger size, necklace chain length)
-
-3. **Electronics** (电子产品/玩具) - earbuds, speakers, keyboards, toy blocks
-   - Custom 8维审图 framework
-   - One 2×3 grid reference sheet (all ports/buttons in 6 panels)
-   - Interaction type check (touch vs press), functional state validation
-
-4. **Home Tools** (厨房/家居工具) 🆕 - knife, peeler, grater, spatula, scissors
-   - Custom 7维 Tools framework
-   - One grid reference sheet: flat-lay, side, 45°, in-use grip, scale (5 panels)
-   - Food interaction physics check (blade angle, peel behavior)
-
-5. **Pet Tools** (宠物工具) 🆕 - brush, comb, nail clipper, leash, collar, bowl
-   - Custom 7维 Tools framework (pet-specialized)
-   - One grid reference sheet (5 panels) + optional pet-comfort sheet
-   - Pet comfort check (body language: relaxed/enjoying/accepting vs distressed)
-
-6. **Furniture** (家具/户外折叠家具) 🆕 - folding chairs, reclining loungers, moon chairs, cots, stools, tables
-   - Custom 7维 Furniture framework (structure, hinge, load path, scale, occupant contact)
-   - One grid reference sheet (3 top + 2 bottom)
-   - Gravity and load-path check, recline realism within the documented range, no phantom cushions/wheels/motors
-
-### New Scripts
-
-- `scripts/classify_product_category.py` - Heuristic auto-classifier (keyword/image cues; a mislabelled product is expected, so confirm or override the category before identity generation)
-- `scripts/generate_product_identity_lock.py` - Generate one category-specific multi-panel grid reference sheet
-- `scripts/generate_usage_pose_sheet.py` - Source-backed action ledger; automatically creates an operation grid for state-changing products
-- `scripts/creative_risk_router.py` - Rank useful directions by physical-generation risk and route fragile actions to ready-state/result proof
-- `scripts/qc_dual_consistency.py` - Category-specific QC checks
-- `scripts/create_test_cases.py` - Create 5-product test suite
-
-### New Category Definition Files
-
-- `references/category-home-tools.md` - Kitchen/home tools complete spec
-- `references/category-pet-tools.md` - Pet tools complete spec
-- `references/category-jewelry.md` - Jewelry independent spec
-- `references/category-electronics.md` - Electronics complete spec
-- `references/category-furniture.md` - Furniture / outdoor folding furniture complete spec
-- `references/state-change-products.md` - Part/state/transition contract for folding, assembly and installation
-- `references/low-risk-video-direction.md` - Cross-model risk ladder, routing rules and benchmark basis
-
-### Usage Example
-
-```bash
-# 1. Auto-classify products
+python scripts/scrape_products.py urls.txt --out product-ugc-output
+LAOZHANG_API_KEY=sk-... python scripts/analyze_materials.py product-ugc-output --limit-images 0
+LAOZHANG_API_KEY=sk-... python scripts/build_product_brief.py product-ugc-output
 python scripts/classify_product_category.py product-ugc-output
-
-# 2. Analyze with category-specific dimensions
-LAOZHANG_API_KEY=sk-xxx python scripts/analyze_materials.py product-ugc-output
-
-# 3. Build source-backed cognition before generating identity lock
-LAOZHANG_API_KEY=sk-xxx python scripts/build_product_brief.py product-ugc-output
-LAOZHANG_API_KEY=sk-xxx python scripts/generate_product_identity_lock.py product-ugc-output
+LK888_API_KEY=sk-... python scripts/generate_product_identity_lock.py product-ugc-output
 python scripts/generate_usage_pose_sheet.py product-ugc-output
-LAOZHANG_API_KEY=sk-xxx python scripts/qc_dual_consistency.py product-ugc-output --stage identity
-
-# Route for the intended video generator, then continue with keyframes and QC.
-LAOZHANG_API_KEY=sk-xxx python scripts/generate_ugc_prompts.py product-ugc-output --count 10 --target-video-model seedance-2.0
+LAOZHANG_API_KEY=sk-... python scripts/qc_dual_consistency.py product-ugc-output --stage identity
+LAOZHANG_API_KEY=sk-... python scripts/generate_ugc_prompts.py product-ugc-output --count 10 --target-video-model omni-flash --market Japan
+LK888_API_KEY=sk-... python scripts/generate_images.py product-ugc-output --variants 1-10 --storyboards
+LK888_API_KEY=sk-... python scripts/generate_videos_lk888.py product-ugc-output --variants 1-10 --model omni-flash --base-url https://api.lk888.ai --status-endpoint /v1/media/status --reference-mode omni-reference
 ```
 
-See `README_V2.md` for complete documentation.
+## Provider defaults
+
+Image steps default to upDrama/LK888 `tt-image-2.5`. The automatic image fallback chain is `tt-image-2.5` → `tt-image-2` → the OpenAI-compatible GPT-Image-2 route. Record the actual provider, parameters and hashes in provenance.
+
+Video steps use `POST https://api.lk888.ai/v1/media/generate` and poll `GET /v1/media/status?task_id=...`. The adapter writes results to `videos_lk888/` and records the exact model, reference mode, parameters and task response.
+
+## Quality gate
+
+Before delivery, verify:
+
+- the product is the correct SKU in every storyboard panel and sampled video frame;
+- silhouette, color, texture, part count and mechanisms remain stable;
+- one physical product appears per panel unless the concept genuinely requires more;
+- the action and payoff match source-backed usage;
+- the creator, wardrobe, room and lighting remain coherent;
+- phone orientation and other physical geometry are possible;
+- no unsupported claims, magical changes, duplicate products, garbled text or platform UI appear;
+- the batch concepts are genuinely distinct.
+
+QC returns pass, fail, needs_review or error with evidence. Missing evidence and uncertain checks are never a pass. Video QC is sampled-frame review, not exhaustive motion or audio validation.
+
+## Classification
+
+Use four layers: catalog path, reusable visual family, cross-category physical traits and interaction modes. Add a trait when a physical/QC rule crosses categories. Add a new production family only when existing layouts and QC needs are structurally unsuitable. Unknown products use `general-merchandise` and require review.
+
+Read the matching category and trait references in `references/`, especially `references/state-change-products.md`, `references/product-taxonomy.md`, `references/category-universal.md` and `references/low-risk-video-direction.md`.
