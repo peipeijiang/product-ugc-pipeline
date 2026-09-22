@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import concurrent.futures
 import io
 import json
@@ -163,6 +164,19 @@ def review(folder: Path, target: Path, identity: dict, key: str, args) -> dict:
         dependencies.append(prompts_file)
         if args.stage == "storyboards":
             review_variant = dict(variant)
+            from storyboard_contract import storyboard_spec
+            review_variant["grid_spec"] = storyboard_spec(variant)
+            from PIL import Image
+            with Image.open(target) as board:
+                expected_ratio = review_variant["grid_spec"]["boardLayoutRatio"]
+                width, height = map(int, expected_ratio.split(":"))
+                if abs(board.width / board.height / (width / height) - 1) > 0.01:
+                    raise RuntimeError("Rendered storyboard canvas ratio differs from grid_spec")
+            provenance = load_json(target.with_suffix(".provenance.json"), {})
+            timeline_hash = hashlib.sha256(json.dumps(variant["storyboard_10s"], ensure_ascii=False,
+                sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            if provenance.get("grid_spec") != review_variant["grid_spec"] or provenance.get("timeline_sha256") != timeline_hash:
+                raise RuntimeError("Storyboard layout/timeline is stale; regenerate before QC")
             from v2_contract import validate_scene_chain
             validate_scene_chain(folder, [target])
             dependencies.append(target.with_suffix(".provenance.json"))
@@ -209,9 +223,15 @@ def review(folder: Path, target: Path, identity: dict, key: str, args) -> dict:
                 "A repeated depiction across panels is expected; fail duplicates only inside a single panel. "
             )
         elif args.stage == "storyboards":
-            role_instruction = ("This TARGET is a chronological six-panel storyboard grid used as one all-purpose video reference. "
-                                "Evaluate every panel and the panel-to-panel identity/action chain. A repeated depiction of the same single product across different panels is expected; fail only if a panel contains duplicate products or product identity drifts. "
+            role_instruction = ("This TARGET is a chronological 6- or 9-panel storyboard grid used as one all-purpose video reference. "
+                                "Verify exact panel count, row-major reading order, per-panel frame ratio and board canvas ratio against grid_spec. Match EACH panel one-to-one to storyboard_10s visual, including camera, subject, action and environment; omissions or contradictory scenes fail. Evaluate every panel and the panel-to-panel identity/action chain. A repeated depiction of the same single product across different panels is expected; fail only if a panel contains duplicate products or product identity drifts. "
                                 "Judge the ordered sequence itself as the action contract: the panels must read in order and show only the documented supported use, never an invented mechanism or an unsupported state change. ")
+            role_instruction += (
+                "Also return storyboard_review: {panel_count: observed integer, chronological: boolean or null, "
+                "singleton_per_panel: boolean or null, visual_alignment: boolean or null, "
+                "layout_matches: boolean or null, evidence: nonempty array of per-panel observations}. "
+                "Never infer a positive check from metadata; use null for uncertainty. "
+            )
             role_instruction += (
                 "EVIDENCE WHITELIST for this stage, treat these as confirmed real facts and never fail on them alone: "
                 "(a) countable repeated parts such as LED heads or petals are frequently occluded, foreshortened or cropped in close panels; "
@@ -252,17 +272,31 @@ def review(folder: Path, target: Path, identity: dict, key: str, args) -> dict:
             base_url=args.base_url, timeout=args.timeout)
         result = parse_json_text(response["choices"][0]["message"]["content"], "dual consistency QC")
         if set(result.get("checks", {})) != set(CHECKS):
-            result = {"checks": normalize_checks(result), "corrections": result.get("corrections", [])}
+            result = {**result, "checks": normalize_checks(result)}
         if set(result.get("checks", {})) != set(CHECKS):
             # Surface what the model actually returned; a silent shape mismatch is
             # otherwise indistinguishable from a transport failure.
             Path("/tmp/qc_last_bad_response.json").write_text(
                 json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
             )
-    return {"path": str(target.relative_to(folder)), "sha256": digest(target), "status": verdict(result),
+    record = {"path": str(target.relative_to(folder)), "sha256": digest(target), "status": verdict(result),
             "checks": normalize_checks(result), "corrections": result.get("corrections", []),
             "dependencies": hashes(folder, dependencies), "sample_timestamps": times,
             "scope": "sampled_video_frames" if times else "still_image"}
+    if args.stage == "storyboards":
+        observation = result.get("storyboard_review") or {}
+        expected_count = review_variant["grid_spec"]["panel_count"]
+        flags = ("chronological", "singleton_per_panel", "visual_alignment", "layout_matches")
+        if record["status"] == "pass":
+            if any(observation.get(k) is False for k in flags) or (type(observation.get("panel_count")) is int and observation["panel_count"] != expected_count):
+                record["status"] = "fail"
+            elif (type(observation.get("panel_count")) is not int or any(observation.get(k) is not True for k in flags)
+                  or not isinstance(observation.get("evidence"), list) or not observation["evidence"]):
+                record["status"] = "needs_review"
+        record.update({k: observation.get(k) for k in ("panel_count", *flags, "evidence")})
+        record.update(timeline_sha256=timeline_hash, grid_spec=review_variant["grid_spec"], reviewer=args.model)
+    return record
+
 
 
 def targets(folder, stage, variants, identity):
@@ -356,6 +390,8 @@ def main():
                         "checks": {},
                         "corrections": [f"QC call failed: {type(exc).__name__}: {exc}"],
                     }
+                if args.stage == "storyboards":
+                    write_json(folder / "qc" / "storyboards" / f"{target.stem}.json", result)
                 report["results"].append(result)
                 report["results"].sort(key=lambda item: item.get("path", ""))
                 write_json(report_path, report)

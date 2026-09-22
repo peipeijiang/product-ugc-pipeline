@@ -92,16 +92,18 @@ class VoiceLocaleTests(unittest.TestCase):
             "hook": "Hook",
             "voiceover_script_10s": [{"time": "0-3s", "line": "これで快適です。"}],
         }
+        variant["storyboard_10s"] = [{"time": "0-10s", "visual": "Hold the ready-state product"}]
         prompt = compact_omni_prompt(variant, "10", "omni-reference", voice_locale="ja-JP")
         self.assertIn("Japanese", prompt)
         self.assertNotIn("young American woman", prompt)
         # This is the exact regression: the compact path used to ignore the
         # locale and emit the en-US profile.
         with self.assertRaises(VoiceLocaleError):
-            compact_omni_prompt({"variant_id": 1}, "10", "omni-reference")
+            compact_omni_prompt({"variant_id": 1, "storyboard_10s": variant["storyboard_10s"]}, "10", "omni-reference")
 
     def test_omni_prompt_omits_empty_sku_clause(self):
         variant = {"variant_id": 1, "voiceover_script_10s": [{"time": "0-3s", "line": "Works now."}]}
+        variant["storyboard_10s"] = [{"time": "0-10s", "visual": "Hold the ready-state product"}]
         prompt = compact_omni_prompt(variant, "10", "omni-reference", voice_locale="en-US")
         self.assertNotIn("MANDATORY SKU FOR THIS VIDEO: .", prompt)
         with_sku = dict(variant, sku_colourway="black XL")

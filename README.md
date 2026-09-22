@@ -31,3 +31,5 @@ LK888_API_KEY=sk-... python scripts/generate_videos_lk888.py product-ugc-output 
 新批次使用 `scripts/run_fresh_batch.py`，它会沿同一条固定路径追加历史感知提示词、生成故事板并提交视频。
 
 完整规则见 `SKILL.md`。
+
+故事板默认 6 宫格（3 列 × 2 行），紧凑情节使用 9 宫格（3 × 3）。单格比例跟随视频，整板比例单独计算。故事板和视频共用 `storyboard_10s`；修改分镜后必须重新生成并质检。

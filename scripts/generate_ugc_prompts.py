@@ -490,7 +490,7 @@ def _shot_text(item: Any) -> str:
 def normalize_shot_plan_10s(raw_shot_plan: Any, variant: dict[str, Any]) -> list[dict[str, str]]:
     raw_items = raw_shot_plan if isinstance(raw_shot_plan, list) else []
     shots = [_shot_text(item) for item in raw_items]
-    shots = [shot for shot in shots if shot][:6]
+    shots = [shot for shot in shots if shot][:9]
     if len(shots) < 3:
         shots = [
             f"Hook setup: {variant.get('hook') or variant.get('title') or 'show the buyer problem or need'}",
@@ -499,8 +499,8 @@ def normalize_shot_plan_10s(raw_shot_plan: Any, variant: dict[str, Any]) -> list
             f"Proof moment: {variant.get('proof_moment') or 'show the practical result clearly'}",
             "Final sell shot: keep the product visible in hand or beside the result",
         ]
-    shot_count = min(max(len(shots), 3), 6)
-    slots = SHOT_TIME_SLOTS.get(shot_count, SHOT_TIME_SLOTS[5])
+    shot_count = min(max(len(shots), 3), 9)
+    slots = SHOT_TIME_SLOTS.get(shot_count) or [f"{10*i/shot_count:.2f}-{10*(i+1)/shot_count:.2f}s" for i in range(shot_count)]
     normalized: list[dict[str, str]] = []
     for index, shot in enumerate(shots[:shot_count]):
         normalized.append({"time": slots[index], "shot": shot})
@@ -545,6 +545,8 @@ def assign_spoken_lines_to_shots(shot_plan: list[dict[str, str]], voiceover: lis
 
 
 def storyboard_entries(variant: dict[str, Any]) -> list[dict[str, str]]:
+    if variant.get("storyboard_10s"):
+        return [dict(entry) for entry in variant["storyboard_10s"]]
     shot_plan = normalize_shot_plan_10s(variant.get("shot_plan"), variant)
     # `_8s` is read-only migration support; normalized output is always `_10s`.
     voiceover = normalize_voiceover_script_10s(
@@ -797,8 +799,10 @@ def normalize_variants(
         validate_voiceover_language(clean_variant, resolved_locale, product_name)
         clean_variant.pop("voiceover_script_8s", None)
         clean_variant["on_screen_callouts"] = normalize_on_screen_callouts(clean_variant.get("on_screen_callouts"), feature_summary)
-        clean_variant["shot_plan"] = normalize_shot_plan_10s(clean_variant.get("shot_plan"), clean_variant)
         clean_variant["storyboard_10s"] = storyboard_entries(clean_variant)
+        from storyboard_contract import storyboard_spec
+        clean_variant["grid_spec"] = storyboard_spec(clean_variant)
+        clean_variant["shot_plan"] = [{"time": b["time"], "shot": b["visual"]} for b in clean_variant["storyboard_10s"]]
         clean_variant.pop("storyboard_8s", None)
         clean_variant.setdefault("function_demo_prompt", build_function_demo_prompt(product_name, feature_summary, clean_variant.get("title", "")))
         fidelity = product_fidelity_block(product_name, product_brief)
@@ -1449,7 +1453,7 @@ def usage_demo_video_prompt(
         f"forbidden generation = {variant.get('unsafe_actions_omitted') or feasibility.get('forbidden_generation', [])}. "
     )
     return (
-        "Create a 10-second vertical stylish creator-ad product-use clip in Omni Flash omni-reference mode. "
+        f"Create a 10-second {variant.get('target_frame_aspect_ratio') or '9:16'} stylish creator-ad product-use clip in Omni Flash omni-reference mode. "
         "Use the chronological storyboard as the action/scene guide, the identity grid as the product truth, and an optional QC-passed operation grid only when the product needs supported state-change guidance. These are all-purpose references, not timeline endpoints. "
         "Commercial north star: every visual beat and the voiceover must sell the buyer-visible result, not merely list product parts. "
         f"Core buyer reason to buy: {core_selling_claim}. "
@@ -1571,8 +1575,9 @@ Each variant must include:
 - function_demo_prompt: editor-facing prompt that explains the function, proof moment, and final benefit
 - usage_logic: explain how the product works and why the scene is correct
 - proof_moment: the exact visual action that proves the function
-- shot_plan with exact 0-10 second timing
-- storyboard_10s: exact 0-10 second beats; each beat should include time, visual, spoken, and optional sparse overlay rendered as stylish pill-badge / warm-tinted pop-up typography; overlay must be short feature tags only, not subtitles; the storyboard is rendered into one chronological reference sheet
+- shot_plan: mirror storyboard_10s exactly (same panel count, times and visual descriptions), never an independent sequence
+- target_frame_aspect_ratio: requested video frame ratio, default 9:16; this is NOT the board canvas ratio
+- storyboard_10s: exactly 6 panels by default; use exactly 9 when dense action/proof needs extra continuity. Never truncate a nine-panel sequence. Each panel maps one-to-one to the video visual description, with contiguous time intervals covering 0-10 seconds; each beat must include time, visual (camera position, subject placement, visible action and environment anchors), spoken, and optional sparse overlay rendered as stylish pill-badge / warm-tinted pop-up typography; overlay must be short feature tags only, not subtitles; the storyboard is rendered into one chronological reference sheet
 - selected_reference_images using local paths from the preferred list
 - reference_scope: explain which visual details from source images lock product identity, and explicitly state that source-photo background/props/composition are not mandatory unless functionally necessary
 - selling_angle: one focused buyer benefit for this variant

@@ -20,3 +20,5 @@ LK888_API_KEY=sk-... python scripts/generate_videos_lk888.py product-ugc-output 
 ```
 
 See `SKILL.md` for the full production and fail-fast contract.
+
+Storyboards use 6 panels (3 columns × 2 rows), or 9 (3 × 3) for dense action. Panel ratio follows the video; board ratio is derived separately. Both image and video use `storyboard_10s`; changed timelines require regeneration and QC.

@@ -73,28 +73,31 @@ class PipelineTests(unittest.TestCase):
     def approve_storyboard_fixture(self, folder, storyboard):
         # Offline gate-contract fixture, not a claim that this synthetic image
         # has received real vision review or may be used in production.
-        timeline = [{"time":"0-5s", "visual":"ready-state wide"},
-                    {"time":"5-10s", "visual":"ready-state detail"}]
+        timeline = self.storyboard_beats()
+        from storyboard_contract import storyboard_spec
         identity = load_identity(folder)
         write_json(storyboard.with_suffix('.provenance.json'), {
             'type':'image2_chronological_storyboard', 'sha256':digest(storyboard),
             'provider':'mock-offline', 'actual_prompt':'synthetic test only',
+            'grid_spec': storyboard_spec({'storyboard_10s': timeline}),
+            'timeline_sha256': hashlib.sha256(json.dumps(timeline, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()).hexdigest(),
             'references':{identity['output_path']:identity['sha256']}})
         write_json(folder/'qc/storyboards'/f'{storyboard.stem}.json', {
             'status':'pass', 'sha256':digest(storyboard),
             'timeline_sha256':hashlib.sha256(json.dumps(timeline,ensure_ascii=False,
                 sort_keys=True,separators=(',',':')).encode()).hexdigest(),
-            'panel_count':2,'chronological':True,'singleton_per_panel':True,
+            'panel_count':6,'chronological':True,'singleton_per_panel':True,
+            'visual_alignment':True, 'layout_matches':True,
+            'grid_spec':storyboard_spec({'storyboard_10s':timeline}),
             'reviewer':'mock-offline','evidence':['synthetic gate fixture only']})
         self.approve(folder,'storyboards',[storyboard])
         return timeline
 
     def storyboard_beats(self):
-        return [
-            {"time": "0-3s", "visual": "problem setup", "spoken": "Need this"},
-            {"time": "3-7s", "visual": "supported product use", "spoken": "It works"},
-            {"time": "7-10s", "visual": "ready-state buyer result", "spoken": "Sorted"},
-        ]
+        return [{"time": f"{10*i/6:.2f}-{10*(i+1)/6:.2f}s",
+                 "visual": visual, "spoken": ""} for i, visual in enumerate([
+                     "problem setup", "product reveal", "ready-state wide",
+                     "supported product use", "ready-state detail", "buyer result"])]
 
     def setup_identity(self, category="electronics"):
         folder = self.fixture(category)
@@ -489,8 +492,34 @@ class PipelineTests(unittest.TestCase):
         variant={'variant_id':1,'storyboard_10s':timeline}
         require_chronological_storyboard(folder,storyboard,variant)
         changed={**variant,'storyboard_10s':timeline+[{'time':'10-11s','visual':'changed'}]}
-        with self.assertRaisesRegex(RuntimeError,'visual storyboard review'):
+        with self.assertRaises(RuntimeError):
             require_chronological_storyboard(folder,storyboard,changed)
+
+    def test_storyboard_qc_produces_video_gate_fields_and_rejects_missing_evidence(self):
+        from qc_dual_consistency import review, CHECKS
+        folder, args = self.setup_identity()
+        target = folder / "generated_images/variant-01-storyboard.png"
+        target.parent.mkdir(exist_ok=True)
+        Image.new("RGB", (162, 192), "blue").save(target)
+        timeline = self.approve_storyboard_fixture(folder, target)
+        write_json(folder / "ugc_prompts.json", {"variants": [{"variant_id": 1, "storyboard_10s": timeline}]})
+        args.stage = "storyboards"
+        args.image_max_edge = 2048
+        payload = {"checks": {k: {"status": "pass", "evidence": "offline fixture"} for k in CHECKS},
+                   "storyboard_review": {"panel_count": 6, "chronological": True,
+                     "singleton_per_panel": True, "visual_alignment": True, "layout_matches": True,
+                     "evidence": ["offline synthetic panel observations"]}}
+        def response():
+            return {"choices": [{"message": {"content": json.dumps(payload)}}]}
+        with patch("qc_dual_consistency.request_json", return_value=response()):
+            result = review(folder, target, load_identity(folder), "test", args)
+        self.assertEqual(result["status"], "pass")
+        write_json(folder / "qc/storyboards" / f"{target.stem}.json", result)
+        require_chronological_storyboard(folder, target, {"storyboard_10s": timeline})
+        payload.pop("storyboard_review")
+        with patch("qc_dual_consistency.request_json", return_value=response()):
+            result = review(folder, target, load_identity(folder), "test", args)
+        self.assertEqual(result["status"], "needs_review")
 
     def test_classifier_routes_broad_families_before_multimodal_cognition(self):
         self.assertEqual(classify_by_keywords("Portable folding chair")[0], "furniture")

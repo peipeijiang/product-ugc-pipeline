@@ -169,11 +169,17 @@ def require_chronological_storyboard(product_dir: Path, storyboard: Path, varian
     """
     from v2_contract import digest
     provenance = load_json(storyboard.with_suffix(".provenance.json"), {})
+    from storyboard_contract import storyboard_spec
+    spec = storyboard_spec(variant)
+    if provenance.get("grid_spec") != spec:
+        raise RuntimeError("Storyboard grid contract changed or is missing; regenerate and review")
     timeline = variant.get("storyboard_10s")
     if not isinstance(timeline, list) or len(timeline) < 2:
         raise RuntimeError("Omni requires a current multi-beat storyboard_10s")
     timeline_hash = hashlib.sha256(json.dumps(timeline, ensure_ascii=False, sort_keys=True,
                                               separators=(",", ":")).encode()).hexdigest()
+    if provenance.get("timeline_sha256") != timeline_hash:
+        raise RuntimeError("Storyboard timeline changed; regenerate and review")
     image_hash = digest(storyboard)
     if (provenance.get("sha256") != image_hash or not provenance.get("references")
             or not (provenance.get("provider") or provenance.get("image_provider"))
@@ -183,8 +189,10 @@ def require_chronological_storyboard(product_dir: Path, storyboard: Path, varian
     review = load_json(report_path, {})
     if (review.get("status") != "pass" or review.get("sha256") != image_hash
             or review.get("timeline_sha256") != timeline_hash
-            or not isinstance(review.get("panel_count"), int) or review["panel_count"] < 2
+            or not isinstance(review.get("panel_count"), int) or review["panel_count"] != spec["panel_count"]
             or review.get("chronological") is not True or review.get("singleton_per_panel") is not True
+            or review.get("visual_alignment") is not True or review.get("layout_matches") is not True
+            or review.get("grid_spec") != spec
             or not review.get("reviewer") or not review.get("evidence")):
         raise RuntimeError(f"Current visual storyboard review required: {report_path}; single-frame anchors are not accepted")
     if "chronological_storyboard" not in str(provenance.get("type") or ""):
@@ -604,8 +612,7 @@ def enforce_prompt_char_limit(prompt: str, limit: int = OMNI_PROMPT_CHAR_LIMIT, 
     """
     if len(prompt) <= limit:
         return prompt
-    print(f"[prompt] {label} prompt is {len(prompt)} chars, over the {limit} cap; truncating", flush=True)
-    return prompt[:limit].rstrip()
+    raise RuntimeError(f"{label} prompt exceeds {limit} characters; shorten the canonical storyboard and regenerate its references, never truncate panel descriptions")
 
 
 def compact_omni_prompt(
@@ -633,13 +640,15 @@ def compact_omni_prompt(
         return text[:width].rstrip()
 
     def scaled(value: Any, width: int, factor: float, weight: float = 1.0) -> str:
-        # weight above 1 shrinks a clause faster. The storyboard image already
-        # carries the shot plan, so its text yields room before the scene does.
+        # weight above 1 shrinks optional context faster. Canonical storyboard text
+        # is preserved in full outside this helper.
         effective = width if factor >= 1.0 else max(24, int(round(width * factor ** weight)))
         return clipped(value, effective)
 
-    # Legacy `_8s` fields remain readable, but every new batch writes and submits the 10-second contract.
-    storyboard = variant.get("storyboard_10s") or variant.get("storyboard_8s") or variant.get("shot_plan") or []
+    # Only the reviewed canonical timeline supplies visual beats.
+    storyboard = variant.get("storyboard_10s") or []
+    if not storyboard:
+        raise RuntimeError("Current storyboard_10s is required; legacy shot plans cannot replace it")
     beats: list[str] = []
     if isinstance(storyboard, list):
         for item in storyboard:
@@ -705,7 +714,7 @@ def compact_omni_prompt(
             "No colourway split exists for this listing: keep the single SKU shown in image 2 exactly as it is. "
         )
         return (
-            f"Create exactly one {duration}-second vertical 9:16 realistic creator-style product video. {mode_instruction} "
+            f"Create exactly one {duration}-second {variant.get('target_frame_aspect_ratio') or '9:16'} realistic creator-style product video. {mode_instruction} "
             "Keep the same adult creator, room, wardrobe, lighting, camera geometry, props and the one physical product throughout. "
             "Show exactly ONE product; never duplicate it in hands, furniture, mirrors, reflections or screens. "
             f"LOCAL MARKET: this ad targets {region_name(resolved_locale)}; the creator, setting, props and gestures must read as a natural local product demo for that market, never a generic US-style shoot. "
@@ -718,7 +727,7 @@ def compact_omni_prompt(
             f"CONCEPT: {scaled(variant.get('title'), 180, factor, 0.8)}. HOOK: {scaled(variant.get('hook'), 320, factor, 0.8)}. "
             f"PRIMARY FUNCTION: {scaled(variant.get('primary_function_focus'), 320, factor, 0.8)}. "
             f"SCENE: {scaled(variant.get('scene_imagination'), 650, factor, 0.8)}. "
-            f"SHOT PLAN: follow these chronological beats across all {duration} seconds: {scaled(beats or storyboard, 1250, factor, 2.5)}. "
+            f"SHOT PLAN: follow these chronological beats across all {duration} seconds: {json.dumps(beats or storyboard, ensure_ascii=False)}. "
             f"SUPPORTED ACTION: {scaled(variant.get('usage_logic'), 650, factor, 1.8)}. "
             f"PAYOFF: {scaled(variant.get('proof_moment'), 450, factor, 1.8)}. "
             f"NATIVE AUDIO: {voice_desc} creator voice, natural and warm. Speak exactly: {clipped(voice, 400)}. "
@@ -794,6 +803,10 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
         raise RuntimeError("This pipeline supports only --reference-mode omni-reference")
     if not v2_active:
         raise RuntimeError("Omni reference submission requires the v2 identity lock and storyboard QC chain")
+    from storyboard_contract import storyboard_spec
+    spec = storyboard_spec(variant)
+    if args.aspect_ratio != spec["targetFrameAspectRatio"]:
+        raise RuntimeError("Video aspect ratio differs from storyboard panels; regenerate for the requested format")
     reference_images = omni_storyboard_identity_paths(product_dir, variant)
     if not reference_images:
         raise RuntimeError(f"Missing generated reference image(s) for variant {variant_id}")
@@ -815,17 +828,12 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
     scale_lock = str(variant.get("_physical_scale_lock") or "").strip()
     scale_suffix = (" STRICT PHYSICAL SCALE THROUGHOUT: " + scale_lock) if scale_lock else ""
     omni_limited = args.model in OMNI_MODELS
-    base_prompt = str(variant.get("video_prompt") or "").strip()
-    if not base_prompt or (omni_limited and len(base_prompt) + len(scale_suffix) > OMNI_PROMPT_CHAR_LIMIT):
-        # Reserve room for the scale suffix and for anything appended below, so
-        # the finished prompt still fits the provider's cap.
-        budget = OMNI_PROMPT_CHAR_LIMIT - len(scale_suffix) if omni_limited else 1_000_000
-        base_prompt = compact_omni_prompt(
-            variant, str(args.duration), args.reference_mode, product_dir, limit=budget,
-            voice_locale=voice_locale,
-        )
-        if omni_limited:
-            print(f"[prompt] compacted Omni prompt to {len(base_prompt)} characters", flush=True)
+    # Always rebuild from the reviewed canonical timeline; a saved video_prompt may be stale.
+    budget = OMNI_PROMPT_CHAR_LIMIT - len(scale_suffix) if omni_limited else 1_000_000
+    base_prompt = compact_omni_prompt(
+        variant, str(args.duration), args.reference_mode, product_dir, limit=budget,
+        voice_locale=voice_locale,
+    )
     if scale_suffix:
         base_prompt += scale_suffix
     expected = video_contract(product_dir, reference_images[:reference_limit], args.model, base_prompt, {

@@ -351,11 +351,20 @@ def apply_feasibility_route(variant: dict[str, Any], plan: dict[str, Any], index
             "product_intervention": clean["product_intervention"],
             "proof_moment": clean["proof_moment"],
         }
-    clean["shot_plan"] = [
-        {"time": "0-3s", "visual": "Open on the buyer need with the complete ready-state product already clearly visible; no setup motion."},
-        {"time": "3-7s", "visual": f"Use one simple human or camera motion while product geometry stays fixed. Show: {direction}"},
-        {"time": "7-10s", "visual": "Hold on the unchanged product and the buyer-visible result; use a detail or reaction as proof."},
+    visuals = [
+        "Wide shot: creator beside the complete ready-state product in the established room; show buyer need, no setup motion.",
+        "Medium shot: the same creator directs attention to the stationary ready-state product; keep room and wardrobe fixed.",
+        f"Close shot: show a source-backed functional detail in the same ready-state configuration. Proof: {direction}",
+        f"Medium shot: one simple supported human interaction, with product geometry fixed. Show: {direction}",
+        "Detail shot: hold on the unchanged ready-state product and visible supported result in the same room.",
+        "Wide closing shot: same creator reacts beside the unchanged ready-state product and buyer-visible result.",
     ]
-    clean["storyboard_10s"] = [dict(item, spoken="", overlay="") for item in clean["shot_plan"]]
+    clean["storyboard_10s"] = [
+        {"time": f"{10*i/6:.2f}-{10*(i+1)/6:.2f}s", "visual": visual, "spoken": "", "overlay": ""}
+        for i, visual in enumerate(visuals)
+    ]
+    clean["shot_plan"] = [{"time": b["time"], "shot": b["visual"]} for b in clean["storyboard_10s"]]
+    from storyboard_contract import storyboard_spec
+    clean["grid_spec"] = storyboard_spec(clean)
     clean.pop("storyboard_8s", None)
     return clean

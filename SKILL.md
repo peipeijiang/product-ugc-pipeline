@@ -18,7 +18,17 @@ All production video generation uses LK888/upDrama Omni Flash in `omni-reference
 - `omni-flash` accepts at most three references. Reject excess references before paid submission.
 - Do not silently switch to another video model or provider.
 
-The chronological storyboard is one vertical reference sheet that contains the full 0–10 second progression in clearly ordered panels. It replaces separate scene endpoint assets. The storyboard controls sequence and scene continuity; the identity grid controls exact SKU appearance; the optional operation grid controls only source-supported configuration changes.
+The chronological storyboard is one reference sheet with a layout derived from the panel count and target frame ratio that contains the full 0–10 second progression in clearly ordered panels. It replaces separate scene endpoint assets. The storyboard controls sequence and scene continuity; the identity grid controls exact SKU appearance; the optional operation grid controls only source-supported configuration changes.
+
+## Storyboard contract
+
+Follow PostPlus storyboard-grid-writer: a short common prompt and detailed visible events per panel. Use exactly **6 panels (3 columns × 2 rows)** by default, or **9 panels (3 × 3)** when dense action or proof needs additional continuity. Read left-to-right, then top-to-bottom.
+
+Keep `targetFrameAspectRatio` separate from `boardLayoutRatio`. Each panel uses the requested video ratio (`target_frame_aspect_ratio`, default 9:16); the board ratio is `(columns × frame width):(rows × frame height)`. Thus 9:16 footage uses a 27:32 six-panel board or a 9:16 nine-panel board. Never force every board to 9:16 or distort the panels to fit a fixed canvas.
+
+`storyboard_10s` is the single source of truth for image and video visual descriptions. Each panel must specify its contiguous time interval, camera position, subject placement, visible action, environment anchors and spoken line. Preserve product reveal timing and supported physical states. Do not replace it with a separately rewritten shot plan, truncate nine panels to six, or invent filler panels in the renderer. Rewrite legacy non-6/9 timelines before rendering.
+
+Persist `grid_spec` in image provenance. QC must verify the exact panel count, ratios, chronological order and each panel against the corresponding visual description. QC writes both the stage report and `qc/storyboards/variant-XX-storyboard.json`, including observed panel count, visual alignment, layout agreement and per-panel evidence. Missing observations never pass. Changes to timeline or layout invalidate the storyboard and its review. Video submission rebuilds its visual sequence from this reviewed timeline; oversized prompts must be revised, never truncated. One product per panel permits the same product to appear across multiple panels.
 
 ## Core rule
 

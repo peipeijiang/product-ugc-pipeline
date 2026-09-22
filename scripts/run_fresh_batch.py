@@ -118,7 +118,7 @@ def main() -> None:
     parser.add_argument("--prompt-model", default=os.getenv("PRODUCT_UGC_PROMPT_MODEL", "gpt-5.2"))
     parser.add_argument("--prompt-base-url", default="https://api.laozhang.ai/v1")
     parser.add_argument("--image-model", default="gpt-image-2-vip")
-    parser.add_argument("--image-size", default="1080x1920", help="Omni storyboard canvas passed to generate_images.py. Defaults to 1080x1920 (9:16).")
+    parser.add_argument("--image-size", default=None, help="Deprecated: storyboard canvas is derived from panel count and target_frame_aspect_ratio.")
     parser.add_argument("--image-base-url", default="https://api.laozhang.ai/v1")
     parser.add_argument("--video-model", default="omni-flash", choices=["omni-flash", "omni_flash-10s"])
     parser.add_argument("--video-base-url", default="https://api.lk888.ai")
@@ -212,8 +212,6 @@ def main() -> None:
                 "ugc_prompts.json",
                 "--model",
                 args.image_model,
-                "--size",
-                args.image_size,
                 "--base-url",
                 args.image_base_url,
                 "--products",

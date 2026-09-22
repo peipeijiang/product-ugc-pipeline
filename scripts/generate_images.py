@@ -24,6 +24,7 @@ from common import (
     write_json,
 )
 import v2_contract as v2
+from storyboard_contract import storyboard_spec
 
 
 # Image providers. The upDrama media-task route (tt-image-2.5) is the production
@@ -43,8 +44,7 @@ def resolve_image_aspect_ratio(args: argparse.Namespace) -> str:
     """Pick the media-route aspect ratio.
 
     An explicit --image-aspect-ratio always wins. The default is "auto", which
-    derives the ratio from --size. Omni storyboards default to 1080x1920 so the
-    derived ratio is 9:16 and matches the vertical video contract; identity and
+    derives the ratio from --size. Storyboards supply their derived grid canvas; identity and
     usage sheets pass their own grid canvas and keep that grid proportion.
     """
     requested = str(getattr(args, "image_aspect_ratio", "auto") or "auto")
@@ -260,7 +260,8 @@ def build_image_prompt(variant: dict[str, Any], product_name: str) -> str:
 
 
 def build_storyboard_prompt(variant: dict[str, Any], product_name: str) -> str:
-    timeline = variant.get("storyboard_10s") or variant.get("shot_plan") or []
+    spec = storyboard_spec(variant)
+    timeline = variant["storyboard_10s"]
     beats = []
     for item in timeline:
         if not isinstance(item, dict):
@@ -269,15 +270,14 @@ def build_storyboard_prompt(variant: dict[str, Any], product_name: str) -> str:
         visual = str(item.get("visual") or item.get("shot") or "").strip()
         if visual:
             beats.append(f"{timing}: {visual}" if timing else visual)
-    if len(beats) < 2:
-        raise RuntimeError("Omni reference generation requires at least two chronological storyboard beats")
     prompt = (
-        f"Create one vertical 9:16 chronological storyboard sheet for a 10-second Japanese creator-style product ad for {product_name}. "
-        f"Use {len(beats)} clearly separated panels read top-to-bottom and left-to-right. Each panel must depict the next moment in this exact sequence: "
+        f"Create one chronological storyboard sheet for a 10-second creator-style product ad for {product_name}. "
+        f"Board canvas ratio {spec['boardLayoutRatio']}; {spec['columns']} columns by {spec['rows']} rows; each equal panel has target frame ratio {spec['targetFrameAspectRatio']}. "
+        f"Use {len(beats)} clearly separated panels read left-to-right, then top-to-bottom. Each panel must depict the next moment in this exact sequence: "
         + " | ".join(beats)
         + ". Show exactly one physical product in every panel where it appears; never duplicate it within a panel or through reflections/screens. "
         "Keep one pinned SKU, the same creator identity, wardrobe, room, lighting and product geometry across every panel. "
-        "The product in panel 1 must already be visible so identity is traceable throughout. Preserve the canonical product exactly. "
+        "Follow product reveal timing in the visual descriptions exactly. Preserve the canonical product exactly. "
         "No legible writing, captions, subtitles, labels, arrows, logos, watermarks, app UI or social-media chrome anywhere."
     )
     scale_lock = str(variant.get("_physical_scale_lock") or "").strip()
@@ -285,7 +285,7 @@ def build_storyboard_prompt(variant: dict[str, Any], product_name: str) -> str:
         prompt += "\nSTRICT PHYSICAL SCALE: " + scale_lock
     silhouette_lock = str(variant.get("_silhouette_lock") or "").strip()
     return prompt + (
-        "\nSTRICT SINGLETON PRODUCT RULE: Show exactly one physical instance of the referenced product in the entire image. "
+        "\nSTRICT SINGLETON PRODUCT RULE: Show exactly one physical instance of the referenced product in each panel where it appears; repeated depictions across panels are required. "
         "Never show one product in a hand and a second product on a table. Do not create a duplicate through mirrors, reflections, screens, or background props."
         "\nSTRICT SILHOUETTE RULE: Preserve the source's exact silhouette and proportions; never make the product taller, "
         "squatter, shorter, longer or wider than the canonical photos show. "
@@ -370,7 +370,7 @@ def generate_image_file(
             raise RuntimeError("v2 usage scenes require model-generated frames")
         prompt += "\n" + v2.guidance(product_dir)
         if storyboard_v2:
-            prompt += "\nOutput ONE vertical 9:16 chronological storyboard sheet. Panel borders are allowed, but no panel may contain legible text."
+            prompt += "\nOutput ONE chronological storyboard sheet following the specified board canvas and per-panel ratios. Panel borders are allowed, but no panel may contain legible text."
         else:
             prompt += "\nOutput ONE undivided vertical 9:16 scene photograph. Never reproduce reference panel borders, labels or layout."
         if destination.name.endswith("-end.png"):
@@ -385,8 +385,11 @@ def generate_image_file(
             "base_url": args.base_url,
         }
         if storyboard_v2:
-            timeline = variant.get("storyboard_10s") or variant.get("shot_plan") or []
+            timeline = variant["storyboard_10s"]
             expected["type"] = "chronological_storyboard"
+            expected["grid_spec"] = storyboard_spec(variant)
+            expected["image_size"] = args.size
+            expected["image_aspect_ratio"] = resolve_image_aspect_ratio(args)
             expected["timeline_sha256"] = hashlib.sha256(
                 json.dumps(timeline, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
             ).hexdigest()
@@ -487,6 +490,13 @@ def generate_one_image(
     product_name = (load_json(product_dir / "product_manifest.json", {}) or {}).get("product_name", product_dir.name)
     variant_id = int(variant.get("variant_id", 0))
     if args.storyboards:
+        spec = storyboard_spec(variant)
+        args = argparse.Namespace(**vars(args))
+        requested = getattr(args, "image_aspect_ratio", "auto")
+        if requested not in ("auto", spec["boardLayoutRatio"]):
+            raise RuntimeError("Image aspect ratio conflicts with storyboard grid geometry")
+        args.size = spec["size"]
+        args.image_aspect_ratio = spec["boardLayoutRatio"]
         destination = product_dir / "generated_images" / f"variant-{variant_id:02d}-storyboard.png"
         prompt = build_storyboard_prompt(variant, product_name)
         references = storyboard_references(product_dir, variant, max(1, args.max_reference_images))
@@ -577,7 +587,7 @@ def add_image_provider_arguments(parser: argparse.ArgumentParser) -> None:
         help="Route used when the primary image provider fails. Defaults to the OpenAI-compatible GPT-Image-2 route.",
     )
     parser.add_argument("--image-base-url", default=LK888_BASE_URL, help="Base URL for the upDrama media-task image route.")
-    parser.add_argument("--image-aspect-ratio", default="auto", help="Aspect ratio for the media-task image route. 'auto' derives it from --size: the 1080x1920 storyboard default gives 9:16, while identity/usage sheets keep their own grid canvas (e.g. 1024x1536 -> 2:3).")
+    parser.add_argument("--image-aspect-ratio", default="auto", help="Aspect ratio for the media-task image route. 'auto' derives it from the canvas. Storyboards derive the canvas from panel count and target frame ratio.")
     parser.add_argument("--image-resolution", default="2K", choices=["auto", "1K", "2K", "4K"], help="Resolution tier for the media-task image route.")
     parser.add_argument("--image-version", default="sunburst", choices=["flare", "sunburst"], help="tt-image-2.5 quality tier: flare (standard) or sunburst (enhanced).")
     parser.add_argument("--image-quality", default="high", choices=["auto", "low", "medium", "high", "xhigh", "max"], help="Render quality tier for the media-task image route.")
@@ -592,7 +602,7 @@ def main() -> None:
     parser.add_argument("--prompts-file", default="ugc_prompts.json")
     add_image_provider_arguments(parser)
     parser.add_argument("--model", default="gpt-image-2-vip", help="Model for the OpenAI-compatible fallback route.")
-    parser.add_argument("--size", default="1080x1920", help="Storyboard/pad canvas. Defaults to 1080x1920 (9:16); identity/usage sheets override this with their own grid canvas.")
+    parser.add_argument("--size", default="1080x1920", help="Still-image canvas; storyboards derive their size from grid geometry and ignore this setting.")
     parser.add_argument("--quality", default="")
     parser.add_argument("--base-url", default="https://api.laozhang.ai/v1")
     parser.add_argument("--products", default="", help="Comma-separated product selectors, e.g. 01 or 01-flower")
