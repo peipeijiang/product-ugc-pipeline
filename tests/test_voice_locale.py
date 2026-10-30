@@ -20,8 +20,10 @@ from generate_ugc_prompts import (
 from generate_videos_lk888 import compact_omni_prompt
 from voice_locale import (
     VoiceLocaleError,
+    creator_market_identity,
     language_clause,
     locale_from_market,
+    normalize_creator_persona,
     normalize_locale,
     resolve_voice_locale,
     script_matches,
@@ -31,6 +33,12 @@ from voice_locale import (
 
 
 class VoiceLocaleTests(unittest.TestCase):
+    def storyboard(self):
+        return [
+            {"time": f"{10*i/6:.2f}-{10*(i+1)/6:.2f}s", "visual": f"Ready-state action {i + 1}"}
+            for i in range(6)
+        ]
+
     def test_market_and_locale_spellings_normalize(self):
         for value in ("Japan", "JP", "jp", "日本", "ja-JP", "ja_JP", "ja"):
             with self.subTest(value=value):
@@ -52,18 +60,17 @@ class VoiceLocaleTests(unittest.TestCase):
         self.assertEqual(
             resolve_voice_locale(brief=brief).locale, "ja-JP"
         )
-        # A deliberate CLI override outranks the batch file.
-        self.assertEqual(
-            resolve_voice_locale(brief=brief, prompts={"voice_locale": "ja-JP"}, explicit="en-US").locale,
-            "en-US",
-        )
-        # A per-variant locale outranks everything.
-        self.assertEqual(
-            resolve_voice_locale(
-                variant={"voice_locale": "es-MX"}, brief=brief, explicit="en-US"
-            ).locale,
-            "es-MX",
-        )
+        # Once a country is declared, no later layer may silently change it.
+        with self.assertRaisesRegex(VoiceLocaleError, "conflicts with declared market"):
+            resolve_voice_locale(brief=brief, prompts={"voice_locale": "ja-JP"}, explicit="en-US")
+        with self.assertRaisesRegex(VoiceLocaleError, "conflicts with declared market"):
+            resolve_voice_locale(variant={"voice_locale": "es-MX"}, brief=brief)
+
+    def test_creator_identity_is_locked_to_market(self):
+        self.assertIn("Japanese", creator_market_identity("ja-JP"))
+        self.assertIn("Japanese", normalize_creator_persona("home-goods reviewer", "ja-JP"))
+        with self.assertRaisesRegex(VoiceLocaleError, "conflicts"):
+            normalize_creator_persona("Mexican Latina creator", "ja-JP")
 
     def test_market_profile_file_feeds_resolution(self):
         import json
@@ -92,7 +99,7 @@ class VoiceLocaleTests(unittest.TestCase):
             "hook": "Hook",
             "voiceover_script_10s": [{"time": "0-3s", "line": "これで快適です。"}],
         }
-        variant["storyboard_10s"] = [{"time": "0-10s", "visual": "Hold the ready-state product"}]
+        variant["storyboard_10s"] = self.storyboard()
         prompt = compact_omni_prompt(variant, "10", "omni-reference", voice_locale="ja-JP")
         self.assertIn("Japanese", prompt)
         self.assertNotIn("young American woman", prompt)
@@ -103,7 +110,7 @@ class VoiceLocaleTests(unittest.TestCase):
 
     def test_omni_prompt_omits_empty_sku_clause(self):
         variant = {"variant_id": 1, "voiceover_script_10s": [{"time": "0-3s", "line": "Works now."}]}
-        variant["storyboard_10s"] = [{"time": "0-10s", "visual": "Hold the ready-state product"}]
+        variant["storyboard_10s"] = self.storyboard()
         prompt = compact_omni_prompt(variant, "10", "omni-reference", voice_locale="en-US")
         self.assertNotIn("MANDATORY SKU FOR THIS VIDEO: .", prompt)
         with_sku = dict(variant, sku_colourway="black XL")
@@ -117,13 +124,23 @@ class VoiceLocaleTests(unittest.TestCase):
             "variant_id": 3,
             "title": "Tent",
             "hook": "Hook",
-            "voiceover_script_10s": [{"time": "0-3s", "line": "設営は一瞬です。"}],
+            "voiceover_script_10s": [
+                {"time": "0-3s", "line": "設営は一瞬です。"},
+                {"time": "3-7s", "line": "すぐに使えます。"},
+                {"time": "7-10s", "line": "片付けも簡単です。"},
+            ],
+            "storyboard_10s": self.storyboard(),
         }
         jp_prompt = usage_demo_video_prompt(variant, {}, "ja-JP")
         self.assertIn("Japanese", jp_prompt)
         self.assertNotIn("young American female", jp_prompt)
         self.assertNotIn("English words", jp_prompt)
-        us_prompt = usage_demo_video_prompt(variant, {}, "en-US")
+        us_variant = dict(variant, voiceover_script_10s=[
+            {"time": "0-3s", "line": "Set up in seconds."},
+            {"time": "3-7s", "line": "Use it right away."},
+            {"time": "7-10s", "line": "Packing is easy too."},
+        ])
+        us_prompt = usage_demo_video_prompt(us_variant, {}, "en-US")
         self.assertIn("young American woman", us_prompt)
 
     def test_voiceover_in_the_wrong_script_is_rejected(self):
@@ -140,6 +157,19 @@ class VoiceLocaleTests(unittest.TestCase):
         )
         # Latin-script locales have no script gate.
         validate_voiceover_language(english_for_japan, "en-US", "tent")
+
+    def test_each_spoken_surface_is_checked_independently(self):
+        variant = {
+            "variant_id": 8,
+            "dialogue_script": "これは便利です。",
+            "voiceover_script_10s": [{"time": "0-3s", "line": "すぐ使えます。"}],
+            "storyboard_10s": [
+                {"time": "0-5s", "visual": "demo", "spoken": "自然に使えます。"},
+                {"time": "5-10s", "visual": "result", "spoken": "Buy it now."},
+            ],
+        }
+        with self.assertRaisesRegex(VoiceLocaleError, "storyboard panel 2"):
+            validate_voiceover_language(variant, "ja-JP", "product")
 
     def test_japanese_lines_are_not_measured_as_one_word(self):
         long_japanese = "これはとても長い説明文です。二つ目の文はここで落とされます。三つ目の文も同様です。"
@@ -178,3 +208,4 @@ class VoiceLocaleTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+    normalize_creator_persona,

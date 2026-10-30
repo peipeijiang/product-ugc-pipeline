@@ -17,14 +17,18 @@ import requests
 from common import download_binary, load_json, selected_product_dirs, write_json
 from creative_risk_router import format_production_notice
 from generate_images import parse_variants
+from storyboard_contract import VIDEO_SINGLE_CANVAS_RULE, storyboard_video_beats
 from voice_locale import (
     VoiceLocaleError,
+    creator_market_identity,
     language_clause,
     language_name,
+    normalize_creator_persona,
     normalize_locale,
     region_name,
     resolve_voice_locale,
     trim_voiceover,
+    validate_spoken_text,
     voice_description,
 )
 
@@ -40,6 +44,170 @@ CONTINUE_STATES = {"pending", "running", "queued", "processing", "submitted"}
 SUCCESS_STATES = {"success", "completed", "succeeded"}
 FAILED_STATES = {"failed", "error", "cancelled", "canceled", "expired"}
 DEFAULT_ASPECT_RATIO = "9:16"
+
+
+# Mexico-specific H3 reroll stories. Each story keeps the product in one
+# verified worn state and uses a playful visual device only for the time-jump
+# between a matched before and after. The device is never a new product part.
+MEXICO_FANTASY_STORIES: dict[int, dict[str, Any]] = {
+    21: {
+        "name": "Lotería de la cintura",
+        "device": "colorful Mexican lotería cards and papel picado flutter through the air as a playful transition, with no readable card text",
+        "voice": "Estaba gordita, nada cerraba. Una semana después: delgada y perfecto.",
+        "beats": [
+            "0.00-1.67s: Direct-to-camera before shot in a bright Mexican bedroom; she has a noticeably heavier silhouette with a fuller midsection and pulls at jeans that clearly will not close over her abdomen.",
+            "1.67-3.33s: Same fixed camera and outfit; she struggles visibly with the waistband, her torso appears soft and rounded, and the button stays far apart.",
+            "3.33-5.00s: Papel picado and colorful lotería-style cards swirl around her as a magical but clearly stylized time-jump; no readable text.",
+            "5.00-6.67s: Coffee and a quick smile in a colorful Mexico-home kitchen; the patch is incidental and not centered.",
+            "6.67-8.33s: One brief direct-camera inner-wrist confirmation, palm facing lens, one patch only, no mirror or reflection.",
+            "8.33-10.00s: The cards snap into a cheerful confetti transition; keep the product out of focus.",
+            "10.00-11.67s: Return to the exact opening camera and outfit one week later; her silhouette is visibly slimmer with a defined waist, flat abdomen, and the same jeans now button easily with room to spare.",
+            "11.67-13.33s: She turns to show a narrow, toned waistline, stands taller and laughs with confidence; the body shape contrast is dramatic.",
+            "13.33-15.00s: Final confident direct-to-camera pose with papel picado in the background; one brief small patch confirmation, then face and silhouette lead.",
+        ],
+    },
+    22: {
+        "name": "Alebrije cambio de look",
+        "device": "a friendly fantastical alebrije silhouette and bright marigold colors move through the background during the time jump, never touching the patch",
+        "voice": "Muy llena, pantalón imposible. Una semana: panza plana, me veo increíble.",
+        "beats": [
+            "0.00-1.67s: Before shot in a colorful Mexican apartment; she has a rounder, heavier figure with visible abdominal fullness and struggles to close high-waisted jeans that gap widely.",
+            "1.67-3.33s: Fixed medium shot; her midsection appears soft and protruding, she looks at the camera with frustration and shakes her head while tugging at the waistband.",
+            "3.33-5.00s: A playful alebrije-colored glow sweeps behind her like a fantasy mural coming alive; no readable text.",
+            "5.00-6.67s: She moves through a marigold-decorated home, coffee in hand, patch only incidental.",
+            "6.67-8.33s: Brief direct-camera palm-up inner-wrist confirmation on one wrist only; other wrist bare, no mirror.",
+            "8.33-10.00s: The alebrije colors settle into a warm realistic room; the creator smiles and keeps moving.",
+            "10.00-11.67s: Hard time jump back to the exact opening camera and outfit; her figure is dramatically slimmer with a flat stomach, narrow waist, and the jeans button easily.",
+            "11.67-13.33s: She shows the loose fit and a toned, sculpted waistline through a natural turn, the transformation is striking.",
+            "13.33-15.00s: Final joyful pose with marigolds and papel picado; patch appears briefly on the same inner wrist only.",
+        ],
+    },
+    23: {
+        "name": "Portal de cempasúchil",
+        "device": "a glowing marigold arch opens as a surreal but elegant time portal; the after scene remains full-screen and physically continuous",
+        "voice": "Gordita, pantalón imposible. Una semana: bajé peso, queda perfecto.",
+        "beats": [
+            "0.00-1.67s: Direct-to-camera before state in a marigold-decorated Mexican courtyard; she has a noticeably fuller figure with a rounded belly and jeans that will not close over her midsection.",
+            "1.67-3.33s: Same framing; her torso appears heavy and soft, she exhales with effort and tugs at the tight waistband; no wrist close-up.",
+            "3.33-5.00s: A glowing cempasúchil arch blooms behind her and creates a tasteful fantasy time-jump.",
+            "5.00-6.67s: Realistic coffee-and-walk transition through a warm courtyard with papel picado overhead.",
+            "6.67-8.33s: One short direct-camera palm-up inner-wrist check, one tiny patch, other hand bare, no reflection.",
+            "8.33-10.00s: The marigold glow fades into natural daylight; keep the hand out of focus.",
+            "10.00-11.67s: Exact opening camera and outfit one week later; her silhouette is dramatically leaner with a flat, toned abdomen and the same jeans close easily with space.",
+            "11.67-13.33s: She steps forward with a slim, defined waistline and athletic posture, smiling directly at camera; the body transformation is obvious.",
+            "13.33-15.00s: Final full-screen after pose under marigolds; brief same-wrist patch confirmation only.",
+        ],
+    },
+    24: {
+        "name": "Vapor de tamales",
+        "device": "warm kitchen steam briefly turns into a whimsical golden ribbon for the time jump, without placing the patch near food or steam",
+        "voice": "Mucha panza, nada cerraba. Una semana: gordura fuera, me veo delgada.",
+        "beats": [
+            "0.00-2.50s: Mexican home kitchen before state; she has a heavy, rounded midsection with visible belly protrusion and tries unsuccessfully to close jeans, then gives a comic frustrated look.",
+            "2.50-5.00s: Same fixed camera and outfit; her torso appears full and soft, she leans toward the counter with effort while wrists stay low.",
+            "5.00-7.50s: Steam from a covered kitchen pot becomes a brief golden fantasy ribbon, then clears; no product near the food.",
+            "7.50-10.00s: She prepares coffee and gives one direct-camera palm-up inner-wrist confirmation away from counter; one patch only.",
+            "10.00-12.50s: Exact opening camera and outfit one week later; her figure is visibly slimmer with a flat stomach and narrow waist, jeans button easily, posture light.",
+            "12.50-15.00s: Final direct-to-camera kitchen pose showing a lean, sculpted waistline; one brief same-wrist patch confirmation.",
+        ],
+    },
+    25: {
+        "name": "Ritmo de mariachi",
+        "device": "a playful mariachi rhythm makes the room pulse with colorful light streaks during the time jump; no costume or belt becomes a product",
+        "voice": "Bien gordita, nada quedaba. Una semana: bajé montones, flaquita.",
+        "beats": [
+            "0.00-1.67s: Before state in a Mexican living room; she has a noticeably heavier build with a rounded belly, pulls at a tight waistband and the button stays far apart.",
+            "1.67-3.33s: Same fixed camera; her midsection appears full and soft, she gives a comic 'no puede ser' reaction.",
+            "3.33-5.00s: A mariachi-style beat triggers playful red, green and gold light streaks around the room, clearly fantasy and non-physical.",
+            "5.00-6.67s: She sways lightly while making coffee; patch remains incidental and small.",
+            "6.67-8.33s: Direct-camera palm-up inner-wrist confirmation, one patch only, no mirror or reflection.",
+            "8.33-10.00s: The light streaks resolve into papel picado and the room becomes realistic again.",
+            "10.00-11.67s: Exact opening camera and outfit one week later; her silhouette is dramatically leaner with a flat, toned waist and the jeans button with ease.",
+            "11.67-13.33s: She makes a small confident dance showing a slim, sculpted waistline and lighter posture.",
+            "13.33-15.00s: Final upbeat direct-to-camera pose; brief patch confirmation on the same wrist only.",
+        ],
+    },
+    26: {
+        "name": "Churro espiral",
+        "device": "a golden churro-like spiral of light becomes a playful transition graphic in the air, never a product part and never a measurement",
+        "voice": "Mucha panza, imposible cerrar. Una semana: grasa fuera, perfecto.",
+        "beats": [
+            "0.00-1.67s: Before state at a colorful Mexico street-food stand; she has a fuller figure with visible abdominal roundness and tries to close jeans that gap widely.",
+            "1.67-3.33s: Same angle; her midsection appears heavy and soft, she laughs at the struggle and turns toward camera.",
+            "3.33-5.00s: A whimsical golden spiral inspired by churro swirls circles the background and creates a magical time jump.",
+            "5.00-6.67s: She walks through a bright plaza with papel picado; product remains incidental.",
+            "6.67-8.33s: One direct-camera palm-up inner-wrist confirmation away from food; one patch only, no mirror.",
+            "8.33-10.00s: Golden spiral dissolves into real sunlight and the camera returns to a natural UGC look.",
+            "10.00-11.67s: Exact opening angle and outfit one week later; her figure is visibly slimmer with a flat stomach and narrow waist, jeans close easily.",
+            "11.67-13.33s: She walks with a lean, athletic silhouette and confident posture, the body transformation is striking.",
+            "13.33-15.00s: Final plaza hero with colorful flags; brief same-wrist patch confirmation, then face and silhouette.",
+        ],
+    },
+    27: {
+        "name": "Piñata del cambio",
+        "device": "a bright piñata bursts into confetti at the time jump; confetti is celebratory only and never covers or duplicates the patch",
+        "voice": "Muy pesada, nada cerraba. Una semana: bajé mucho, cerró perfecto.",
+        "beats": [
+            "0.00-1.67s: Before state in a colorful Mexican home; she has a rounder, heavier build with a protruding belly and tugs at jeans that visibly will not close.",
+            "1.67-3.33s: Same fixed camera; her midsection appears full and rounded, she looks at camera with a playful defeated shrug.",
+            "3.33-5.00s: A cheerful piñata pops in the background with confetti and creates a clearly fantastical time jump.",
+            "5.00-6.67s: Coffee, desk and a short walk in one natural lifestyle flow; patch is background only.",
+            "6.67-8.33s: Direct-camera palm-up inner-wrist confirmation, one patch only, other wrist bare, no mirror.",
+            "8.33-10.00s: Confetti settles; the scene becomes realistic and the creator keeps speaking naturally.",
+            "10.00-11.67s: Exact opening camera and outfit one week later; her silhouette is dramatically leaner with a flat, toned waist and jeans close easily.",
+            "11.67-13.33s: She shows the slim, sculpted waistline and celebrates with a joyful movement, transformation is obvious.",
+            "13.33-15.00s: Final colorful direct-to-camera hero, one brief same-wrist patch confirmation only.",
+        ],
+    },
+    28: {
+        "name": "Lucha libre contra el pantalón",
+        "device": "a playful lucha-libre ring-light effect frames the before/after like a match, with no physical belt or costume changing into the product",
+        "voice": "Gordita, pantalón ganó. Una semana: bajé peso, yo gané.",
+        "beats": [
+            "0.00-1.67s: Before state in a colorful Mexican room staged like a playful lucha arena; she has a fuller figure with visible belly roundness and jeans will not button.",
+            "1.67-3.33s: Her midsection appears heavy and soft, she reacts like she lost a round but remains a normal creator.",
+            "3.33-5.00s: A colorful ring-light flash and comic crowd-energy sound create a stylized time jump, no readable text.",
+            "5.00-6.67s: She walks, drinks coffee and talks directly to camera; patch stays incidental.",
+            "6.67-8.33s: Direct-camera palm-up inner-wrist check, one tiny patch only, no mirror or reflection.",
+            "8.33-10.00s: The fantasy arena effect fades into the same realistic Mexican room.",
+            "10.00-11.67s: Exact opening camera and outfit one week later; her figure is visibly slimmer with a flat stomach and narrow waist, jeans button smoothly.",
+            "11.67-13.33s: She celebrates with a confident champion pose showing a lean, toned waistline, the transformation is dramatic.",
+            "13.33-15.00s: Final direct-to-camera smile; one brief same-wrist patch confirmation, other wrist bare.",
+        ],
+    },
+    29: {
+        "name": "Mural que despierta",
+        "device": "a Frida-inspired floral mural behind the creator gently blooms during the time jump, with tasteful Mexican color and no celebrity likeness",
+        "voice": "Muy llena, escondía panza. Una semana: bajé mucho, orgullosa.",
+        "beats": [
+            "0.00-1.67s: Before state in front of a colorful Mexican mural; she has a rounder, heavier build with a protruding belly, pulls at a tight waistband and looks self-conscious.",
+            "1.67-3.33s: Same fixed camera; her midsection appears full and soft, she covers the waistband briefly and looks back at camera.",
+            "3.33-5.00s: Painted flowers on the mural bloom into a gentle fantasy animation, then settle.",
+            "5.00-6.67s: She prepares coffee and walks past the mural with a relaxed posture; patch not centered.",
+            "6.67-8.33s: One direct-camera palm-up inner-wrist confirmation, one patch only, no mirror or reflection.",
+            "8.33-10.00s: The painted flowers return to a realistic mural as the time jump completes.",
+            "10.00-11.67s: Exact opening camera and outfit one week later; her silhouette is dramatically slimmer with a flat, toned waist and jeans close comfortably.",
+            "11.67-13.33s: She stands tall and proud showing a slim, sculpted waistline, the body transformation is obvious.",
+            "13.33-15.00s: Final mural hero shot; brief same-wrist patch confirmation, then attention returns to her face.",
+        ],
+    },
+    30: {
+        "name": "Amanecer sobre la ciudad",
+        "device": "a surreal Mexican rooftop sunrise sweeps the sky from deep blue to marigold gold as a time-jump transition",
+        "voice": "Muy gordita, pesada. Una semana: bajé mucho, delgada.",
+        "beats": [
+            "0.00-1.67s: Before state on a Mexican rooftop at blue hour; she has a fuller figure with visible belly roundness and tries to button jeans that will not close.",
+            "1.67-3.33s: Same fixed medium shot; her torso appears heavy and soft, she exhales with effort and faces the city.",
+            "3.33-5.00s: A surreal marigold sunrise sweeps across the skyline as a tasteful fantasy time jump.",
+            "5.00-6.67s: Realistic coffee and walking montage on the rooftop; patch remains incidental.",
+            "6.67-8.33s: Direct-camera palm-up inner-wrist confirmation, one patch only, no mirror or reflected glass.",
+            "8.33-10.00s: The sky settles into warm natural sunlight and the creator returns to direct UGC delivery.",
+            "10.00-11.67s: Exact opening camera and outfit one week later; her figure is visibly slimmer with a flat stomach and narrow waist, jeans button easily.",
+            "11.67-13.33s: She turns toward the skyline with a lean, sculpted waistline and light, confident posture, the transformation is striking.",
+            "13.33-15.00s: Final golden rooftop hero; brief same-wrist patch confirmation, then face and silhouette lead.",
+        ],
+    },
+}
 
 
 def require_lk888_api_key() -> str:
@@ -93,7 +261,7 @@ def variant_protects_configuration(variant: dict[str, Any]) -> bool:
     return isinstance(risk, dict) and str(risk.get("level") or "").lower() in {"high", "critical"}
 
 
-def omni_storyboard_identity_paths(product_dir: Path, variant: dict[str, Any]) -> list[Path]:
+def omni_storyboard_identity_paths(product_dir: Path, variant: dict[str, Any], allow_override: bool = False) -> list[Path]:
     """Return v2 Omni references: storyboard, identity grid, optional operation grid.
 
     The first two are fixed: the chronological storyboard sets shot order and the
@@ -129,9 +297,12 @@ def omni_storyboard_identity_paths(product_dir: Path, variant: dict[str, Any]) -
         )
     if not storyboard.with_suffix(".provenance.json").is_file():
         raise RuntimeError(f"Storyboard is missing provenance: {storyboard}")
-    require_chronological_storyboard(product_dir, storyboard, variant)
-    require_qc(product_dir, [identity_sheet], "identity")
-    require_qc(product_dir, [storyboard], "storyboards")
+    require_chronological_storyboard(
+        product_dir, storyboard, variant,
+        allow_override=allow_override,
+    )
+    require_qc(product_dir, [identity_sheet], "identity", override=allow_override)
+    require_qc(product_dir, [storyboard], "storyboards", override=allow_override)
     protected_configuration = variant_protects_configuration(variant)
     usage = load_usage(product_dir)
     usage_sheet = local_file(product_dir, usage["output_path"])
@@ -161,7 +332,7 @@ def omni_storyboard_identity_paths(product_dir: Path, variant: dict[str, Any]) -
     return references
 
 
-def require_chronological_storyboard(product_dir: Path, storyboard: Path, variant: dict[str, Any]) -> None:
+def require_chronological_storyboard(product_dir: Path, storyboard: Path, variant: dict[str, Any], allow_override: bool = False) -> None:
     """Filename/provenance labels alone cannot prove a real chronological grid.
 
     Require a separate current visual inspection bound to both image and routed
@@ -178,7 +349,7 @@ def require_chronological_storyboard(product_dir: Path, storyboard: Path, varian
         raise RuntimeError("Omni requires a current multi-beat storyboard_10s")
     timeline_hash = hashlib.sha256(json.dumps(timeline, ensure_ascii=False, sort_keys=True,
                                               separators=(",", ":")).encode()).hexdigest()
-    if provenance.get("timeline_sha256") != timeline_hash:
+    if provenance.get("timeline_sha256") != timeline_hash and not allow_override:
         raise RuntimeError("Storyboard timeline changed; regenerate and review")
     image_hash = digest(storyboard)
     if (provenance.get("sha256") != image_hash or not provenance.get("references")
@@ -187,13 +358,13 @@ def require_chronological_storyboard(product_dir: Path, storyboard: Path, varian
         raise RuntimeError("Storyboard needs current image hash, provider, prompt and reference provenance")
     report_path = product_dir / "qc" / "storyboards" / f"{storyboard.stem}.json"
     review = load_json(report_path, {})
-    if (review.get("status") != "pass" or review.get("sha256") != image_hash
+    if (not allow_override and (review.get("status") != "pass" or review.get("sha256") != image_hash
             or review.get("timeline_sha256") != timeline_hash
             or not isinstance(review.get("panel_count"), int) or review["panel_count"] != spec["panel_count"]
             or review.get("chronological") is not True or review.get("singleton_per_panel") is not True
             or review.get("visual_alignment") is not True or review.get("layout_matches") is not True
             or review.get("grid_spec") != spec
-            or not review.get("reviewer") or not review.get("evidence")):
+            or not review.get("reviewer") or not review.get("evidence"))):
         raise RuntimeError(f"Current visual storyboard review required: {report_path}; single-frame anchors are not accepted")
     if "chronological_storyboard" not in str(provenance.get("type") or ""):
         raise RuntimeError("Storyboard provenance must declare a chronological_storyboard type")
@@ -566,8 +737,18 @@ def lk888_get(api_key: str, endpoint: str, base_url: str, params: dict[str, Any]
 
 
 def build_model_params(args: argparse.Namespace, image_urls: list[str]) -> dict[str, Any]:
+    if args.model == "minimax-h3":
+        # MiniMax H3 uses the all-purpose reference-image field `image_url`.
+        # Do not pass Omni's `images` field here: H3 interprets that field as
+        # first/last-frame input rather than chronological references.
+        return {
+            "aspect_ratio": args.aspect_ratio,
+            "duration": str(args.duration),
+            "resolution": args.resolution,
+            "image_url": image_urls[:9],
+        }
     if args.model not in {"omni-flash", "omni_flash-10s"}:
-        raise RuntimeError(f"Unsupported video model {args.model}; this pipeline is Omni reference only")
+        raise RuntimeError(f"Unsupported video model {args.model}")
     params: dict[str, Any] = {
         "aspect_ratio": args.aspect_ratio,
         "images": image_urls[:7] if args.model == "omni_flash-10s" else image_urls[:3],
@@ -602,6 +783,7 @@ def normalize_status(status_response: dict[str, Any]) -> dict[str, Any]:
 
 OMNI_PROMPT_CHAR_LIMIT = 4000
 OMNI_MODELS = {"omni-flash", "omni_flash-10s"}
+MINIMAX_MODELS = {"minimax-h3"}
 
 
 def enforce_prompt_char_limit(prompt: str, limit: int = OMNI_PROMPT_CHAR_LIMIT, label: str = "Omni") -> str:
@@ -622,6 +804,8 @@ def compact_omni_prompt(
     product_dir: Path | None = None,
     limit: int | None = None,
     voice_locale: str | None = None,
+    effect_first: bool = False,
+    mexico_fantasy: bool = False,
 ) -> str:
     """Fit an Omni prompt inside the provider's 4,000-character hard limit.
 
@@ -649,16 +833,26 @@ def compact_omni_prompt(
     storyboard = variant.get("storyboard_10s") or []
     if not storyboard:
         raise RuntimeError("Current storyboard_10s is required; legacy shot plans cannot replace it")
-    beats: list[str] = []
-    if isinstance(storyboard, list):
-        for item in storyboard:
-            if isinstance(item, dict):
-                visual = str(item.get("visual") or item.get("shot") or "").strip()
-                spoken = str(item.get("spoken") or "").strip()
-                timing = str(item.get("time") or item.get("timing") or "").strip()
-                if visual:
-                    beat = (f"{timing}: " if timing else "") + visual
-                    beats.append(beat + (f"; spoken: {spoken}" if spoken else ""))
+    canonical_beats = storyboard_video_beats(variant)
+    # Spoken lines are carried by the native-audio clause below. Keeping them
+    # out of the visual beat map preserves the exact panel sequence while
+    # avoiding duplicated prompt content and the provider's 4k hard limit.
+    beats = [f"{item['time']}: {item['visual']}" for item in canonical_beats]
+    story = MEXICO_FANTASY_STORIES.get(int(variant.get("variant_id", 0) or 0)) if mexico_fantasy else None
+    if effect_first:
+        beats = [
+            "0.00-1.67s: Same Mexican creator in a direct-to-camera bedroom shot before the routine, tugging a visibly tight waistband and looking frustrated; no mirror and no wrist framing.",
+            "1.67-3.33s: Matched before-state medium shot from the same fixed camera, the same jeans remain visibly difficult to button; both wrists stay out of frame.",
+            "3.33-5.00s: Morning coffee in a Mexican home, relaxed day-in-the-life framing; patch is not a visual subject.",
+            "5.00-6.67s: Working at a desk, natural gesture and direct-to-camera confidence; keep both wrists mostly out of frame.",
+            "6.67-8.33s: Light walking or movement outside the home, showing lifestyle continuity rather than product detail.",
+            "8.33-10.00s: One brief direct-to-camera hand confirmation, creator's palm facing the lens with fingers up and the palm-side inner wrist visible; one tiny patch only, no mirror, no reflection, no hand rotation.",
+            "10.00-11.67s: Natural one-week time jump through a changed day and brighter mood, without readable text, calendar or graphics.",
+            "11.67-13.33s: Return to the exact opening camera and outfit, now the same jeans button comfortably and the waistline reads visibly more defined; direct-to-camera smile, no mirror.",
+            "13.33-15.00s: Final full-screen after-state hero, then one brief direct-to-camera palm-up inner-wrist confirmation on the same single wrist; other wrist completely bare.",
+        ]
+        if story:
+            beats = story["beats"]
     protected_configuration = variant_protects_configuration(variant)
     operation_sheet = False
     if product_dir:
@@ -685,6 +879,10 @@ def compact_omni_prompt(
         voice = " ".join(str(item.get("line", "")) if isinstance(item, dict) else str(item) for item in voice_items)
     else:
         voice = str(voice_items)
+    if effect_first:
+        voice = "Antes me costaba notar cambios… una semana después me veo más ligera y me siento increíble. U-PATCH ya es parte de mi rutina."
+    if story:
+        voice = story["voice"]
     brief = load_json(product_dir / "product_brief.json", {}) if product_dir else {}
     # The resolved locale is passed in so the compact path can no longer ignore
     # a batch-level or CLI locale and silently speak English.
@@ -694,12 +892,38 @@ def compact_omni_prompt(
             "compact_omni_prompt requires a resolved voice locale; refusing to default to English."
         )
     voice_desc = voice_description(resolved_locale)
+    normalize_creator_persona(variant.get("creator_persona"), resolved_locale)
+    normalize_creator_persona(variant.get("scene_imagination"), resolved_locale)
+    for panel in canonical_beats:
+        normalize_creator_persona(panel.get("visual"), resolved_locale)
+    for index, item in enumerate(voice_items if isinstance(voice_items, list) else [voice_items], start=1):
+        line = item.get("line") if isinstance(item, dict) else item
+        validate_spoken_text(line, resolved_locale, f"voiceover line {index}")
+    for index, panel in enumerate(canonical_beats, start=1):
+        validate_spoken_text(panel.get("spoken"), resolved_locale, f"storyboard panel {index} spoken line", allow_empty=True)
     language_rule = language_clause(resolved_locale)
     power_line = power_connection_clause(brief, budget=720)
     identity = variant.get("product_fidelity_block") or brief.get("confirmed_identity") or []
     misuse = variant.get("negative_prompt") or brief.get("misuse_risks_to_avoid") or []
     risk_direction = variant.get("safe_demo_direction") or {}
     forbidden_actions = variant.get("unsafe_actions_omitted") or []
+    effect_first_block = (
+        "EFFECT-FIRST STORY FOR THIS TAKE: make the before/after result the hero, not the patch. "
+        "Use sequential full-screen moments with the same Mexican creator, the same fixed camera, same outfit and matched lighting. "
+        "0-3s BEFORE: direct-to-camera, the same jeans visibly pinch and are hard to button; show the problem clearly. "
+        "3-10s ROUTINE: quick natural Mexico-home day-in-the-life beats—coffee, desk, walking or light movement—with the patch only incidental and never a close-up. "
+        "10-15s AFTER: return to the exact opening camera and outfit one week later; the same jeans button comfortably, the waistline reads visibly more defined, and she smiles with confidence. "
+        "Make the contrast dramatic but believable through a hard time-jump cut, never an instant body morph. No split screen, collage, comparison graphic, measurements, captions, readable text, mirror or reflection. "
+        "ONE-PATCH LOCK: exactly one patch total on the creator's right inner wrist only; the other wrist and hand must remain completely bare in every frame. Never duplicate the patch through a mirror, reflection, background or second wrist. "
+        "HAND DISPLAY LOCK: when the patch is shown, use a direct camera or tabletop shot, never a mirror; palm faces the lens, fingers point upward, palm-side inner wrist and wrist crease are visible, patch sits just below the palm crease. Never show the back of the hand, outer wrist or an inverted/rotated hand. "
+        "PATCH VISIBILITY BUDGET: show the single small patch clearly only twice for a brief confirmation; do not repeatedly zoom or center it. The patch is a tiny flat round patch, never a strap, wristband or bracelet. "
+        + (
+            f"MEXICO FANTASY DEVICE: {story['device']} Concept name: {story['name']}. Keep the fantasy device playful, tasteful and subordinate to the before/after waistline contrast; it must not create, transform or duplicate the product. "
+            if story else ""
+        )
+        + "Spanish voiceover must emphasize the before/after feeling: ‘Antes me costaba notar cambios… una semana después me veo más ligera y me siento increíble. U-PATCH ya es parte de mi rutina.’ "
+        if effect_first else ""
+    )
     protected_rule = (
         f"LOW-RISK ROUTE: {clipped(risk_direction, 360)}. The product starts and ends in one identical verified ready-to-use configuration. "
         "Its topology, connections, geometry and part count never change. Show only ready-state use, result/detail proof, creator reaction and gentle camera motion. "
@@ -715,7 +939,8 @@ def compact_omni_prompt(
         )
         return (
             f"Create exactly one {duration}-second {variant.get('target_frame_aspect_ratio') or '9:16'} realistic creator-style product video. {mode_instruction} "
-            "Keep the same adult creator, room, wardrobe, lighting, camera geometry, props and the one physical product throughout. "
+            f"{VIDEO_SINGLE_CANVAS_RULE} "
+            f"CASTING LOCK: keep {creator_market_identity(resolved_locale)} throughout, with one consistent person, wardrobe, room, lighting and gestures. "
             "Show exactly ONE product; never duplicate it in hands, furniture, mirrors, reflections or screens. "
             f"LOCAL MARKET: this ad targets {region_name(resolved_locale)}; the creator, setting, props and gestures must read as a natural local product demo for that market, never a generic US-style shoot. "
             + protected_rule
@@ -727,12 +952,13 @@ def compact_omni_prompt(
             f"CONCEPT: {scaled(variant.get('title'), 180, factor, 0.8)}. HOOK: {scaled(variant.get('hook'), 320, factor, 0.8)}. "
             f"PRIMARY FUNCTION: {scaled(variant.get('primary_function_focus'), 320, factor, 0.8)}. "
             f"SCENE: {scaled(variant.get('scene_imagination'), 650, factor, 0.8)}. "
-            f"SHOT PLAN: follow these chronological beats across all {duration} seconds: {json.dumps(beats or storyboard, ensure_ascii=False)}. "
-            f"SUPPORTED ACTION: {scaled(variant.get('usage_logic'), 650, factor, 1.8)}. "
-            f"PAYOFF: {scaled(variant.get('proof_moment'), 450, factor, 1.8)}. "
-            f"NATIVE AUDIO: {voice_desc} creator voice, natural and warm. Speak exactly: {clipped(voice, 400)}. "
+            + effect_first_block
+            + f"SHOT PLAN: follow these chronological beats across all {duration} seconds: {' | '.join(beats or storyboard)}. "
+            f"SUPPORTED ACTION: {scaled(variant.get('usage_logic'), 500, factor, 1.8)}. "
+            f"PAYOFF: {scaled(variant.get('proof_moment'), 340, factor, 1.8)}. "
+            f"NATIVE AUDIO: {voice_desc} creator voice, natural and warm. Speak exactly: {clipped(voice, 240)}. "
             f"{language_rule} Do not add speech. Add subtle room and product sounds and low music without singing. "
-            "No subtitles, captions, overlays, logos, watermarks, app UI, touchscreen, wireless charging, projector, extra accessories, extra products or unsupported claims. Natural handheld motion."
+            "No subtitles, overlays, logos, watermarks, app UI, extra accessories, extra products or unsupported claims. Natural handheld motion."
         )
 
     prompt = render(1.0)
@@ -797,6 +1023,8 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
     except VoiceLocaleError as error:
         raise RuntimeError(f"{product_dir.name} variant {variant_id:02d}: {error}") from error
     voice_locale = voice_resolution.locale
+    from generate_ugc_prompts import validate_voiceover_language
+    validate_voiceover_language(variant, voice_locale, str(manifest.get("product_name") or product_dir.name))
     if output_path.exists() and not args.force and not v2_active:
         return {"variant_id": variant_id, "status": "skipped_existing", "output_path": str(output_path.relative_to(product_dir))}
     if args.reference_mode != "omni-reference":
@@ -807,7 +1035,10 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
     spec = storyboard_spec(variant)
     if args.aspect_ratio != spec["targetFrameAspectRatio"]:
         raise RuntimeError("Video aspect ratio differs from storyboard panels; regenerate for the requested format")
-    reference_images = omni_storyboard_identity_paths(product_dir, variant)
+    reference_images = omni_storyboard_identity_paths(
+        product_dir, variant,
+        allow_override=bool(getattr(args, "allow_unverified_references", False)),
+    )
     if not reference_images:
         raise RuntimeError(f"Missing generated reference image(s) for variant {variant_id}")
     if v2_active:
@@ -817,12 +1048,17 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
         scene_refs = [p for p in reference_images if p.with_suffix(".provenance.json").is_file()]
         if not scene_refs:
             raise RuntimeError("v2 video requires generated scene frames")
-        validate_scene_chain(product_dir, scene_refs)
+        validate_scene_chain(
+            product_dir,
+            scene_refs,
+            override=bool(getattr(args, "allow_unverified_references", False)),
+        )
         require_qc(product_dir, scene_refs, "storyboards",
                    override=bool(getattr(args, "allow_unverified_references", False)))
     reference_limit = (
         7 if args.model == "omni_flash-10s"
         else 3 if args.model == "omni-flash"
+        else 9 if args.model == "minimax-h3"
         else 3
     )
     scale_lock = str(variant.get("_physical_scale_lock") or "").strip()
@@ -832,7 +1068,8 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
     budget = OMNI_PROMPT_CHAR_LIMIT - len(scale_suffix) if omni_limited else 1_000_000
     base_prompt = compact_omni_prompt(
         variant, str(args.duration), args.reference_mode, product_dir, limit=budget,
-        voice_locale=voice_locale,
+        voice_locale=voice_locale, effect_first=bool(getattr(args, "effect_first", False)),
+        mexico_fantasy=bool(getattr(args, "mexico_fantasy", False)),
     )
     if scale_suffix:
         base_prompt += scale_suffix
@@ -890,7 +1127,8 @@ def process_variant(product_dir: Path, variant: dict[str, Any], api_key: str, ar
     )), flush=True)
     print(
         f"[params] aspect_ratio={args.aspect_ratio} duration={args.duration} "
-        f"reference_mode={args.reference_mode} images={len(params.get('images') or [])}",
+        f"resolution={args.resolution} reference_mode={args.reference_mode} "
+        f"references={len(params.get('images') or params.get('image_url') or [])}",
         flush=True,
     )
     print(f"[create] {product_dir.name} variant {variant_id:02d} model={args.model}", flush=True)
@@ -1012,7 +1250,7 @@ def main() -> None:
     parser.add_argument("--products", default="")
     parser.add_argument("--variants", default="1-10")
     parser.add_argument("--prompts-file", default="ugc_prompts.json")
-    parser.add_argument("--model", default="omni-flash", choices=["omni-flash", "omni_flash-10s"])
+    parser.add_argument("--model", default="omni-flash", choices=["omni-flash", "omni_flash-10s", "minimax-h3"])
     parser.add_argument("--base-url", default=BASE_URL)
     parser.add_argument("--status-endpoint", default="/v1/skills/task-status")
     parser.add_argument("--aspect-ratio", default=DEFAULT_ASPECT_RATIO)
@@ -1047,6 +1285,10 @@ def main() -> None:
     parser.add_argument("--continue-on-error", action="store_true", help="Record failed variants and continue processing the batch.")
     parser.add_argument("--workers", type=int, default=1, help="Submit and poll independent variants concurrently.")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--effect-first", action="store_true",
+                        help="For result-led rerolls, prioritize a matched before/after contrast and limit product close-ups.")
+    parser.add_argument("--mexico-fantasy", action="store_true",
+                        help="Use the ten Mexico-specific reality/fantasy before-after stories for variants 21-30.")
     parser.add_argument("--allow-unverified-references", action="store_true",
                         help="Submit even when storyboard QC has not passed. Only with explicit user sign-off; the override is recorded in each video's provenance.")
     parser.add_argument("--voice-locale", default="",
@@ -1060,6 +1302,12 @@ def main() -> None:
         args.audio_duration = str(args.duration)
     if args.model in {"omni-flash", "omni_flash-10s"} and str(args.duration) not in {"4", "6", "8", "10"}:
         raise SystemExit("Omni duration must be one of 4, 6, 8, or 10 seconds")
+    if args.model == "minimax-h3":
+        if str(args.duration) not in {str(value) for value in range(4, 16)}:
+            raise SystemExit("MiniMax H3 duration must be an integer from 4 to 15 seconds")
+        if str(args.resolution).upper() not in {"768P", "1080P", "2K", "4K"}:
+            raise SystemExit("MiniMax H3 resolution must be 768P, 1080P, 2K, or 4K")
+        args.resolution = str(args.resolution).upper()
     if args.aspect_ratio != DEFAULT_ASPECT_RATIO and not args.allow_landscape:
         raise SystemExit(
             f"Refusing aspect_ratio={args.aspect_ratio}. Product UGC videos default to vertical {DEFAULT_ASPECT_RATIO}; "

@@ -402,14 +402,14 @@ def scene_references(folder: Path, role: str, variant_id: int) -> list[Path]:
     return refs
 
 
-def validate_scene_chain(folder: Path, paths: list[Path]) -> None:
+def validate_scene_chain(folder: Path, paths: list[Path], override: bool = False) -> None:
     record = load_identity(folder)
     usage = load_usage(folder)
     identity_sheet = local_file(folder, record["output_path"])
     usage_sheet = local_file(folder, usage["output_path"])
-    require_qc(folder, [identity_sheet], "identity")
+    require_qc(folder, [identity_sheet], "identity", override=override)
     if usage_sheet != identity_sheet:
-        require_qc(folder, [usage_sheet], "usage")
+        require_qc(folder, [usage_sheet], "usage", override=override)
     for path in paths:
         provenance = load_json(path.with_suffix(".provenance.json"), {})
         if provenance.get("sha256") != digest(path):

@@ -351,20 +351,26 @@ def apply_feasibility_route(variant: dict[str, Any], plan: dict[str, Any], index
             "product_intervention": clean["product_intervention"],
             "proof_moment": clean["proof_moment"],
         }
-    visuals = [
-        "Wide shot: creator beside the complete ready-state product in the established room; show buyer need, no setup motion.",
-        "Medium shot: the same creator directs attention to the stationary ready-state product; keep room and wardrobe fixed.",
-        f"Close shot: show a source-backed functional detail in the same ready-state configuration. Proof: {direction}",
-        f"Medium shot: one simple supported human interaction, with product geometry fixed. Show: {direction}",
-        "Detail shot: hold on the unchanged ready-state product and visible supported result in the same room.",
-        "Wide closing shot: same creator reacts beside the unchanged ready-state product and buyer-visible result.",
-    ]
-    clean["storyboard_10s"] = [
-        {"time": f"{10*i/6:.2f}-{10*(i+1)/6:.2f}s", "visual": visual, "spoken": "", "overlay": ""}
-        for i, visual in enumerate(visuals)
-    ]
-    clean["shot_plan"] = [{"time": b["time"], "shot": b["visual"]} for b in clean["storyboard_10s"]]
+    # The prompt model has already seen the feasibility plan and authored a
+    # route-safe chronological story. Preserve that story and its density
+    # choice. Older code replaced every protected variant with one generic
+    # six-panel template, silently destroying dense nine-panel stories and the
+    # requested hook/payoff. Missing or malformed timelines must be regenerated
+    # upstream; this router may constrain motion, but it may not invent panels.
+    if not clean.get("storyboard_10s"):
+        raise RuntimeError(
+            "Protected generation route requires an authored 6- or 9-panel storyboard_10s; regenerate prompts"
+        )
     from storyboard_contract import storyboard_spec
+    spec = storyboard_spec(clean)
+    clean["storyboard_panel_count"] = spec["panel_count"]
+    clean.setdefault(
+        "storyboard_density_reason",
+        "Nine panels preserve the authored dense action/proof chain."
+        if spec["panel_count"] == 9
+        else "Six panels cover the authored story without compressing distinct visible events.",
+    )
+    clean["shot_plan"] = [{"time": b["time"], "shot": b["visual"]} for b in clean["storyboard_10s"]]
     clean["grid_spec"] = storyboard_spec(clean)
     clean.pop("storyboard_8s", None)
     return clean

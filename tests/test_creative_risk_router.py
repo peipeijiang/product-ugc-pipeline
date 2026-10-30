@@ -71,17 +71,24 @@ class CreativeRiskRouterTests(unittest.TestCase):
         }
 
     def variant(self):
+        storyboard = [
+            {"time": "0.00-1.67s", "visual": "Wide ready-state chair beside the tired creator; no setup motion."},
+            {"time": "1.67-3.33s", "visual": "Medium shot of the creator pointing to the unchanged ready-state chair."},
+            {"time": "3.33-5.00s", "visual": "Close detail of the fixed support structure in its verified ready state."},
+            {"time": "5.00-6.67s", "visual": "Creator lowers into the already-open chair without changing its geometry."},
+            {"time": "6.67-8.33s", "visual": "Detail of the unchanged chair supporting the seated creator."},
+            {"time": "8.33-10.00s", "visual": "Wide closing reaction beside the same ready-state chair."},
+        ]
         return {
             "variant_id": 1,
             "title": "Ready to rest",
             "hook": "A long day outdoors",
             "selling_angle": "comfortable support",
             "buyer_result": "The creator relaxes comfortably.",
-            "shot_plan": [
-                {"time": "0-3s", "visual": "Unfold the chair."},
-                {"time": "3-7s", "visual": "Insert the pin."},
-                {"time": "7-10s", "visual": "Sit down."},
-            ],
+            "storyboard_panel_count": 6,
+            "storyboard_density_reason": "Six panels cover the ready-state proof without compressing distinct actions.",
+            "storyboard_10s": storyboard,
+            "shot_plan": [{"time": item["time"], "visual": item["visual"]} for item in storyboard],
             "voiceover_script_10s": [
                 {"time": "0-3s", "line": "Long day?"},
                 {"time": "3-7s", "line": "This chair gives stable support"},
@@ -108,7 +115,7 @@ class CreativeRiskRouterTests(unittest.TestCase):
         self.assertEqual(ranked[0]["risk_score"], 0)
         self.assertIn("ready-to-use state", ranked[0]["direction"])
 
-    def test_state_pair_routes_to_ready_state_without_generated_setup(self):
+    def test_state_pair_preserves_authored_ready_state_story(self):
         brief = self.high_risk_brief()
         plan = build_video_feasibility_plan(brief, "omni-flash")
         self.assertEqual(plan["target_model"], "omni-flash")
@@ -134,6 +141,13 @@ class CreativeRiskRouterTests(unittest.TestCase):
         self.assertIn("regenerated low-risk chronological storyboard", omni_prompt)
         self.assertIn("LOW-RISK ROUTE", omni_prompt)
         self.assertIn("topology, connections, geometry and part count never change", omni_prompt)
+
+    def test_protected_route_rejects_missing_story_instead_of_inventing_generic_six_panels(self):
+        plan = build_video_feasibility_plan(self.high_risk_brief(), "omni-flash")
+        variant = self.variant()
+        variant.pop("storyboard_10s")
+        with self.assertRaisesRegex(RuntimeError, "authored 6- or 9-panel"):
+            apply_feasibility_route(variant, plan)
 
     def test_simple_ready_state_demo_remains_continuous(self):
         brief = {

@@ -48,6 +48,49 @@ LOCALE_PROFILES: dict[str, dict[str, str]] = {
 }
 
 
+CREATOR_MARKET_IDENTITIES: dict[str, str] = {
+    "en-US": "an adult American creator from the United States",
+    "en-GB": "an adult British creator from the United Kingdom",
+    "en-AU": "an adult Australian creator",
+    "es-MX": "an adult Mexican creator",
+    "es-ES": "an adult Spanish creator from Spain",
+    "es-419": "an adult Latin American creator",
+    "pt-BR": "an adult Brazilian creator",
+    "de-DE": "an adult German creator",
+    "fr-FR": "an adult French creator",
+    "it-IT": "an adult Italian creator",
+    "ja-JP": "an adult Japanese creator from Japan",
+    "ko-KR": "an adult Korean creator from South Korea",
+    "zh-CN": "an adult Mainland Chinese creator",
+    "zh-TW": "an adult Taiwanese creator",
+    "th-TH": "an adult Thai creator",
+    "vi-VN": "an adult Vietnamese creator",
+    "id-ID": "an adult Indonesian creator",
+    "ms-MY": "an adult Malaysian creator",
+}
+
+_CREATOR_MARKERS: dict[str, tuple[str, ...]] = {
+    "en-US": ("american", "united states", "美国人"),
+    "en-GB": ("british", "united kingdom", "英国人"),
+    "en-AU": ("australian", "澳大利亚人"),
+    "es-MX": ("mexican", "mexicana", "mexicano", "墨西哥人"),
+    "es-ES": ("spanish creator", "española", "español", "西班牙人"),
+    "es-419": ("latin american", "latina", "latino", "拉丁美洲"),
+    "pt-BR": ("brazilian", "brasileira", "brasileiro", "巴西人"),
+    "de-DE": ("german creator", "deutsche", "德国人"),
+    "fr-FR": ("french creator", "française", "français", "法国人"),
+    "it-IT": ("italian creator", "italiana", "italiano", "意大利人"),
+    "ja-JP": ("japanese", "日本人"),
+    "ko-KR": ("korean", "韩国人", "韓国人"),
+    "zh-CN": ("mainland chinese", "中国大陆", "中国人"),
+    "zh-TW": ("taiwanese", "台湾人", "臺灣人"),
+    "th-TH": ("thai creator", "泰国人"),
+    "vi-VN": ("vietnamese", "越南人"),
+    "id-ID": ("indonesian", "印度尼西亚人"),
+    "ms-MY": ("malaysian", "马来西亚人"),
+}
+
+
 # Market/country spellings seen in product briefs, run manifests and market
 # profiles, mapped to the canonical locale. English and local-language names are
 # both accepted so a brief can declare `Japan` or `日本` and resolve the same way.
@@ -171,6 +214,50 @@ def region_name(locale: str) -> str:
     return profile(locale).get("region", "the target market")
 
 
+def creator_market_identity(locale: str) -> str:
+    resolved = normalize_locale(locale)
+    if not resolved or resolved not in CREATOR_MARKET_IDENTITIES:
+        raise VoiceLocaleError(f"No creator-market identity is configured for locale {locale!r}")
+    return CREATOR_MARKET_IDENTITIES[resolved]
+
+
+def normalize_creator_persona(persona: Any, locale: str) -> str:
+    """Pin casting to the locale and reject an explicitly foreign persona."""
+    resolved = normalize_locale(locale)
+    if not resolved:
+        raise VoiceLocaleError(f"Unknown creator locale {locale!r}")
+    raw = re.sub(r"\s+", " ", str(persona or "")).strip()
+    lowered = raw.lower()
+    for other_locale, markers in _CREATOR_MARKERS.items():
+        if other_locale == resolved:
+            continue
+        if any(marker.lower() in lowered for marker in markers):
+            raise VoiceLocaleError(
+                f"Creator persona {raw!r} conflicts with target locale {resolved}; casting must stay in one market"
+            )
+    identity = creator_market_identity(resolved)
+    if any(marker.lower() in lowered for marker in _CREATOR_MARKERS.get(resolved, ())):
+        return raw
+    return f"{identity}; {raw}" if raw else identity
+
+
+def validate_spoken_text(text: Any, locale: str, label: str, allow_empty: bool = False) -> None:
+    body = str(text or "").strip()
+    if not body:
+        if allow_empty:
+            return
+        raise VoiceLocaleError(f"{label} is empty for target locale {locale}")
+    expected_script = script_of(locale)
+    if expected_script != "latin" and not script_matches(body, locale):
+        raise VoiceLocaleError(f"{label} is not written in {language_name(locale)}: {body[:120]!r}")
+    if expected_script == "latin":
+        # Latin languages cannot be reliably distinguished without a language
+        # model, but a clearly non-Latin line is always a hard mismatch.
+        for script, ranges in SCRIPT_RANGES.items():
+            if any(any(start <= ord(char) <= end for start, end in ranges) for char in body):
+                raise VoiceLocaleError(f"{label} uses the wrong writing system for {language_name(locale)}")
+
+
 def script_of(locale: str) -> str:
     return profile(locale)["script"]
 
@@ -272,12 +359,18 @@ def resolve_voice_locale(
     attempts.append(("declared_market", market))
 
     seen_value = False
+    market_locale = locale_from_market(market) if market else None
     for source, value in attempts:
         if value is None or not str(value).strip():
             continue
         seen_value = True
         locale = locale_from_market(value)
         if locale:
+            if market_locale and locale != market_locale:
+                raise VoiceLocaleError(
+                    f"Locale {locale} from {source} conflicts with declared market {market!r} ({market_locale}). "
+                    "Market, creator identity and every spoken line must use one locale end-to-end."
+                )
             return ResolvedVoiceLocale(locale=locale, source=source, market=market)
         raise VoiceLocaleError(
             f"Unsupported voice locale/market {value!r} from {source}. "

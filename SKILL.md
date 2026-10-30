@@ -7,6 +7,8 @@ description: Build product-faithful short-form UGC ads from ecommerce product UR
 
 ## Production contract
 
+The following standalone Omni production contract does not apply when this skill is invoked in product-intake mode by `ad-muse`; that caller owns backend selection, planning images and submission.
+
 All production video generation uses LK888/upDrama Omni Flash in `omni-reference` mode.
 
 - Default model: `omni-flash`.
@@ -24,11 +26,19 @@ The chronological storyboard is one reference sheet with a layout derived from t
 
 Follow PostPlus storyboard-grid-writer: a short common prompt and detailed visible events per panel. Use exactly **6 panels (3 columns × 2 rows)** by default, or **9 panels (3 × 3)** when dense action or proof needs additional continuity. Read left-to-right, then top-to-bottom.
 
-Keep `targetFrameAspectRatio` separate from `boardLayoutRatio`. Each panel uses the requested video ratio (`target_frame_aspect_ratio`, default 9:16); the board ratio is `(columns × frame width):(rows × frame height)`. Thus 9:16 footage uses a 27:32 six-panel board or a 9:16 nine-panel board. Never force every board to 9:16 or distort the panels to fit a fixed canvas.
+Keep `targetFrameAspectRatio` separate from `boardLayoutRatio`. Every production panel is 9:16. The mathematical six-panel board is **1620×1920**: 3×2 cells, each **540×960**, whole-board ratio 27:32; the mathematical nine-panel board is **1080×1920**: 3×3 cells, each **360×640**, whole-board ratio 9:16. If the image provider does not support 27:32, use the direct image-generation fallback or another approved transport route, preserve the 9:16 panel instruction in the prompt, and record both mathematical and provider ratios in provenance. Do not stretch or claim the provider canvas is 27:32 when it is not.
 
 `storyboard_10s` is the single source of truth for image and video visual descriptions. Each panel must specify its contiguous time interval, camera position, subject placement, visible action, environment anchors and spoken line. Preserve product reveal timing and supported physical states. Do not replace it with a separately rewritten shot plan, truncate nine panels to six, or invent filler panels in the renderer. Rewrite legacy non-6/9 timelines before rendering.
 
-Persist `grid_spec` in image provenance. QC must verify the exact panel count, ratios, chronological order and each panel against the corresponding visual description. QC writes both the stage report and `qc/storyboards/variant-XX-storyboard.json`, including observed panel count, visual alignment, layout agreement and per-panel evidence. Missing observations never pass. Changes to timeline or layout invalidate the storyboard and its review. Video submission rebuilds its visual sequence from this reviewed timeline; oversized prompts must be revised, never truncated. One product per panel permits the same product to appear across multiple panels.
+Keep panel content and board layout in separate layers. A `storyboard_10s[*].visual` describes only what appears inside that shot; it must never contain `3x2`/`3x3`, grid, contact-sheet, storyboard-sheet, panel-number, border, gutter, collage, split-screen or other board-layout instructions. The image renderer alone adds the 3×2 or 3×3 arrangement. Use edge-to-edge equal panels with only hairline-thin neutral separators and no panel numbers, labels, title bands, timestamps, outer frame or large blank margins.
+
+The video adapter must rebuild exactly 6 or 9 chronological beats from the same layout-free timeline and state that the storyboard is a planning map only. Final video output is always one full-screen moving image at each moment: never reproduce the reference board, gutters, borders, numbering, contact-sheet composition, split screen, collage, picture-in-picture or simultaneous panels. Board-layout vocabulary found in a panel visual is a hard failure before paid submission.
+
+Choose the panel count from the authored story before image generation. Use 9 panels when the story needs more than six distinct visible events, or when multiple time/location transitions plus product action, proof and payoff would otherwise be compressed; otherwise use 6. Persist `storyboard_panel_count` (`6|9`) and a concise `storyboard_density_reason` on every variant. The declared count, `storyboard_10s` length and rendered grid must agree. Risk routing may constrain unsafe product motion, but it must never replace the authored story with a generic six-panel template or reduce a nine-panel story to six.
+
+The identity grid and optional operation grid are supporting references, not chronological storyboards; their panel counts may differ from 6/9. Never describe them to the user as completed storyboards. A storyboard is ready only when `generated_images/variant-XX-storyboard.png` exists, its provenance is bound to the current `storyboard_10s`, and storyboard QC passes.
+
+Persist `grid_spec` in image provenance. QC must verify the exact panel count, ratios, chronological order and each panel against the corresponding visual description. QC writes both the stage report and `qc/storyboards/variant-XX-storyboard.json`, including observed panel count, visual alignment, layout agreement and per-panel evidence. Missing observations never pass. Changes to timeline or layout invalidate the storyboard and its review. Video submission rebuilds its visual sequence from this reviewed timeline; the beat count must equal `storyboard_panel_count`, and prompt QC must confirm that no board-layout instruction leaked into those beats. Oversized prompts must be revised, never truncated. One product per panel permits the same product to appear across multiple panels.
 
 ## Core rule
 
@@ -36,15 +46,22 @@ Preserve the real product above all else. Product references lock silhouette, pr
 
 Never invent dimensions, functions, product parts, lighting, screens, indicators, accessories or state changes. Unknown facts must remain unknown.
 
+## Invocation modes
+
+When called by `$ad-muse`, run **product-intake mode only**. Complete source extraction, full asset manifest, image analysis, product brief/taxonomy, canonical product references and intake QC; generate identity images only when verified original images are insufficient, per the caller’s reference plan; then stop and hand off the documented artifacts. Do not run `generate_ugc_prompts.py`, storyboard generation, `generate_videos_lk888.py`, or the Omni Flash submission route in that mode.
+
+The Omni Flash video route below remains available only when the user explicitly asks for an Omni Flash/omni-reference video or a legacy run is being resumed. The unified caller may also select Omni Flash, but it then owns prompt serialization and submission using its own canonical artifacts; do not run this standalone legacy chain under that caller.
+
 ## Market and spoken language
 
 The target market is a required input, not an assumption. Spoken language, creator casting and scene framing must match the market the user asked for.
 
 - Resolve the market from the product brief, the market profile, the prompt batch or an explicit `--market` / `--voice-locale` flag.
 - Persist the resolved `market` and `voice_locale` at the top level of `ugc_prompts.json` and on every variant.
-- Precedence is: `variant.voice_locale` → explicit CLI flag → `prompts.voice_locale` → declared market.
+- Resolve once, then lock it for the entire batch. A variant locale or CLI locale that conflicts with the declared country is a hard failure, not an override.
+- Persist a canonical `creator_market_identity` on every variant. Creator nationality/market identity, casting, wardrobe, gestures, home details and social context must remain consistent with that country from storyboard through video.
 - An unresolved or misspelled locale is a hard failure before any paid step. There is no English default.
-- Every spoken line must be written in the target language and pass the language gate. A Japanese-market batch with English copy fails before video submission.
+- Every spoken surface must be written in the target language and pass the language gate independently: `dialogue_script`, all `voiceover_script_10s` lines, every storyboard `spoken`/`spoken_line`, narration and final oral delivery. One correct line may not mask another wrong-language line. A Japanese-market batch with any English spoken line fails before video submission.
 - Prefer a visual-only clip plus target-language text-to-speech in post over a mixed-language or language-mismatched clip.
 
 Supported locales live in `scripts/voice_locale.py`. Add a locale there instead of letting an unknown value fall back to English.

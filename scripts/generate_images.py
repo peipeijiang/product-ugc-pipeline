@@ -24,7 +24,8 @@ from common import (
     write_json,
 )
 import v2_contract as v2
-from storyboard_contract import storyboard_spec
+from storyboard_contract import storyboard_panel_visual, storyboard_spec
+from voice_locale import VoiceLocaleError, locale_from_market, normalize_creator_persona, normalize_locale
 
 
 # Image providers. The upDrama media-task route (tt-image-2.5) is the production
@@ -262,22 +263,48 @@ def build_image_prompt(variant: dict[str, Any], product_name: str) -> str:
 def build_storyboard_prompt(variant: dict[str, Any], product_name: str) -> str:
     spec = storyboard_spec(variant)
     timeline = variant["storyboard_10s"]
+    market = str(variant.get("market") or "").strip()
+    voice_locale = str(variant.get("voice_locale") or "").strip()
+    creator_persona = str(variant.get("creator_persona") or "").strip()
+    market_locale = locale_from_market(market) if market else None
+    locale = normalize_locale(voice_locale) or market_locale
+    if locale and market_locale and locale != market_locale:
+        raise VoiceLocaleError(
+            f"Storyboard market {market!r} resolves to {market_locale}, not voice locale {locale}"
+        )
     beats = []
     for item in timeline:
         if not isinstance(item, dict):
             continue
         timing = str(item.get("time") or item.get("timing") or "").strip()
-        visual = str(item.get("visual") or item.get("shot") or "").strip()
+        visual = storyboard_panel_visual(item)
         if visual:
             beats.append(f"{timing}: {visual}" if timing else visual)
+    if len(beats) != spec["panel_count"]:
+        raise RuntimeError("Storyboard prompt panel count does not match the storyboard contract")
+    creator = (
+        normalize_creator_persona(creator_persona, locale)
+        if locale else creator_persona or f"one adult creator natural to {market or 'the specified target market'}"
+    )
+    wardrobe_lock = str(variant.get("_wardrobe_lock") or "").strip()
+    wardrobe_clause = (
+        f"WARDROBE LOCK: the creator wears exactly this same garment, unchanged in cut, color, pattern and fabric, in every single panel of this sheet: {wardrobe_lock}. "
+        if wardrobe_lock else ""
+    )
     prompt = (
         f"Create one chronological storyboard sheet for a 10-second creator-style product ad for {product_name}. "
-        f"Board canvas ratio {spec['boardLayoutRatio']}; {spec['columns']} columns by {spec['rows']} rows; each equal panel has target frame ratio {spec['targetFrameAspectRatio']}. "
-        f"Use {len(beats)} clearly separated panels read left-to-right, then top-to-bottom. Each panel must depict the next moment in this exact sequence: "
+        f"The target market is {market or 'the specified market'} and the spoken language is {voice_locale or 'the specified locale'}. "
+        f"Cast the same creator throughout: {creator}. Match casting, styling, home details and gestures to the target market; do not inherit a person identity from product references. "
+        + wardrobe_clause + 
+        f"Board canvas is exactly {spec['size']} pixels at ratio {spec['boardLayoutRatio']}; {spec['columns']} columns by {spec['rows']} rows; each equal panel is exactly {spec['panelPixelSize']} pixels at 9:16. "
+        f"Use exactly {spec['panel_count']} edge-to-edge panels read left-to-right, then top-to-bottom. Separate adjacent panels only with very narrow neutral gutters, no wider than 0.5% of the canvas width. "
+        "Do not add an outer title band, large white margin, panel number, panel label, frame label, timestamp, header or footer. "
+        "Each panel must depict the next moment in this exact sequence: "
         + " | ".join(beats)
         + ". Show exactly one physical product in every panel where it appears; never duplicate it within a panel or through reflections/screens. "
         "Keep one pinned SKU, the same creator identity, wardrobe, room, lighting and product geometry across every panel. "
         "Follow product reveal timing in the visual descriptions exactly. Preserve the canonical product exactly. "
+        "Do not show a packaging box unless the timeline explicitly calls for a verified box reference; for this campaign, omit the box entirely and use at most one plain unbranded foil pouch during the opening step. "
         "No legible writing, captions, subtitles, labels, arrows, logos, watermarks, app UI or social-media chrome anywhere."
     )
     scale_lock = str(variant.get("_physical_scale_lock") or "").strip()
@@ -306,6 +333,33 @@ def storyboard_references(
 def parse_size(size: str) -> tuple[int, int]:
     width_text, height_text = size.lower().split("x", 1)
     return int(width_text), int(height_text)
+
+
+def normalize_storyboard_canvas(destination: Path, spec: dict[str, Any]) -> None:
+    """Convert a provider canvas to the mathematical board without stretching cells.
+
+    A six-panel provider result may arrive as 9:21. Crop its width to 3:8,
+    then resize to the exact 1080x2880 board. Since the 2 columns are not
+    rescaled independently, each resulting cell remains 9:16.
+    """
+    from PIL import Image
+
+    target_width, target_height = parse_size(spec["size"])
+    source = Image.open(destination).convert("RGB")
+    source_width, source_height = source.size
+    target_ratio = target_width / target_height
+    source_ratio = source_width / source_height
+    if source_ratio < target_ratio:
+        crop_height = max(1, round(source_width / target_ratio))
+        top = max(0, (source_height - crop_height) // 2)
+        source = source.crop((0, top, source_width, top + crop_height))
+    elif source_ratio > target_ratio:
+        crop_width = max(1, round(source_height * target_ratio))
+        left = max(0, (source_width - crop_width) // 2)
+        source = source.crop((left, 0, left + crop_width, source_height))
+    if source.size != (target_width, target_height):
+        source = source.resize((target_width, target_height), Image.Resampling.LANCZOS)
+    source.save(destination, format="PNG")
 
 
 def compose_exact_pad_image(reference: Path, destination: Path, size: str) -> Path:
@@ -370,7 +424,11 @@ def generate_image_file(
             raise RuntimeError("v2 usage scenes require model-generated frames")
         prompt += "\n" + v2.guidance(product_dir)
         if storyboard_v2:
-            prompt += "\nOutput ONE chronological storyboard sheet following the specified board canvas and per-panel ratios. Panel borders are allowed, but no panel may contain legible text."
+            prompt += (
+                "\nOutput ONE chronological storyboard sheet following the specified board canvas and per-panel ratios. "
+                "Use only hairline-thin neutral separators between edge-to-edge panels. Do not add panel numbers, labels, "
+                "captions, title bands, outer frames or large blank gutters; no panel may contain legible text."
+            )
         else:
             prompt += "\nOutput ONE undivided vertical 9:16 scene photograph. Never reproduce reference panel borders, labels or layout."
         if destination.name.endswith("-end.png"):
@@ -389,7 +447,10 @@ def generate_image_file(
             expected["type"] = "chronological_storyboard"
             expected["grid_spec"] = storyboard_spec(variant)
             expected["image_size"] = args.size
-            expected["image_aspect_ratio"] = resolve_image_aspect_ratio(args)
+            expected["image_aspect_ratio"] = str(
+                getattr(args, "storyboard_target_aspect_ratio", resolve_image_aspect_ratio(args))
+            )
+            expected["provider_aspect_ratio"] = resolve_image_aspect_ratio(args)
             expected["timeline_sha256"] = hashlib.sha256(
                 json.dumps(timeline, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
             ).hexdigest()
@@ -467,6 +528,8 @@ def generate_image_file(
     if scene_v2:
         if not saved_path:
             raise RuntimeError("Image2 response did not contain a saved scene frame")
+        if storyboard_v2:
+            normalize_storyboard_canvas(destination, storyboard_spec(variant))
         write_json(provenance, {**expected, "sha256": v2.digest(destination)})
     return {
         "variant_id": variant_id,
@@ -496,7 +559,14 @@ def generate_one_image(
         if requested not in ("auto", spec["boardLayoutRatio"]):
             raise RuntimeError("Image aspect ratio conflicts with storyboard grid geometry")
         args.size = spec["size"]
-        args.image_aspect_ratio = spec["boardLayoutRatio"]
+        # The storyboard sheet must use its mathematical grid ratio. For six
+        # portrait 9:16 cells in a 2x3 layout this is 3:8; never substitute the final video
+        # ratio 9:16, which stretches the six-panel sheet.
+        # upDrama's aspect enum has no 3:8 entry. 9:21 is the nearest
+        # supported transport ratio to the mathematical six-panel board ratio
+        # 3:8; the storyboard prompt still preserves the per-panel 9:16 rule.
+        args.image_aspect_ratio = "9:21" if spec["panel_count"] == 6 else "9:16"
+        args.storyboard_target_aspect_ratio = spec["boardLayoutRatio"]
         destination = product_dir / "generated_images" / f"variant-{variant_id:02d}-storyboard.png"
         prompt = build_storyboard_prompt(variant, product_name)
         references = storyboard_references(product_dir, variant, max(1, args.max_reference_images))

@@ -204,7 +204,49 @@ def guess_mime(path: Path) -> str:
     return guessed_mime or "application/octet-stream"
 
 
+# Reference images travel inline as base64. Full-resolution reference sheets are
+# multi-megabyte PNGs, and the upstream HTTP path fails on large bodies (a 3 MB
+# upload stalls while a 1 MB upload succeeds). Oversized references are therefore
+# downscaled for transport only: the on-disk canonical artifact and its recorded
+# hash are never modified, so provenance and QC stay valid.
+INLINE_MAX_BYTES = 700_000
+INLINE_MAX_EDGE = 1400
+INLINE_JPEG_QUALITY = 88
+
+
+def inlined_image_bytes(path: Path) -> bytes | None:
+    """Return a transport-sized encoding, or None to send the original bytes."""
+    if path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
+        return None
+    try:
+        if path.stat().st_size <= INLINE_MAX_BYTES:
+            return None
+        import io
+
+        from PIL import Image
+
+        with Image.open(path) as opened:
+            frame = opened.convert("RGB")
+            frame.thumbnail((INLINE_MAX_EDGE, INLINE_MAX_EDGE), Image.LANCZOS)
+            buffer = io.BytesIO()
+            frame.save(buffer, format="JPEG", quality=INLINE_JPEG_QUALITY, optimize=True)
+            payload = buffer.getvalue()
+    except Exception:
+        return None
+    if not payload:
+        return None
+    print(
+        f"[inline-shrink] {path.name}: {path.stat().st_size} -> {len(payload)} bytes for transport",
+        flush=True,
+    )
+    return payload
+
+
 def data_url(path: Path) -> str:
+    payload = inlined_image_bytes(path)
+    if payload is not None:
+        encoded = base64.b64encode(payload).decode("ascii")
+        return f"data:image/jpeg;base64,{encoded}"
     encoded = base64.b64encode(path.read_bytes()).decode("ascii")
     return f"data:{guess_mime(path)};base64,{encoded}"
 
