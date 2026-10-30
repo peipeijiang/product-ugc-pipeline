@@ -66,16 +66,34 @@ The target market is a required input, not an assumption. Spoken language, creat
 
 Supported locales live in `scripts/voice_locale.py`. Add a locale there instead of letting an unknown value fall back to English.
 
+## Agent-native vision
+
+Product-image analysis, the product brief and image QC are done by the multimodal model already running this agent. No external vision or chat API and no API key are used for these steps.
+
+Each step is two passes of the same command:
+
+1. The script writes a task file listing the exact local images (with SHA-256), the instructions and the required JSON fields, then exits with code 3 (`agent-review-pending`).
+2. Open every listed image yourself, write the answer file next to the task and copy the task's `task_sha256` into it.
+3. Rerun the command. It validates full coverage, enums and evidence, then writes the final artifact.
+
+| Step | Task | Answer | Final artifact |
+|---|---|---|---|
+| Per-image analysis | `analysis/image_analysis.task.json` | `analysis/image_analysis.answer.json` | `image_analysis.json`, `materials.md` |
+| Product brief | `analysis/product_brief.task.json` | `analysis/product_brief.answer.json` | `product_brief.json` |
+| Identity/usage/storyboard/video QC | `qc/agent/<stage>/<target>/task.json` | `qc/agent/<stage>/<target>/answer.json` | `qc/<stage>.json` |
+
+Describe only what is visible in the images. A missing, partial or stale answer (wrong `task_sha256`) never passes. Never write an answer without actually looking at every listed image.
+
 ## Required workflow
 
 1. Put product URLs in a text file, one URL per line.
 2. Extract the complete offer asset set with `scripts/scrape_products.py` or the authenticated browser route required by the page.
-3. Analyze every downloaded image and write `image_analysis.json`.
-4. Build `product_brief.json` with `scripts/build_product_brief.py`.
+3. Analyze every downloaded image yourself with `scripts/analyze_materials.py` (agent-native vision) and finalize `image_analysis.json`.
+4. Write and finalize `product_brief.json` with `scripts/build_product_brief.py` (agent-native).
 5. Classify the product with `scripts/classify_product_category.py`.
 6. Generate one product identity grid with `scripts/generate_product_identity_lock.py`.
 7. Generate the source-backed usage ledger with `scripts/generate_usage_pose_sheet.py`. Products that fold, assemble, install, attach, extend, open or otherwise change configuration also require an operation grid.
-8. Run identity and operation-grid QC with `scripts/qc_dual_consistency.py`.
+8. Run identity and operation-grid QC with `scripts/qc_dual_consistency.py` (agent-native review).
 9. Generate UGC variants with `scripts/generate_ugc_prompts.py --target-video-model omni-flash`.
 10. Generate one chronological storyboard sheet per variant with `scripts/generate_images.py --storyboards`.
 11. Run storyboard QC. Never submit a paid video from a missing, stale or failed storyboard.
@@ -162,12 +180,12 @@ Do not fabricate JSON outputs or manually mark QC as passed to keep a batch movi
 
 ```bash
 python scripts/scrape_products.py urls.txt --out product-ugc-output
-LAOZHANG_API_KEY=sk-... python scripts/analyze_materials.py product-ugc-output --limit-images 0
-LAOZHANG_API_KEY=sk-... python scripts/build_product_brief.py product-ugc-output
+python scripts/analyze_materials.py product-ugc-output      # writes task → agent answers → rerun
+python scripts/build_product_brief.py product-ugc-output    # writes task → agent answers → rerun
 python scripts/classify_product_category.py product-ugc-output
 LK888_API_KEY=sk-... python scripts/generate_product_identity_lock.py product-ugc-output
 python scripts/generate_usage_pose_sheet.py product-ugc-output
-LAOZHANG_API_KEY=sk-... python scripts/qc_dual_consistency.py product-ugc-output --stage identity
+python scripts/qc_dual_consistency.py product-ugc-output --stage identity   # agent-native review
 LAOZHANG_API_KEY=sk-... python scripts/generate_ugc_prompts.py product-ugc-output --count 10 --target-video-model omni-flash --market Japan
 LK888_API_KEY=sk-... python scripts/generate_images.py product-ugc-output --variants 1-10 --storyboards
 LK888_API_KEY=sk-... python scripts/generate_videos_lk888.py product-ugc-output --variants 1-10 --model omni-flash --base-url https://api.lk888.ai --status-endpoint /v1/media/status --reference-mode omni-reference

@@ -13,13 +13,14 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from PIL import Image
 from common import load_json, write_json, selected_product_dirs
-from build_product_brief import assert_full_image_coverage, build_with_model
+from build_product_brief import assert_full_image_coverage, brief_instructions
 from generate_product_identity_lock import generate, parser
 from generate_usage_pose_sheet import generate as usage
 from generate_images import generate_image_file, generate_one_image, storyboard_references
 from generate_videos_lk888 import omni_storyboard_identity_paths, require_chronological_storyboard
 from classify_product_category import classify_by_keywords, classify_product
-from qc_dual_consistency import CHECKS, verdict, review, targets
+from qc_dual_consistency import CHECKS, verdict, review, targets, packet_dir
+from agent_vision import AgentReviewPending
 from v2_contract import (SPECS, action_ledger, check_existing_video, digest, hashes,
                          category_spec, context, load_identity, record_video, require_qc, validate_scene_chain,
                          validate_video_chain, video_contract, needs_state_change_contract,
@@ -343,18 +344,32 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             verdict({"checks": {"identity": checks["identity"]}})
 
-    def test_real_vision_payload_contains_sources_and_target(self):
+    def answer_agent_task(self, folder, stage, target, result):
+        task = load_json(packet_dir(folder, stage, target) / "task.json")
+        write_json(packet_dir(folder, stage, target) / "answer.json",
+                   {"task_sha256": task["task_sha256"], "result": result})
+        return task
+
+    def test_agent_vision_task_lists_sources_and_target(self):
         import json
         folder, args = self.setup_identity()
         args.stage, args.samples = "identity", 8
-        args.image_max_edge = 1400
-        response = {"choices": [{"message": {"content": json.dumps({"checks": {
-            name: {"status": "pass", "evidence": "test observation"} for name in CHECKS}})}}]}
-        with patch("qc_dual_consistency.request_json", return_value=response) as api:
-            result = review(folder, folder / "identity_lock/reference_sheet.png", load_identity(folder), "test", args)
-        content = api.call_args.args[2]["messages"][1]["content"]
-        self.assertEqual(len([c for c in content if c["type"] == "image_url"]), 2)
+        target = folder / "identity_lock/reference_sheet.png"
+        with self.assertRaises(AgentReviewPending):
+            review(folder, target, load_identity(folder), args)
+        task = self.answer_agent_task(folder, "identity", target, {"checks": {
+            name: {"status": "pass", "evidence": "test observation"} for name in CHECKS}})
+        self.assertEqual(len(task["visuals"]), 2)
+        self.assertEqual(task["reviewer"], "agent_multimodal_model")
+        result = review(folder, target, load_identity(folder), args)
         self.assertEqual(result["status"], "pass")
+        # An answer bound to a different task hash is stale and never passes.
+        answer_path = packet_dir(folder, "identity", target) / "answer.json"
+        stale = load_json(answer_path)
+        stale["task_sha256"] = "0" * 64
+        write_json(answer_path, stale)
+        with self.assertRaises(AgentReviewPending):
+            review(folder, target, load_identity(folder), args)
 
     def test_legacy_scene_frames_cannot_be_submitted(self):
         folder, args = self.setup_identity()
@@ -410,11 +425,36 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "extraction audit"):
             assert_full_image_coverage(folder, manifest, analysis)
 
+    def test_agent_image_analysis_requires_full_bound_answer(self):
+        from analyze_materials import analyze_product_dir
+        folder = self.fixture("electronics")
+        manifest = load_json(folder / "product_manifest.json")
+        manifest["source_url"] = "https://example.invalid/offer"
+        manifest["images"][0]["quality"] = {"usable_product_material": True}
+        write_json(folder / "product_manifest.json", manifest)
+        with self.assertRaises(AgentReviewPending):
+            analyze_product_dir(folder)
+        task = load_json(folder / "analysis/image_analysis.task.json")
+        self.assertEqual([item["local_path"] for item in task["items"]], ["images/source.png"])
+        analysis = {"is_product_related": True, "visual_summary": "red square product", "product_identity_details": "red",
+                    "full_product_visibility": "full_product", "reference_role": "canonical_full_product",
+                    "use_mechanics_visible": [], "inferred_use_mechanics": "unknown", "scene_context": "studio",
+                    "core_function_shown": "none", "ugc_usefulness_score": 5, "best_use": "hero_reference",
+                    "prompt_risks": "none", "preservation_warnings": "keep red"}
+        answer_path = folder / "analysis/image_analysis.answer.json"
+        write_json(answer_path, {"task_sha256": task["task_sha256"], "images": []})
+        with self.assertRaisesRegex(RuntimeError, "coverage failed"):
+            analyze_product_dir(folder)
+        write_json(answer_path, {"task_sha256": task["task_sha256"],
+                                 "images": [{"local_path": "images/source.png", "analysis": analysis}]})
+        analyze_product_dir(folder)
+        result = load_json(folder / "image_analysis.json")
+        self.assertEqual(result["analysis_policy"]["reviewer"], "agent_multimodal_model")
+        self.assertTrue(result["analysis_policy"]["full_coverage"])
+        self.assertEqual(result["images"][0]["analysis"]["best_use"], "hero_reference")
+
     def test_product_brief_requests_factorized_multimodal_classification(self):
-        response = {"choices": [{"message": {"content": '{"product_name":"test"}'}}]}
-        with patch("build_product_brief.request_json", return_value=response) as request:
-            build_with_model("key", {"product_name": "test"}, {"images": []}, "model", "https://example.invalid", 30)
-        prompt = request.call_args.args[2]["messages"][1]["content"]
+        prompt = brief_instructions()
         self.assertIn("catalog_taxonomy", prompt)
         self.assertIn("production_classification", prompt)
         self.assertIn("physical_traits", prompt)
@@ -504,21 +544,20 @@ class PipelineTests(unittest.TestCase):
         timeline = self.approve_storyboard_fixture(folder, target)
         write_json(folder / "ugc_prompts.json", {"variants": [{"variant_id": 1, "storyboard_10s": timeline}]})
         args.stage = "storyboards"
-        args.image_max_edge = 2048
         payload = {"checks": {k: {"status": "pass", "evidence": "offline fixture"} for k in CHECKS},
                    "storyboard_review": {"panel_count": 6, "chronological": True,
                      "singleton_per_panel": True, "visual_alignment": True, "layout_matches": True,
                      "evidence": ["offline synthetic panel observations"]}}
-        def response():
-            return {"choices": [{"message": {"content": json.dumps(payload)}}]}
-        with patch("qc_dual_consistency.request_json", return_value=response()):
-            result = review(folder, target, load_identity(folder), "test", args)
+        with self.assertRaises(AgentReviewPending):
+            review(folder, target, load_identity(folder), args)
+        self.answer_agent_task(folder, "storyboards", target, payload)
+        result = review(folder, target, load_identity(folder), args)
         self.assertEqual(result["status"], "pass")
         write_json(folder / "qc/storyboards" / f"{target.stem}.json", result)
         require_chronological_storyboard(folder, target, {"storyboard_10s": timeline})
         payload.pop("storyboard_review")
-        with patch("qc_dual_consistency.request_json", return_value=response()):
-            result = review(folder, target, load_identity(folder), "test", args)
+        self.answer_agent_task(folder, "storyboards", target, payload)
+        result = review(folder, target, load_identity(folder), args)
         self.assertEqual(result["status"], "needs_review")
 
     def test_classifier_routes_broad_families_before_multimodal_cognition(self):

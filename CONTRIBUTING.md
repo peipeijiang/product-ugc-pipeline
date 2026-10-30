@@ -8,7 +8,7 @@ Thank you for your interest in contributing! This document provides guidelines f
 
 - Python 3.8 or higher
 - Git
-- API keys for LaoZhang and LK888 (for full pipeline testing)
+- An LK888 API key for paid image/video steps (image analysis and QC are agent-native and need no key)
 
 ### Setup Development Environment
 

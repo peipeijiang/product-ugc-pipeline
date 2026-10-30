@@ -1,6 +1,6 @@
 # LaoZhang image and chat fallback notes
 
-LaoZhang is used only for prompt-writing or the OpenAI-compatible image fallback. It is not a video route in this skill.
+LaoZhang is used only by the legacy standalone prompt writer (`generate_ugc_prompts.py`) and the OpenAI-compatible image-generation fallback. It is not a video route, and it is never used for product-image analysis, the product brief or QC: those are done by the agent's own multimodal model (see "Agent-native vision" in SKILL.md).
 
 ## Base configuration
 

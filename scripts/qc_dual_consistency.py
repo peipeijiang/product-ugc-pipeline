@@ -1,44 +1,39 @@
 #!/usr/bin/env python3
-"""Evidence-grounded vision QC. Unknown/failed checks never count as a pass."""
+"""Evidence-grounded vision QC performed by the agent's own multimodal model.
+
+No external vision API is called. For each target the first run writes
+qc/agent/<stage>/<target>/task.json (prompt, labelled local visuals, hashes). The agent
+opens every listed visual, writes answer.json next to it, and a second run validates
+the verdict. Unknown/failed checks never count as a pass.
+"""
 from __future__ import annotations
 
 import argparse
 import hashlib
 import concurrent.futures
-import io
 import json
-import base64
 import subprocess
-import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
-from common import data_url, load_json, request_json, require_api_key_for_base_url, write_json
+from agent_vision import PENDING_EXIT_CODE, AgentReviewPending, file_sha256, load_answer, write_task
+from common import load_json, write_json
 from generate_images import parse_variants
-from generate_ugc_prompts import parse_json_text
 from v2_contract import RULES, category_spec, digest, hashes, load_identity, load_usage, local_file, products
 
 CHECKS = ("identity", "scale", "placement", "operation", "continuity", "category_specific")
+SYSTEM_PROMPT = "You are a critical product-fidelity reviewer. Look at every listed image yourself and answer in JSON only."
 
 
-def review_data_url(path: Path, max_edge: int) -> str:
-    """Encode a QC visual as a bounded JPEG data URL.
+def packet_dir(folder: Path, stage: str, target: Path) -> Path:
+    return folder / "qc" / "agent" / stage / target.stem
 
-    Generated references (storyboards, identity grids) are lossless PNGs of
-    8-12 MB. The review endpoint rejects those payloads outright with HTTP 400,
-    so the review would silently degrade into "every target errored". QC judges
-    visible structure, not pixel-exact colour, so a bounded high-quality JPEG is
-    sufficient and is what the endpoint accepts.
-    """
-    from PIL import Image
 
-    with Image.open(path) as image:
-        image = image.convert("RGB")
-        if max_edge > 0 and max(image.size) > max_edge:
-            scale = max_edge / max(image.size)
-            image = image.resize((max(1, round(image.width * scale)), max(1, round(image.height * scale))), Image.LANCZOS)
-        buffer = io.BytesIO()
-        image.save(buffer, "JPEG", quality=88)
-    return "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+@contextmanager
+def review_packet(folder: Path, stage: str, target: Path):
+    path = packet_dir(folder, stage, target)
+    path.mkdir(parents=True, exist_ok=True)
+    yield str(path)
 
 
 def normalize_checks(output: dict) -> dict:
@@ -123,7 +118,7 @@ def video_frames(video: Path, destination: Path, count: int) -> tuple[list[Path]
     return frames, times
 
 
-def review(folder: Path, target: Path, identity: dict, key: str, args) -> dict:
+def review(folder: Path, target: Path, identity: dict, args) -> dict:
     brief = load_json(folder / "product_brief.json", {})
     # Identity QC with 19-image manifests and 9KB briefs exceeds connection limits.
     # Slim the brief to core identity + risks only; analysis is redundant with the real photos.
@@ -195,10 +190,12 @@ def review(folder: Path, target: Path, identity: dict, key: str, args) -> dict:
             from v2_contract import validate_video_chain
             validate_video_chain(folder, target)
             dependencies.append(target.with_suffix(".provenance.json"))
-    with tempfile.TemporaryDirectory(prefix="ugc-qc-") as temp:
+    with review_packet(folder, args.stage, target) as temp:
         times = []
         if args.stage == "videos":
-            frames, times = video_frames(target, Path(temp), args.samples)
+            frame_dir = Path(temp) / "frames"
+            frame_dir.mkdir(exist_ok=True)
+            frames, times = video_frames(target, frame_dir, args.samples)
             visuals += [(f"VIDEO TARGET at {t:.3f}s", path) for t, path in zip(times, frames)]
         else:
             visuals.append(("TARGET under review", target))
@@ -277,27 +274,33 @@ def review(folder: Path, target: Path, identity: dict, key: str, args) -> dict:
                   + category_spec(identity["category"], identity.get("physical_traits"))["checks"]
                   + "\nProduct brief: " + json.dumps(slim_brief, ensure_ascii=False)
                   + "\nVariant storyboard for this target: " + json.dumps(review_variant, ensure_ascii=False))
-        content = [{"type": "text", "text": prompt}]
-        for label, path in visuals:
-            content.extend([{"type": "text", "text": label},
-                            {"type": "image_url", "image_url": {"url": review_data_url(path, args.image_max_edge)}}])
-        response = request_json("/chat/completions", key, {"model": args.model, "messages": [
-            {"role": "system", "content": "You are a critical product-fidelity reviewer. Return JSON only."},
-            {"role": "user", "content": content}], "response_format": {"type": "json_object"}},
-            base_url=args.base_url, timeout=args.timeout)
-        result = parse_json_text(response["choices"][0]["message"]["content"], "dual consistency QC")
+        task_path = Path(temp) / "task.json"
+        answer_path = Path(temp) / "answer.json"
+        task_hash = write_task(task_path, {
+            "kind": f"qc_{args.stage}",
+            "reviewer": "agent_multimodal_model",
+            "target": str(target.relative_to(folder)),
+            "target_sha256": digest(target),
+            "system": SYSTEM_PROMPT,
+            "instructions": prompt,
+            "visuals": [
+                {"label": label, "absolute_path": str(Path(path).resolve()),
+                 **({} if args.stage == "videos" and str(label).startswith("VIDEO TARGET") else {"sha256": file_sha256(Path(path))})}
+                for label, path in visuals
+            ],
+            "answer_format": '{"task_sha256": <copy from task>, "result": {"checks": {...}, "corrections": [...]'
+                             + (', "storyboard_review": {...}' if args.stage == "storyboards" else "") + "}}",
+        })
+        result = load_answer(task_path, answer_path, task_hash).get("result")
+        if not isinstance(result, dict):
+            raise RuntimeError(f"{answer_path}: result must be an object")
         if set(result.get("checks", {})) != set(CHECKS):
             result = {**result, "checks": normalize_checks(result)}
-        if set(result.get("checks", {})) != set(CHECKS):
-            # Surface what the model actually returned; a silent shape mismatch is
-            # otherwise indistinguishable from a transport failure.
-            Path("/tmp/qc_last_bad_response.json").write_text(
-                json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
-            )
     record = {"path": str(target.relative_to(folder)), "sha256": digest(target), "status": verdict(result),
             "checks": normalize_checks(result), "corrections": result.get("corrections", []),
             "dependencies": hashes(folder, dependencies), "sample_timestamps": times,
-            "scope": "sampled_video_frames" if times else "still_image"}
+            "scope": "sampled_video_frames" if times else "still_image",
+            "reviewer": "agent_multimodal_model", "agent_task_sha256": task_hash}
     if args.stage == "storyboards":
         observation = result.get("storyboard_review") or {}
         expected_count = review_variant["grid_spec"]["panel_count"]
@@ -323,7 +326,7 @@ def review(folder: Path, target: Path, identity: dict, key: str, args) -> dict:
             elif (type(observation.get("panel_count")) is not int or any(observation.get(k) is not True for k in flags)
                   or not isinstance(observation.get("evidence"), list) or not observation["evidence"]):
                 record["status"] = "needs_review"
-        record.update(timeline_sha256=timeline_hash, grid_spec=review_variant["grid_spec"], reviewer=args.model)
+        record.update(timeline_sha256=timeline_hash, grid_spec=review_variant["grid_spec"])
     return record
 
 
@@ -355,28 +358,21 @@ def main():
     p.add_argument("--stage", choices=["identity", "usage", "storyboards", "videos"], default="storyboards")
     p.add_argument("--variants", default="1")
     p.add_argument("--prompts-file", default="ugc_prompts.json", help="Storyboard/prompt JSON used for the selected generated frames or videos")
-    p.add_argument("--model", default="gpt-5.2")
-    p.add_argument("--base-url", default="https://api.laozhang.ai/v1")
-    p.add_argument("--timeout", type=int, default=180)
-    p.add_argument("--retries", type=int, default=2, help="Retry transient provider or malformed-review responses")
     p.add_argument("--samples", type=int, default=8)
     p.add_argument("--report", type=Path)
     p.add_argument("--target", action="append", default=[],
                    help="Explicit product-relative target path for storyboard QC, e.g. generated_images/variant-03-storyboard.png. May be repeated.")
     p.add_argument("--merge-existing", action="store_true", help="Replace selected target verdicts while preserving other targets in the stage report")
     p.add_argument("--workers", type=int, default=1, help="Review independent targets concurrently.")
-    p.add_argument("--image-max-edge", type=int, default=2048,
-                   help="Downscale QC visuals to this longest edge before sending (0 keeps full size). Review endpoints reject 8-12 MB PNG payloads.")
     args = p.parse_args()
     if not 2 <= args.samples <= 32:
         p.error("--samples must be 2..32")
-    key = require_api_key_for_base_url(args.base_url)
     reports = []
     for folder in products(args.output_dir, args.products):
         identity = load_identity(folder)
         report_path = folder / "qc" / f"{args.stage}.json"
-        report = {"product": folder.name, "stage": args.stage, "model": args.model,
-                  "base_url": args.base_url, "identity_sha256": identity["sha256"], "results": []}
+        report = {"product": folder.name, "stage": args.stage, "reviewer": "agent_multimodal_model",
+                  "identity_sha256": identity["sha256"], "results": []}
         if args.merge_existing:
             existing = load_json(report_path, {})
             if (existing.get("product"), existing.get("stage"), existing.get("identity_sha256")) == (
@@ -394,15 +390,13 @@ def main():
         report["results"] = [item for item in report["results"] if item.get("path") not in selected_paths]
         write_json(report_path, report)
         def review_with_retries(target: Path) -> dict:
-            for attempt in range(args.retries + 1):
-                try:
-                    result = review(folder, target, identity, key, args)
-                    break
-                except Exception as error:
-                    result = {"path": str(target.relative_to(folder)), "status": "error", "error": str(error)}
-                    if attempt == args.retries:
-                        break
-            return result
+            try:
+                return review(folder, target, identity, args)
+            except AgentReviewPending as waiting:
+                return {"path": str(target.relative_to(folder)), "status": "pending_agent_review",
+                        "task": str(waiting.task_path), "answer": str(waiting.answer_path), "error": str(waiting)}
+            except Exception as error:
+                return {"path": str(target.relative_to(folder)), "status": "error", "error": str(error)}
 
         workers = max(1, min(args.workers, len(selected_targets) or 1))
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
@@ -428,8 +422,12 @@ def main():
         reports.append(report)
     if args.report:
         write_json(args.report, {"products": reports})
-    if any(item["status"] != "pass" for report in reports for item in report["results"]):
+    statuses = [item["status"] for report in reports for item in report["results"]]
+    if any(status not in {"pass", "pending_agent_review"} for status in statuses):
         raise SystemExit(2)
+    if "pending_agent_review" in statuses:
+        print("[qc] agent review pending: open each qc/agent/<stage>/<target>/task.json, write answer.json, rerun.", flush=True)
+        raise SystemExit(PENDING_EXIT_CODE)
 
 
 if __name__ == "__main__":

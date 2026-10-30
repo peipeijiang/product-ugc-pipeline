@@ -96,7 +96,7 @@ def assert_ready_for_fresh_batch(output_dir: Path, products: str) -> None:
         if failed:
             raise RuntimeError(
                 f"{product_dir.name}: image_analysis.json contains failed visual model outputs for {failed}. "
-                "Rerun analyze_materials with a working vision model before generating prompts/images/videos."
+                "Rerun analyze_materials and complete the agent image-analysis answer before generating prompts/images/videos."
             )
         product_brief = load_json(product_dir / "product_brief.json", {})
         required = ["confirmed_identity", "confirmed_use_cases", "step_by_step_usage", "misuse_risks_to_avoid"]

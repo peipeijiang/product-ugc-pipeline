@@ -2,6 +2,8 @@
 
 A product-faithful ecommerce UGC pipeline for complete source extraction, visual cognition, identity locking, creative risk routing, chronological storyboard references, Omni Flash video generation, and QC.
 
+Product-image analysis, the product brief and image QC are done directly by the current agent's multimodal model; no external vision API or extra key is used. Scripts write a task file listing local images and hashes, the agent answers after looking at them, and a rerun validates coverage and writes the result.
+
 ## Single production video route
 
 - Model: `omni-flash` or `omni_flash-10s`
