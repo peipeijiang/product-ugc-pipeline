@@ -11,7 +11,6 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-import uuid
 from pathlib import Path
 from typing import Any
 
@@ -24,13 +23,12 @@ for _environment_key in list(os.environ):
         os.environ.pop(_environment_key, None)
 
 
-DEFAULT_BASE_URL = "https://api.laozhang.ai/v1"
-
 # upDrama / 链路图像与视频媒体任务端点。这一族使用 /v1/media/generate 创建任务、
-# /v1/media/status?task_id= 轮询，与 OpenAI 兼容的 /images/* 协议不同。
+# /v1/media/status?task_id= 轮询。这是脚本唯一的付费生成路由。
 LK888_BASE_URL = "https://api.lk888.ai"
 LK888_IMAGE_MODEL = "tt-image-2.5"
 LK888_IMAGE_FALLBACK_MODEL = "tt-image-2"
+DEFAULT_BASE_URL = LK888_BASE_URL
 
 
 def slugify(value: str, fallback: str = "product") -> str:
@@ -251,59 +249,12 @@ def data_url(path: Path) -> str:
     return f"data:{guess_mime(path)};base64,{encoded}"
 
 
-def multipart_request(
-    endpoint: str,
-    api_key: str,
-    fields: dict[str, str],
-    files: list[tuple[str, Path]],
-    base_url: str = DEFAULT_BASE_URL,
-    timeout: int = 180,
-) -> dict[str, Any]:
-    boundary = f"----codex-product-ugc-{uuid.uuid4().hex}"
-    chunks: list[bytes] = []
-    for field_name, field_value in fields.items():
-        chunks.append(f"--{boundary}\r\n".encode("utf-8"))
-        chunks.append(f'Content-Disposition: form-data; name="{field_name}"\r\n\r\n'.encode("utf-8"))
-        chunks.append(str(field_value).encode("utf-8"))
-        chunks.append(b"\r\n")
-    for field_name, file_path in files:
-        mime_type = guess_mime(file_path)
-        safe_name = file_path.name.replace('"', "")
-        chunks.append(f"--{boundary}\r\n".encode("utf-8"))
-        chunks.append(
-            (
-                f'Content-Disposition: form-data; name="{field_name}"; filename="{safe_name}"\r\n'
-                f"Content-Type: {mime_type}\r\n\r\n"
-            ).encode("utf-8")
-        )
-        chunks.append(file_path.read_bytes())
-        chunks.append(b"\r\n")
-    chunks.append(f"--{boundary}--\r\n".encode("utf-8"))
-    body = b"".join(chunks)
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": f"multipart/form-data; boundary={boundary}",
-    }
-    url = endpoint if endpoint.startswith("http") else f"{base_url.rstrip('/')}/{endpoint.lstrip('/')}"
-    _, _, response_body = http_request(url, method="POST", headers=headers, data=body, timeout=timeout)
-    return json.loads(response_body.decode("utf-8"))
-
-
-def require_api_key() -> str:
-    api_key = os.environ.get("LAOZHANG_API_KEY", "").strip()
-    if not api_key:
-        raise SystemExit("Missing LAOZHANG_API_KEY. Export it before running this script.")
-    return api_key
-
-
 def require_api_key_for_base_url(base_url: str) -> str:
     lowered = (base_url or "").lower()
     if "lk888" in lowered or "lk666" in lowered or "updrama" in lowered:
         env_names = ("LK888_API_KEY", "UPDRAMA_API_KEY", "PRODUCT_UGC_API_KEY")
-    elif "laozhang" in lowered:
-        env_names = ("LAOZHANG_API_KEY", "PRODUCT_UGC_API_KEY")
     else:
-        env_names = ("PRODUCT_UGC_API_KEY", "LAOZHANG_API_KEY", "LK888_API_KEY", "UPDRAMA_API_KEY")
+        env_names = ("PRODUCT_UGC_API_KEY", "LK888_API_KEY", "UPDRAMA_API_KEY")
     for env_name in env_names:
         api_key = os.environ.get(env_name, "").strip()
         if api_key:
@@ -364,29 +315,6 @@ def image_quality_metadata(path: Path) -> dict[str, Any]:
         }
     except Exception as error:
         return {"usable_product_material": True, "quality_error": str(error)}
-
-
-def save_response_image(response: dict[str, Any], destination: Path) -> Path | None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    data_items = response.get("data") or []
-    if data_items:
-        first_item = data_items[0]
-        base64_value = first_item.get("b64_json")
-        if base64_value:
-            if base64_value.startswith("data:"):
-                base64_value = base64_value.split(",", 1)[1]
-            destination.write_bytes(base64.b64decode(base64_value))
-            return destination
-        image_url = first_item.get("url")
-        if image_url and download_binary(image_url, destination):
-            return destination
-    content = (((response.get("choices") or [{}])[0].get("message") or {}).get("content") or "")
-    match = re.search(r"!\[[^\]]*]\((https?://[^)\s]+)\)", content)
-    if not match:
-        match = re.search(r"(https?://\S+\.(?:png|jpe?g|webp)(?:\?\S+)?)", content, flags=re.IGNORECASE)
-    if match and download_binary(match.group(1), destination):
-        return destination
-    return None
 
 
 def sleep_with_status(seconds: int, label: str) -> None:

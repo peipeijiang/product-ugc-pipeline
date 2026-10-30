@@ -2,7 +2,7 @@
 
 面向电商商品的 UGC 视频生产链路：完整抓取商品素材、逐图视觉分析、商品认知、身份锁、创意风险路由、时间顺序故事板、Omni Flash 全参考视频与 QC。
 
-商品图分析、商品简报和图片 QC 都由当前 Agent 的多模态大模型直接看图完成，不调用外部视觉 API，也不需要额外密钥。脚本先写任务单（列出本地图片和哈希），Agent 看图后写答案文件，再次运行脚本校验覆盖率并生成结果。
+商品图分析、商品简报、UGC 提示词和图片 QC 都由当前 Agent 的多模态大模型直接完成，不调用外部视觉或对话 API，也不需要额外密钥。脚本先写任务单（列出本地图片和哈希），Agent 看图后写答案文件，再次运行脚本校验覆盖率并生成结果。付费的生图和视频只走 LK888：生图默认 `tt-image-2.5`，失败时自动改用 `tt-image-2`。
 
 ## 唯一默认视频路径
 
@@ -25,7 +25,7 @@ python scripts/classify_product_category.py product-ugc-output
 LK888_API_KEY=sk-... python scripts/generate_product_identity_lock.py product-ugc-output
 python scripts/generate_usage_pose_sheet.py product-ugc-output
 python scripts/qc_dual_consistency.py product-ugc-output --stage identity   # Agent 看图审查
-LAOZHANG_API_KEY=sk-... python scripts/generate_ugc_prompts.py product-ugc-output --count 10 --target-video-model omni-flash --market Japan
+python scripts/generate_ugc_prompts.py product-ugc-output --count 10 --target-video-model omni-flash --market Japan   # 写任务单 → Agent 作答 → 再运行
 LK888_API_KEY=sk-... python scripts/generate_images.py product-ugc-output --variants 1-10 --storyboards
 LK888_API_KEY=sk-... python scripts/generate_videos_lk888.py product-ugc-output --variants 1-10 --model omni-flash --base-url https://api.lk888.ai --status-endpoint /v1/media/status --reference-mode omni-reference
 ```

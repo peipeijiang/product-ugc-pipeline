@@ -13,9 +13,8 @@ changing any image-generation call.
 |---|---|---|---|
 | 1 | `tt-image-2.5` (default) | upDrama media task | `tt-image-2.5` |
 | 2 | `tt-image-2` | upDrama media task | `tt-image-2` |
-| 3 | `laozhang-image2` | OpenAI-compatible Images | `--model` (default `gpt-image-2-vip`) |
 
-Steps 2 and 3 run automatically when step 1 raises. Pass
+Step 2 runs automatically when step 1 raises; there is no other image vendor. Pass
 `--image-fallback none` to disable the chain and fail on the primary provider
 alone. Each frame records `image_provider` and `provider_fallbacks` in
 `generated_images/image_generation_results.json`.
@@ -46,21 +45,13 @@ success/failure. `status` and `status_group` are Chinese display strings and
 must not drive business logic. A failed task is refunded automatically.
 
 To keep aspect ratio and resolution independent, do not also send `size`;
-`size` is only for the fallback route.
-
-## OpenAI-compatible fallback route
-
-`POST /images/edits` with multipart files when references exist, otherwise
-`POST /images/generations`. One reference uses the `image` field; two or more
-must use `image[]`. Base URL defaults to `https://api.laozhang.ai/v1` and the
-model to `gpt-image-2-vip`.
+the canvas ratio travels as `aspect_ratio`.
 
 ## Keys
 
-`LK888_API_KEY` or `UPDRAMA_API_KEY` is required for the media route;
-`LAOZHANG_API_KEY` for the fallback. `require_api_key_for_base_url()` picks
-the right variable from the base URL, and all HTTP calls bypass system and
-environment proxies on purpose.
+`LK888_API_KEY` or `UPDRAMA_API_KEY` is the only key, used for image and
+video tasks. `require_api_key_for_base_url()` picks it from the base URL, and
+all HTTP calls bypass system and environment proxies on purpose.
 
 ## When both script routes are unavailable
 

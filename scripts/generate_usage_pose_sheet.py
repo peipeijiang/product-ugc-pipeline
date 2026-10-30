@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from common import require_api_key_for_base_url, write_json
-from generate_images import generate_image_file, is_media_image_provider
+from generate_images import generate_image_file
 from generate_product_identity_lock import parser
 from v2_contract import (RULES, action_ledger, context, digest, load_identity, local_file,
                          products, state_change_contract, state_change_panel_plan)
@@ -98,8 +98,7 @@ def main():
             if state_change_contract(brief):
                 needs_paid_image = True
                 break
-    primary_url = args.image_base_url if is_media_image_provider(args.image_provider) else args.base_url
-    key = require_api_key_for_base_url(primary_url) if needs_paid_image else ""
+    key = require_api_key_for_base_url(args.image_base_url) if needs_paid_image else ""
     for folder in selected:
         print(f"[usage] {folder.name}: {generate(folder, key, args)['mode']}")
 

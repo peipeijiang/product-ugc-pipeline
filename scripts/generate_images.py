@@ -16,10 +16,8 @@ from common import (
     data_url,
     download_binary,
     load_json,
-    multipart_request,
     request_json,
     require_api_key_for_base_url,
-    save_response_image,
     selected_product_dirs,
     write_json,
 )
@@ -28,13 +26,12 @@ from storyboard_contract import storyboard_panel_visual, storyboard_spec
 from voice_locale import VoiceLocaleError, locale_from_market, normalize_creator_persona, normalize_locale
 
 
-# Image providers. The upDrama media-task route (tt-image-2.5) is the production
-# default because it is a single round-trip per frame with no separate upload
-# step; the LaoZhang OpenAI-compatible Images route stays as the fallback.
-MEDIA_IMAGE_PROVIDER = "tt-image-2.5"
-MEDIA_IMAGE_PROVIDER_ALT = "tt-image-2"
-OPENAI_IMAGE_PROVIDER = "laozhang-image2"
-IMAGE_PROVIDERS = (MEDIA_IMAGE_PROVIDER, MEDIA_IMAGE_PROVIDER_ALT, OPENAI_IMAGE_PROVIDER)
+# Image providers. Every paid image goes through the upDrama/LK888 media-task
+# route: tt-image-2.5 is the production default and tt-image-2 is the only
+# automatic fallback. There is no other image vendor.
+MEDIA_IMAGE_PROVIDER = LK888_IMAGE_MODEL
+MEDIA_IMAGE_PROVIDER_ALT = LK888_IMAGE_FALLBACK_MODEL
+IMAGE_PROVIDERS = (MEDIA_IMAGE_PROVIDER, MEDIA_IMAGE_PROVIDER_ALT)
 
 
 def is_media_image_provider(provider: str) -> bool:
@@ -123,69 +120,6 @@ def generate_image_via_media_task(
     raise RuntimeError(f"{model} task {task_id} did not finish within {args.timeout}s (last state {last_state})")
 
 
-def request_openai_image(
-    api_key: str,
-    args: argparse.Namespace,
-    prompt: str,
-    references: list[Path],
-    variant_id: int,
-) -> dict[str, Any]:
-    """GPT-Image-2 via the OpenAI-compatible Images route (upload or generate)."""
-    if references:
-        fields = {"model": args.model, "prompt": prompt}
-        if should_include_size(args.model, args.size):
-            fields["size"] = args.size
-        if args.quality and args.model == "gpt-image-2":
-            fields["quality"] = args.quality
-        response = None
-        last_error = None
-        for attempt in range(1, args.retries + 1):
-            try:
-                # LaoZhang/OpenAI-compatible Images Edits accepts one file as
-                # `image`, but multiple inputs must use the array field
-                # `image[]`. Repeating the scalar field now reaches the
-                # deprecated upstream `referenceImages` path.
-                image_field = "image[]" if len(references) > 1 else "image"
-                response = multipart_request(
-                    "/images/edits",
-                    api_key,
-                    fields=fields,
-                    files=[(image_field, item) for item in references],
-                    base_url=args.base_url,
-                    timeout=args.timeout,
-                )
-                break
-            except (TimeoutError, RuntimeError) as error:
-                last_error = error
-                transient = any(
-                    marker in str(error)
-                    for marker in (
-                        "UNEXPECTED_EOF",
-                        "urlopen error",
-                        "timed out",
-                        "Connection reset",
-                        "Max retries exceeded",
-                        "HTTP 502",
-                        "HTTP 503",
-                        "internal_server_error",
-                        "Bad Gateway",
-                        "Service Unavailable",
-                    )
-                )
-                if not transient or attempt == args.retries:
-                    raise
-                print(f"[retry] image edit variant {variant_id:02d} attempt {attempt}/{args.retries} transient error: {error}", flush=True)
-        if response is None:
-            raise last_error or RuntimeError("image edit failed without response")
-        return response
-    payload: dict[str, Any] = {"model": args.model, "prompt": prompt}
-    if should_include_size(args.model, args.size):
-        payload["size"] = args.size
-    if args.quality and args.model == "gpt-image-2":
-        payload["quality"] = args.quality
-    return request_json("/images/generations", api_key, payload, base_url=args.base_url, timeout=args.timeout)
-
-
 def parse_variants(value: str) -> set[int]:
     selected: set[int] = set()
     for part in value.split(","):
@@ -205,12 +139,6 @@ def resolve_prompts_path(product_dir: Path, prompts_file: str) -> Path:
     if candidate.is_absolute():
         return candidate
     return product_dir / prompts_file
-
-
-def should_include_size(model: str, size: str | None) -> bool:
-    if not size:
-        return False
-    return model in {"gpt-image-2-vip", "gpt-image-2"} and size != "none"
 
 
 def first_existing_reference(product_dir: Path, variant: dict[str, Any]) -> Path | None:
@@ -439,8 +367,7 @@ def generate_image_file(
             "references": v2.hashes(product_dir, references),
             "prompt": prompt,
             "image_provider": args.image_provider,
-            "model": args.model,
-            "base_url": args.base_url,
+            "image_base_url": args.image_base_url,
         }
         if storyboard_v2:
             timeline = variant["storyboard_10s"]
@@ -484,37 +411,20 @@ def generate_image_file(
     provider_chain = [provider]
     fallback = args.image_fallback
     if fallback and fallback != "none" and fallback != provider:
-        chain_candidates = [args.image_fallback]
-        # A media-provider failure also retries the older media model before
-        # leaving the media task route entirely.
-        if is_media_image_provider(provider) and fallback == OPENAI_IMAGE_PROVIDER:
-            chain_candidates.insert(0, MEDIA_IMAGE_PROVIDER_ALT)
-        provider_chain.extend(chain_candidates)
+        provider_chain.append(fallback)
     response: dict[str, Any] = {}
     saved_path: Path | None = None
     provider_errors: list[str] = []
     used_provider = provider
+    task_key = api_key if api_key and api_key != "local-compose" else require_api_key_for_base_url(args.image_base_url)
     for attempt_provider in provider_chain:
         try:
-            if is_media_image_provider(attempt_provider):
-                task_key = require_api_key_for_base_url(args.image_base_url)
-                status, saved_path = generate_image_via_media_task(
-                    task_key, args, prompt, references, destination, attempt_provider
-                )
-                response = {"provider": attempt_provider, "task": status}
-            else:
-                # A media-first run receives the LK888 key at startup, but its
-                # OpenAI-compatible fallback is hosted by LaoZhang. Resolve the
-                # fallback key only when that route is actually attempted.
-                attempt_key = (
-                    api_key
-                    if not is_media_image_provider(provider)
-                    else require_api_key_for_base_url(args.base_url)
-                )
-                response = request_openai_image(attempt_key, args, prompt, references, variant_id)
-                saved_path = save_response_image(response, destination)
-                if not saved_path:
-                    raise RuntimeError("OpenAI Images response did not contain a saved image")
+            if not is_media_image_provider(attempt_provider):
+                raise RuntimeError(f"Unsupported image provider {attempt_provider}")
+            status, saved_path = generate_image_via_media_task(
+                task_key, args, prompt, references, destination, attempt_provider
+            )
+            response = {"provider": attempt_provider, "task": status}
             used_provider = attempt_provider
             break
         except Exception as error:
@@ -527,7 +437,7 @@ def generate_image_file(
             print(f"[provider] {attempt_provider} failed for variant {variant_id:02d}; falling back: {error}", flush=True)
     if scene_v2:
         if not saved_path:
-            raise RuntimeError("Image2 response did not contain a saved scene frame")
+            raise RuntimeError("Image route did not return a saved scene frame")
         if storyboard_v2:
             normalize_storyboard_canvas(destination, storyboard_spec(variant))
         write_json(provenance, {**expected, "sha256": v2.digest(destination)})
@@ -652,9 +562,9 @@ def add_image_provider_arguments(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--image-fallback",
-        default=OPENAI_IMAGE_PROVIDER,
-        choices=[OPENAI_IMAGE_PROVIDER, "none"],
-        help="Route used when the primary image provider fails. Defaults to the OpenAI-compatible GPT-Image-2 route.",
+        default=MEDIA_IMAGE_PROVIDER_ALT,
+        choices=[MEDIA_IMAGE_PROVIDER_ALT, "none"],
+        help="Media-task model used when the primary image provider fails. Defaults to tt-image-2.",
     )
     parser.add_argument("--image-base-url", default=LK888_BASE_URL, help="Base URL for the upDrama media-task image route.")
     parser.add_argument("--image-aspect-ratio", default="auto", help="Aspect ratio for the media-task image route. 'auto' derives it from the canvas. Storyboards derive the canvas from panel count and target frame ratio.")
@@ -671,10 +581,7 @@ def main() -> None:
     parser.add_argument("--variants", default="1-10")
     parser.add_argument("--prompts-file", default="ugc_prompts.json")
     add_image_provider_arguments(parser)
-    parser.add_argument("--model", default="gpt-image-2-vip", help="Model for the OpenAI-compatible fallback route.")
     parser.add_argument("--size", default="1080x1920", help="Still-image canvas; storyboards derive their size from grid geometry and ignore this setting.")
-    parser.add_argument("--quality", default="")
-    parser.add_argument("--base-url", default="https://api.laozhang.ai/v1")
     parser.add_argument("--products", default="", help="Comma-separated product selectors, e.g. 01 or 01-flower")
     parser.add_argument("--timeout", type=int, default=420)
     parser.add_argument("--retries", type=int, default=2)
@@ -685,8 +592,7 @@ def main() -> None:
     parser.add_argument("--workers", type=int, default=1, help="Concurrent image workers. Results are written after each frame so a slow or failing frame cannot wedge the batch.")
     args = parser.parse_args()
     selected_variants = parse_variants(args.variants)
-    primary_url = args.image_base_url if is_media_image_provider(args.image_provider) else args.base_url
-    api_key = "local-compose" if args.compose_only else require_api_key_for_base_url(primary_url)
+    api_key = "local-compose" if args.compose_only else require_api_key_for_base_url(args.image_base_url)
     for product_dir in v2.products(args.output_dir, args.products):
         process_product(product_dir, api_key, selected_variants, args)
 

@@ -2,7 +2,7 @@
 
 A product-faithful ecommerce UGC pipeline for complete source extraction, visual cognition, identity locking, creative risk routing, chronological storyboard references, Omni Flash video generation, and QC.
 
-Product-image analysis, the product brief and image QC are done directly by the current agent's multimodal model; no external vision API or extra key is used. Scripts write a task file listing local images and hashes, the agent answers after looking at them, and a rerun validates coverage and writes the result.
+Product-image analysis, the product brief, the UGC prompt batch and image QC are done directly by the current agent's multimodal model; no external vision or chat API and no extra key is used. Scripts write a task file listing local images and hashes, the agent answers after looking at them, and a rerun validates coverage and writes the result. Paid image and video steps use only LK888: images default to `tt-image-2.5` and fall back automatically to `tt-image-2`.
 
 ## Single production video route
 
@@ -16,7 +16,7 @@ Product-image analysis, the product brief and image QC are done directly by the 
 All images are all-purpose references. Each variant creates one `generated_images/variant-XX-storyboard.png` containing the complete 0–10 second visual sequence.
 
 ```bash
-LAOZHANG_API_KEY=sk-... python scripts/generate_ugc_prompts.py product-ugc-output --count 10 --target-video-model omni-flash --market Japan
+python scripts/generate_ugc_prompts.py product-ugc-output --count 10 --target-video-model omni-flash --market Japan   # writes task → agent answers → rerun
 LK888_API_KEY=sk-... python scripts/generate_images.py product-ugc-output --variants 1-10 --storyboards
 LK888_API_KEY=sk-... python scripts/generate_videos_lk888.py product-ugc-output --variants 1-10 --model omni-flash --base-url https://api.lk888.ai --status-endpoint /v1/media/status --reference-mode omni-reference
 ```

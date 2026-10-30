@@ -7,6 +7,7 @@ import json
 import sys
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -40,6 +41,18 @@ class PipelineTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    @contextmanager
+    def media_route(self, fail=False):
+        """Mock the LK888 media-task image route: save a frame, or fail like an empty task."""
+        def fake_task(api_key, args, prompt, references, destination, model):
+            if fail:
+                raise RuntimeError(f"{model} task returned no image")
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            Image.new("RGB", (64, 64), "red").save(destination)
+            return {"is_final": True, "state": "success"}, destination
+        with patch("generate_images.generate_image_via_media_task", side_effect=fake_task) as api:
+            yield api
+
     def fixture(self, category):
         folder = self.root / f"01-{category}"
         (folder / "images").mkdir(parents=True)
@@ -60,9 +73,8 @@ class PipelineTests(unittest.TestCase):
         args = parser().parse_args([str(folder)])
         args.separate_sheet = False
         args.storyboards = True
-        # These tests patch the OpenAI-compatible Images route, so pin that
-        # provider instead of the production upDrama media-task default.
-        args.image_provider = "laozhang-image2"
+        # media_route() patches the LK888 media task; disable the tt-image-2
+        # fallback so each test sees exactly one image request.
         args.image_fallback = "none"
         return args
 
@@ -103,7 +115,7 @@ class PipelineTests(unittest.TestCase):
     def setup_identity(self, category="electronics"):
         folder = self.fixture(category)
         args = self.args(folder)
-        with patch("generate_images.multipart_request", return_value=self.response):
+        with self.media_route():
             generate(folder, "test", args)
         usage(folder, "", args)
         self.approve(folder, "identity", [folder / "identity_lock/reference_sheet.png"])
@@ -139,13 +151,13 @@ class PipelineTests(unittest.TestCase):
                 self.assertEqual(len(identity["panels"]), len(panels))
                 self.assertEqual(len(list((folder / "identity_lock").glob("*.png"))), 1)
                 self.assertEqual(load_json(folder / "usage_poses/manifest.json")["additional_image_count"], 0)
-                with patch("generate_images.multipart_request", return_value=self.response) as api:
+                with self.media_route() as api:
                     generate_one_image("test", folder, {"variant_id": 1, "storyboard_10s": self.storyboard_beats()}, args)
                 self.assertEqual(api.call_count, 1)
                 call = api.call_args_list[0]
-                self.assertEqual(len(call.kwargs["files"]), 2)
-                self.assertIn("storyboard", call.kwargs["fields"]["prompt"].lower())
-                self.assertNotIn("weight", call.kwargs["fields"])
+                self.assertEqual(len(call.args[3]), 2)
+                self.assertIn("storyboard", call.args[2].lower())
+                self.assertEqual(call.args[5], "tt-image-2.5")
                 storyboard = folder / "generated_images/variant-01-storyboard.png"
                 self.assertTrue(storyboard.is_file())
                 provenance = load_json(storyboard.with_suffix(".provenance.json"), {})
@@ -194,10 +206,10 @@ class PipelineTests(unittest.TestCase):
         brief["state_change_contract"] = self.transform_contract()
         write_json(folder / "product_brief.json", brief)
         args = self.args(folder)
-        with patch("generate_images.multipart_request", return_value=self.response):
+        with self.media_route():
             generate(folder, "test", args)
         self.approve(folder, "identity", [folder / "identity_lock/reference_sheet.png"])
-        with patch("generate_images.multipart_request", return_value=self.response) as api:
+        with self.media_route() as api:
             result = usage(folder, "test", args)
         self.assertEqual(api.call_count, 1)
         self.assertEqual(result["mode"], "state_change_sheet")
@@ -205,7 +217,7 @@ class PipelineTests(unittest.TestCase):
         self.approve(folder, "usage", [operation_sheet])
         self.assertEqual(len(scene_references(folder, "start", 1)), 3)
 
-        with patch("generate_images.multipart_request", return_value=self.response):
+        with self.media_route():
             generate_one_image("test", folder, {"variant_id": 1, "storyboard_10s": self.storyboard_beats()}, args)
         generated_storyboard = folder / "generated_images/variant-01-storyboard.png"
         validate_scene_chain(folder, [generated_storyboard])
@@ -240,7 +252,7 @@ class PipelineTests(unittest.TestCase):
 
     def test_failed_image_has_no_complete_manifest(self):
         folder = self.fixture("jewelry")
-        with patch("generate_images.multipart_request", return_value={}):
+        with self.media_route(fail=True):
             with self.assertRaises(RuntimeError):
                 generate(folder, "test", self.args(folder))
         with self.assertRaises(RuntimeError):
@@ -311,28 +323,59 @@ class PipelineTests(unittest.TestCase):
 
         self.assertEqual(calls.call_args_list[0].args[2]["params"]["aspect_ratio"], "9:16")
 
-    def test_media_failure_uses_laozhang_key_for_openai_fallback(self):
+    def test_media_failure_falls_back_to_tt_image_2_only(self):
         folder = self.fixture("electronics")
         args = self.args(folder)
         args.image_provider = "tt-image-2.5"
-        args.image_fallback = "laozhang-image2"
+        args.image_fallback = "tt-image-2"
         reference = folder / "images/source.png"
         destination = folder / "generated_images/variant-01.png"
+        models = []
 
-        def key_for_url(url):
-            return "lk888-key" if "lk888" in url else "laozhang-key"
+        def fake_task(api_key, args, prompt, references, destination, model):
+            models.append((api_key, model))
+            if model == "tt-image-2.5":
+                raise RuntimeError("media failed")
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            Image.new("RGB", (64, 64), "red").save(destination)
+            return {"is_final": True, "state": "success"}, destination
 
-        with patch("generate_images.require_api_key_for_base_url", side_effect=key_for_url), \
-             patch("generate_images.generate_image_via_media_task", side_effect=RuntimeError("media failed")), \
-             patch("generate_images.request_openai_image", return_value=self.response) as fallback:
+        with patch("generate_images.generate_image_via_media_task", side_effect=fake_task):
             result = generate_image_file(
                 "lk888-key", folder, {"variant_id": 1}, args, destination, "prompt",
                 reference_override=[reference],
             )
 
-        self.assertEqual(result["image_provider"], "laozhang-image2")
-        self.assertEqual(fallback.call_args.args[0], "laozhang-key")
+        self.assertEqual(result["image_provider"], "tt-image-2")
+        self.assertEqual(models, [("lk888-key", "tt-image-2.5"), ("lk888-key", "tt-image-2")])
         self.assertTrue(destination.exists())
+
+    def test_image_route_has_no_non_lk888_provider(self):
+        import generate_images
+        self.assertEqual(generate_images.IMAGE_PROVIDERS, ("tt-image-2.5", "tt-image-2"))
+        parsed = parser().parse_args([str(self.root)])
+        self.assertEqual(parsed.image_fallback, "tt-image-2")
+        self.assertIn("lk888", parsed.image_base_url)
+        self.assertFalse(hasattr(parsed, "base_url"))
+
+    def test_prompt_batch_is_agent_native_and_bound_to_task(self):
+        from generate_ugc_prompts import generate_with_agent
+        folder = self.fixture("electronics")
+        task_stem = folder / "analysis/ugc_prompts/ugc_prompts"
+        call = lambda: generate_with_agent(
+            folder, load_json(folder / "product_manifest.json"), load_json(folder / "image_analysis.json"),
+            load_json(folder / "product_brief.json"), ["images/source.png"], [], 1, voice_locale="es-MX", market="Mexico")
+        with self.assertRaises(AgentReviewPending):
+            call()
+        task = load_json(task_stem.with_suffix(".task.json"))
+        self.assertEqual(task["task"], "ugc_prompt_batch")
+        self.assertEqual(task["reference_images"], [str((folder / "images/source.png").resolve())])
+        self.assertIn("es-MX", task["user_prompt"])
+        write_json(task_stem.with_suffix(".answer.json"), {"task_sha256": "stale", "variants": [{"variant_id": 1}]})
+        with self.assertRaises(AgentReviewPending):
+            call()
+        write_json(task_stem.with_suffix(".answer.json"), {"task_sha256": task["task_sha256"], "variants": [{"variant_id": 1}]})
+        self.assertEqual(call()["variants"], [{"variant_id": 1}])
 
     def test_qc_rejects_unknown_and_malformed(self):
         checks = {name: {"status": "pass", "evidence": "test evidence"} for name in CHECKS}
@@ -394,7 +437,7 @@ class PipelineTests(unittest.TestCase):
     def test_explicit_optional_sheet_is_one_extra(self):
         folder, args = self.setup_identity()
         args.separate_sheet = True
-        with patch("generate_images.multipart_request", return_value=self.response) as api:
+        with self.media_route() as api:
             result = usage(folder, "test", args)
         self.assertEqual(api.call_count, 1)
         self.assertEqual(result["additional_image_count"], 1)
@@ -471,7 +514,7 @@ class PipelineTests(unittest.TestCase):
 
     def test_video_provenance_invalidates_changed_reference(self):
         folder, args = self.setup_identity()
-        with patch("generate_images.multipart_request", return_value=self.response):
+        with self.media_route():
             generate_one_image("test", folder, {"variant_id": 1, "storyboard_10s": self.storyboard_beats()}, args)
         storyboard = folder / "generated_images/variant-01-storyboard.png"
         video = folder / "videos/variant-01.mp4"

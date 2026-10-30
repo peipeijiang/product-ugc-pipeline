@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 from common import load_json, require_api_key_for_base_url, write_json
-from generate_images import add_image_provider_arguments, generate_image_file, is_media_image_provider
+from generate_images import add_image_provider_arguments, generate_image_file
 from v2_contract import RULES, SPECS, action_ledger, context, digest, input_hashes, load_identity, products
 
 
@@ -74,10 +74,8 @@ def generate(folder: Path, api_key: str, args: argparse.Namespace) -> dict:
     write_json(folder / "identity_lock/category_spec.json", spec)
     write_json(folder / "identity_lock/manifest.json", {"status": "generating", "category": spec["category"]})
     args.size = spec["size"]
-    # Current LaoZhang Image2 edit route accepts the v2 scene chain (up to
-    # three inputs) but rejects a fourth image in the same request. Keep the
-    # canonical full-product reference first, then the strongest two pieces
-    # of supporting evidence; the complete analysis still remains in prompt.
+    # Keep the canonical full-product reference first, then the strongest two
+    # pieces of supporting evidence; the complete analysis remains in prompt.
     result = generate_image_file(api_key, folder, {}, args, destination, prompt, ctx["references"][:3])
     if result["status"] != "saved":
         raise RuntimeError(f"Image route did not return a saved identity image: {result['status']}")
@@ -88,16 +86,12 @@ def generate(folder: Path, api_key: str, args: argparse.Namespace) -> dict:
     # base64 image. Keeping it in the manifest bloats the file into the megabytes and
     # later blows up any request that serialises the manifest into a prompt.
     slim_result = {key: value for key, value in result.items() if key != "response"}
-    # Record the route that actually produced the sheet, not the fallback defaults,
-    # so a later reader can tell which model and base URL generated this grid.
+    # Record the media-task model that actually produced the sheet, so a later
+    # reader can tell whether the tt-image-2 fallback was used.
     used_provider = str(result.get("image_provider") or args.image_provider)
-    if is_media_image_provider(used_provider):
-        route_model, route_base_url = used_provider, args.image_base_url
-    else:
-        route_model, route_base_url = args.model, args.base_url
     record = {**slim_result, "status": "completed", "category": spec["category"], "sheet_count": 1,
-              "layout": spec["layout"], "panels": panels, "physical_traits": spec.get("physical_traits", []), "model": route_model,
-              "base_url": route_base_url, "image_provider": used_provider,
+              "layout": spec["layout"], "panels": panels, "physical_traits": spec.get("physical_traits", []), "model": used_provider,
+              "base_url": args.image_base_url, "image_provider": used_provider,
               "source_hashes": input_hashes(folder, ctx),
               "sha256": digest(destination), "qc_status": "pending", "actions": actions}
     write_json(folder / "identity_lock/manifest.json", record)
@@ -110,19 +104,16 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--products", default="")
     p.add_argument("--category", choices=list(SPECS), default="")
     add_image_provider_arguments(p)
-    p.add_argument("--model", default="gpt-image-2-vip")
-    p.add_argument("--base-url", default="https://api.laozhang.ai/v1")
     p.add_argument("--timeout", type=int, default=420)
     p.add_argument("--retries", type=int, default=2)
     p.add_argument("--force", action="store_true")
-    p.set_defaults(size="1024x1024", quality="", compose_only=False, max_reference_images=4)
+    p.set_defaults(size="1024x1024", compose_only=False, max_reference_images=4)
     return p
 
 
 def main() -> None:
     args = parser().parse_args()
-    primary_url = args.image_base_url if is_media_image_provider(args.image_provider) else args.base_url
-    key = require_api_key_for_base_url(primary_url)
+    key = require_api_key_for_base_url(args.image_base_url)
     for folder in products(args.output_dir, args.products):
         print(f"[identity] {folder.name}: {generate(folder, key, args)['output_path']}", flush=True)
 

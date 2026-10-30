@@ -9,7 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from common import load_json, request_json, require_api_key_for_base_url, selected_product_dirs, write_json
+from agent_vision import PENDING_EXIT_CODE, AgentReviewPending, load_answer, write_task
+from common import load_json, selected_product_dirs, write_json
 from creative_risk_router import (
     apply_feasibility_route,
     build_video_feasibility_plan,
@@ -656,25 +657,6 @@ def assert_clean_generation_inputs(product_dir: Path, image_analysis: dict[str, 
             f"{product_dir.name}: product_brief.json is missing required cognition fields {missing}. "
             "Refusing to generate prompts until the product function is understood."
         )
-
-
-def parse_json_text(text: str, context: str) -> dict[str, Any]:
-    stripped = text.strip()
-    if not stripped:
-        raise RuntimeError(f"{context}: empty model content")
-    stripped = re.sub(r"<think>.*?</think>", "", stripped, flags=re.DOTALL).strip()
-    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", stripped, flags=re.DOTALL)
-    if fenced:
-        stripped = fenced.group(1).strip()
-    elif not stripped.startswith("{"):
-        start = stripped.find("{")
-        end = stripped.rfind("}")
-        if start >= 0 and end > start:
-            stripped = stripped[start : end + 1]
-    try:
-        return json.loads(stripped)
-    except json.JSONDecodeError as error:
-        raise RuntimeError(f"{context}: invalid JSON: {stripped[:800]}") from error
 
 
 def _brief_paths(product_brief: dict[str, Any], keys: list[str]) -> list[str]:
@@ -1536,26 +1518,30 @@ def usage_demo_video_prompt(
     )
 
 
-def generate_with_model(
-    api_key: str,
+def generate_with_agent(
+    product_dir: Path,
     manifest: dict[str, Any],
     image_analysis: dict[str, Any],
     product_brief: dict[str, Any],
     references: list[str],
     existing_history: list[dict[str, Any]],
     count: int,
-    model: str,
-    base_url: str,
-    timeout: int,
     voice_locale: str | None = None,
     market: str = "",
+    task_name: str = "ugc_prompts",
 ) -> dict[str, Any]:
+    """Write the prompt-batch task for the running agent and return its bound answer.
+
+    The script never calls an external chat API. The first run writes
+    analysis/ugc_prompts/<task_name>.task.json; the agent writes <task_name>.answer.json
+    next to it with the task's task_sha256, and the rerun validates and normalizes it.
+    """
     commercial_promise = commercial_promise_summary(manifest, product_brief)
     creative_matrix = creative_matrix_plan(count, existing_history)
     resolved_locale = normalize_locale(voice_locale)
     if not resolved_locale:
         raise VoiceLocaleError(
-            "generate_with_model needs a resolved voice locale; refusing to let the model assume an English market."
+            "generate_with_agent needs a resolved voice locale; refusing to assume an English market."
         )
     spoken_language = language_name(resolved_locale)
     if script_of(resolved_locale) == "latin":
@@ -1644,7 +1630,7 @@ Each variant must include:
 - reference_scope: explain which visual details from source images lock product identity, and explicitly state that source-photo background/props/composition are not mandatory unless functionally necessary
 - selling_angle: one focused buyer benefit for this variant
 - scene_imagination: a realistic lifestyle scene derived from the product function and selling angle, not merely copied from source product photos
-- image_prompt in English for GPT-Image-2 image-to-image
+- image_prompt in English for the tt-image-2.5 image-to-image route
 - video_prompt in English for the target video model
 - negative_prompt
 - generation_risk: the router-provided level, score and hazards; do not lower it
@@ -1679,21 +1665,31 @@ Critical:
 19. If protect_product_configuration is true, every generated frame must keep one verified ready-state topology, connection graph and part inventory. Do not depict continuous installation, assembly, insertion, reversal, folding or other configuration changes. Show the buyer result, detail proof and creator reaction instead.
 20. A clean editor hard cut is an editing instruction, not a generated transition. If setup must be communicated, use separately generated endpoint assets or real source footage; never give the video model conflicting product configurations and ask it to interpolate between them.
 """.strip()
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": UGC_SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ],
-        "response_format": {"type": "json_object"},
-        "stream": False,
-    }
-    response = request_json("/chat/completions", api_key, payload, base_url=base_url, timeout=timeout)
-    content = (((response.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
-    return parse_json_text(content, "generate_with_model")
+    task_dir = product_dir / "analysis" / "ugc_prompts"
+    task_path = task_dir / f"{task_name}.task.json"
+    answer_path = task_dir / f"{task_name}.answer.json"
+    task_hash = write_task(task_path, {
+        "task": "ugc_prompt_batch",
+        "instructions": (
+            "Act under the system prompt below, read the user prompt, open every listed reference image, "
+            "then write the answer file as ONE JSON object with the requested top-level fields "
+            "(including a variants list of exactly the requested count) plus this task's task_sha256."
+        ),
+        "system_prompt": UGC_SYSTEM_PROMPT,
+        "user_prompt": prompt,
+        "reference_images": [str((product_dir / item).resolve()) for item in references],
+        "requested_variant_count": count,
+        "voice_locale": resolved_locale,
+        "answer_path": str(answer_path),
+    })
+    answer = load_answer(task_path, answer_path, task_hash)
+    output = {key: value for key, value in answer.items() if key != "task_sha256"}
+    if not isinstance(output.get("variants"), list) or not output["variants"]:
+        raise AgentReviewPending(task_path, answer_path, "Agent prompt answer has no variants list")
+    return output
 
 
-def process_product(product_dir: Path, api_key: str, args: argparse.Namespace) -> None:
+def process_product(product_dir: Path, args: argparse.Namespace) -> None:
     from v2_contract import active, guidance, load_usage
     manifest = load_json(product_dir / "product_manifest.json")
     image_analysis = load_json(product_dir / "image_analysis.json", {"images": []})
@@ -1750,19 +1746,17 @@ def process_product(product_dir: Path, api_key: str, args: argparse.Namespace) -
         flush=True,
     )
     creative_matrix = creative_matrix_plan(args.count, existing_history)
-    output = generate_with_model(
-        api_key,
+    output = generate_with_agent(
+        product_dir,
         manifest,
         image_analysis,
         prompt_brief,
         references,
         existing_history,
         args.count,
-        args.model,
-        args.base_url,
-        args.timeout,
         voice_locale=voice_resolution.locale,
         market=voice_resolution.market,
+        task_name=Path(args.output_file).stem,
     )
     output = normalize_variants(
         output, manifest, references, args.count, product_brief, creative_matrix,
@@ -1852,14 +1846,12 @@ def main() -> None:
         help="Optional user-authored campaign brief text. It guides concepts without mutating the evidence-bound product brief.",
     )
     parser.add_argument("--ignore-history", action="store_true")
-    parser.add_argument("--model", default=os.getenv("PRODUCT_UGC_PROMPT_MODEL", "gpt-5.2"))
     parser.add_argument(
         "--target-video-model",
         default=os.getenv("PRODUCT_UGC_VIDEO_MODEL", "omni-flash"),
         choices=["omni-flash", "omni_flash-10s"],
         help="Omni Flash model used for risk routing. Video submission always uses omni-reference.",
     )
-    parser.add_argument("--base-url", default="https://api.laozhang.ai/v1")
     parser.add_argument(
         "--market",
         default="",
@@ -1870,12 +1862,17 @@ def main() -> None:
         default=os.getenv("PRODUCT_UGC_VOICE_LOCALE", ""),
         help="Explicit spoken locale, e.g. ja-JP. Overrides the declared market; it is never silently defaulted to English.",
     )
-    parser.add_argument("--timeout", type=int, default=420)
     parser.add_argument("--products", default="", help="Comma-separated product selectors, e.g. 01 or 01-flower")
     args = parser.parse_args()
-    api_key = require_api_key_for_base_url(args.base_url)
+    pending = []
     for product_dir in selected_product_dirs(args.output_dir, args.products):
-        process_product(product_dir, api_key, args)
+        try:
+            process_product(product_dir, args)
+        except AgentReviewPending as waiting:
+            print(f"[agent-review-pending] {product_dir.name}: {waiting}", flush=True)
+            pending.append(product_dir.name)
+    if pending:
+        raise SystemExit(PENDING_EXIT_CODE)
 
 
 if __name__ == "__main__":

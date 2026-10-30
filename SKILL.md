@@ -26,7 +26,7 @@ The chronological storyboard is one reference sheet with a layout derived from t
 
 Follow PostPlus storyboard-grid-writer: a short common prompt and detailed visible events per panel. Use exactly **6 panels (3 columns × 2 rows)** by default, or **9 panels (3 × 3)** when dense action or proof needs additional continuity. Read left-to-right, then top-to-bottom.
 
-Keep `targetFrameAspectRatio` separate from `boardLayoutRatio`. Every production panel is 9:16. The mathematical six-panel board is **1620×1920**: 3×2 cells, each **540×960**, whole-board ratio 27:32; the mathematical nine-panel board is **1080×1920**: 3×3 cells, each **360×640**, whole-board ratio 9:16. If the image provider does not support 27:32, use the direct image-generation fallback or another approved transport route, preserve the 9:16 panel instruction in the prompt, and record both mathematical and provider ratios in provenance. Do not stretch or claim the provider canvas is 27:32 when it is not.
+Keep `targetFrameAspectRatio` separate from `boardLayoutRatio`. Every production panel is 9:16. The mathematical six-panel board is **1620×1920**: 3×2 cells, each **540×960**, whole-board ratio 27:32; the mathematical nine-panel board is **1080×1920**: 3×3 cells, each **360×640**, whole-board ratio 9:16. If the image provider does not support 27:32, send the nearest supported media-task ratio, preserve the 9:16 panel instruction in the prompt, and record both mathematical and provider ratios in provenance. Do not stretch or claim the provider canvas is 27:32 when it is not.
 
 `storyboard_10s` is the single source of truth for image and video visual descriptions. Each panel must specify its contiguous time interval, camera position, subject placement, visible action, environment anchors and spoken line. Preserve product reveal timing and supported physical states. Do not replace it with a separately rewritten shot plan, truncate nine panels to six, or invent filler panels in the renderer. Rewrite legacy non-6/9 timelines before rendering.
 
@@ -68,7 +68,7 @@ Supported locales live in `scripts/voice_locale.py`. Add a locale there instead 
 
 ## Agent-native vision
 
-Product-image analysis, the product brief and image QC are done by the multimodal model already running this agent. No external vision or chat API and no API key are used for these steps.
+Product-image analysis, the product brief, the UGC prompt batch and image QC are done by the multimodal model already running this agent. No external vision or chat API and no API key are used for these steps.
 
 Each step is two passes of the same command:
 
@@ -80,6 +80,7 @@ Each step is two passes of the same command:
 |---|---|---|---|
 | Per-image analysis | `analysis/image_analysis.task.json` | `analysis/image_analysis.answer.json` | `image_analysis.json`, `materials.md` |
 | Product brief | `analysis/product_brief.task.json` | `analysis/product_brief.answer.json` | `product_brief.json` |
+| UGC prompt batch | `analysis/ugc_prompts/<output-stem>.task.json` | `analysis/ugc_prompts/<output-stem>.answer.json` | `ugc_prompts.json` |
 | Identity/usage/storyboard/video QC | `qc/agent/<stage>/<target>/task.json` | `qc/agent/<stage>/<target>/answer.json` | `qc/<stage>.json` |
 
 Describe only what is visible in the images. A missing, partial or stale answer (wrong `task_sha256`) never passes. Never write an answer without actually looking at every listed image.
@@ -94,7 +95,7 @@ Describe only what is visible in the images. A missing, partial or stale answer 
 6. Generate one product identity grid with `scripts/generate_product_identity_lock.py`.
 7. Generate the source-backed usage ledger with `scripts/generate_usage_pose_sheet.py`. Products that fold, assemble, install, attach, extend, open or otherwise change configuration also require an operation grid.
 8. Run identity and operation-grid QC with `scripts/qc_dual_consistency.py` (agent-native review).
-9. Generate UGC variants with `scripts/generate_ugc_prompts.py --target-video-model omni-flash`.
+9. Write UGC variants with `scripts/generate_ugc_prompts.py --target-video-model omni-flash` (agent-native: the task carries the full system and user prompt; answer it yourself).
 10. Generate one chronological storyboard sheet per variant with `scripts/generate_images.py --storyboards`.
 11. Run storyboard QC. Never submit a paid video from a missing, stale or failed storyboard.
 12. Submit videos with `scripts/generate_videos_lk888.py --model omni-flash --reference-mode omni-reference`.
@@ -186,14 +187,14 @@ python scripts/classify_product_category.py product-ugc-output
 LK888_API_KEY=sk-... python scripts/generate_product_identity_lock.py product-ugc-output
 python scripts/generate_usage_pose_sheet.py product-ugc-output
 python scripts/qc_dual_consistency.py product-ugc-output --stage identity   # agent-native review
-LAOZHANG_API_KEY=sk-... python scripts/generate_ugc_prompts.py product-ugc-output --count 10 --target-video-model omni-flash --market Japan
+python scripts/generate_ugc_prompts.py product-ugc-output --count 10 --target-video-model omni-flash --market Japan   # writes task → agent answers → rerun
 LK888_API_KEY=sk-... python scripts/generate_images.py product-ugc-output --variants 1-10 --storyboards
 LK888_API_KEY=sk-... python scripts/generate_videos_lk888.py product-ugc-output --variants 1-10 --model omni-flash --base-url https://api.lk888.ai --status-endpoint /v1/media/status --reference-mode omni-reference
 ```
 
 ## Provider defaults
 
-Image steps default to upDrama/LK888 `tt-image-2.5`. The automatic image fallback chain is `tt-image-2.5` → `tt-image-2` → the OpenAI-compatible GPT-Image-2 route. Record the actual provider, parameters and hashes in provenance.
+Image steps use only the upDrama/LK888 media-task route: `tt-image-2.5` by default, with `tt-image-2` as the single automatic fallback (`--image-fallback none` disables it). Record the actual provider, parameters and hashes in provenance.
 
 Video steps use `POST https://api.lk888.ai/v1/media/generate` and poll `GET /v1/media/status?task_id=...`. The adapter writes results to `videos_lk888/` and records the exact model, reference mode, parameters and task response.
 

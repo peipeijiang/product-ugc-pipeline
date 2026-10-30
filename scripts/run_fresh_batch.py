@@ -9,7 +9,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Sequence
 
-from common import load_json, selected_product_dirs, slugify, write_json
+from agent_vision import PENDING_EXIT_CODE
+from common import LK888_BASE_URL, load_json, selected_product_dirs, slugify, write_json
 
 
 def script_path(name: str) -> Path:
@@ -18,7 +19,14 @@ def script_path(name: str) -> Path:
 
 def run_command(command: Sequence[str]) -> None:
     print("[run]", " ".join(command), flush=True)
-    subprocess.run(command, check=True)
+    completed = subprocess.run(command)
+    if completed.returncode == PENDING_EXIT_CODE:
+        # An agent-native step (prompt batch or QC) wrote a task file and is
+        # waiting for the running agent's answer. Stop before any paid step.
+        print("[agent-review-pending] answer the task file printed above, then rerun this batch.", flush=True)
+        raise SystemExit(PENDING_EXIT_CODE)
+    if completed.returncode != 0:
+        raise subprocess.CalledProcessError(completed.returncode, list(command))
 
 
 def product_batch_dir(product_dir: Path, label: str) -> Path:
@@ -115,13 +123,10 @@ def main() -> None:
     parser.add_argument("--count", type=int, default=2, help="New variants to generate per product.")
     parser.add_argument("--batch-label", default=f"fresh-{datetime.now().strftime('%Y%m%d-%H%M')}")
     parser.add_argument("--history-glob", default="ugc_prompts*.json")
-    parser.add_argument("--prompt-model", default=os.getenv("PRODUCT_UGC_PROMPT_MODEL", "gpt-5.2"))
-    parser.add_argument("--prompt-base-url", default="https://api.laozhang.ai/v1")
-    parser.add_argument("--image-model", default="gpt-image-2-vip")
     parser.add_argument("--image-size", default=None, help="Deprecated: storyboard canvas is derived from panel count and target_frame_aspect_ratio.")
-    parser.add_argument("--image-base-url", default="https://api.laozhang.ai/v1")
+    parser.add_argument("--image-base-url", default=LK888_BASE_URL)
     parser.add_argument("--video-model", default="omni-flash", choices=["omni-flash", "omni_flash-10s"])
-    parser.add_argument("--video-base-url", default="https://api.lk888.ai")
+    parser.add_argument("--video-base-url", default=LK888_BASE_URL)
     parser.add_argument("--audio-style", choices=["none", "safe", "mid", "legacy", "asmr"], default="safe")
     parser.add_argument("--light-overlay", action="store_true")
     parser.add_argument(
@@ -178,12 +183,8 @@ def main() -> None:
             args.batch_label,
             "--history-glob",
             args.history_glob,
-            "--model",
-            args.prompt_model,
             "--target-video-model",
             target_video_model,
-            "--base-url",
-            args.prompt_base_url,
             "--products",
             args.products,
         ]
@@ -210,9 +211,7 @@ def main() -> None:
                 selector,
                 "--prompts-file",
                 "ugc_prompts.json",
-                "--model",
-                args.image_model,
-                "--base-url",
+                "--image-base-url",
                 args.image_base_url,
                 "--products",
                 product_dir.name.split("-", 1)[0],
